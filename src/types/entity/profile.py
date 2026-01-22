@@ -1,13 +1,6 @@
-from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Optional
-
-
-class EntityType(str, Enum):
-    COMPANY = "company"
-    PERSON = "person"
-    NEWS = "news"
-    TOPIC = "topic"
+from .type import EntityType
 
 
 @dataclass

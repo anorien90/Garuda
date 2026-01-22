@@ -14,7 +14,6 @@ class Intelligence(Base):
     confidence: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-
 class Seed(Base):
     __tablename__ = "seeds"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

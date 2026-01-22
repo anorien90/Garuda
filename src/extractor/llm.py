@@ -5,13 +5,10 @@ import numpy as np
 import re
 import uuid
 from typing import List, Dict, Any, Tuple
-from ..models.entities import EntityProfile, EntityType
-from ..filter import SemanticFilter
+from ..types.entities import EntityProfile, EntityType
+from .filter import SemanticFilter
+from sentence_transformers import SentenceTransformer
 
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError:
-    SentenceTransformer = None
 
 
 class LLMIntelExtractor:

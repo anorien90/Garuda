@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, render_template
-from src.persistence.sqlalchemy_store import SQLAlchemyStore
-from src.vector_store import QdrantVectorStore
-from src.extract.llm_extractor import LLMIntelExtractor
+from ..database.engine import SQLAlchemyStore
+from ..vector.engine import QdrantVectorStore
+from ..extractor.llm import LLMIntelExtractor
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 store = SQLAlchemyStore("sqlite:///crawler.db")

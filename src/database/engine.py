@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from .models import Base, Domain, Fingerprint, Link, Page, PageContent, Pattern, Seed, Intelligence, Entity
 from .store import PersistenceStore
-from ..models.page_fingerprint import PageFingerprint
+from ..types.fingerprint import PageFingerprint
 
 
 class SQLAlchemyStore(PersistenceStore):

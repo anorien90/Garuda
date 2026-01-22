@@ -9,6 +9,7 @@ import os
 from urllib.parse import urlparse
 from datetime import datetime, date
 
+
 def try_load_dotenv():
     try:
         import dotenv
