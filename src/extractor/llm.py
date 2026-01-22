@@ -5,7 +5,7 @@ import numpy as np
 import re
 import uuid
 from typing import List, Dict, Any, Tuple
-from ..types.entities import EntityProfile, EntityType
+from ..types.entity import EntityProfile, EntityType
 from .filter import SemanticFilter
 from sentence_transformers import SentenceTransformer
 

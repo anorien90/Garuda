@@ -21,7 +21,7 @@ def api_intel():
 
 @app.get("/api/pages")
 def api_pages():
-    return jsonify(store.get_all_pages())
+    return jsonify([p.to_dict() for p in store.get_all_pages()])
 
 @app.get("/api/page")
 def api_page():

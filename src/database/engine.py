@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from .models import Base, Domain, Fingerprint, Link, Page, PageContent, Pattern, Seed, Intelligence, Entity
 from .store import PersistenceStore
-from ..types.fingerprint import PageFingerprint
+from ..types.page.fingerprint import PageFingerprint
 
 
 class SQLAlchemyStore(PersistenceStore):
@@ -71,12 +71,32 @@ class SQLAlchemyStore(PersistenceStore):
                 } for r in results
             ]
 
+    def get_page_content(self, url: str) -> Optional[Dict]:
+        with self.Session() as s:
+            pc = s.get(PageContent, url)
+            if pc:
+                return {
+                    "html": pc.html,
+                    "text": pc.text,
+                    "metadata": json.loads(pc.metadata_json) if pc.metadata_json else {},
+                    "extracted": json.loads(pc.extracted_json) if pc.extracted_json else {},
+                    "fetch_ts": pc.fetch_ts.isoformat(),
+                }
+            return None
+
     def search_intelligence_data(self, query: str) -> List[Dict]:
         with self.Session() as s:
             stmt = select(Intelligence).where(Intelligence.data.ilike(f"%{query}%"))
             results = s.execute(stmt).scalars().all()
             return [{"entity": r.entity_name, "data": json.loads(r.data)} for r in results]
     
+    def get_page(self, url: str) -> Optional[Dict]:
+        with self.Session() as s:
+            p = s.get(Page, url)
+            if p:
+                return p.to_dict()
+            return None
+
     def save_page(self, page: Dict):
         with self.Session() as s:
             p = Page(

@@ -1,6 +1,6 @@
 import abc
 from typing import List, Dict, Optional
-from ..types.fingerprint import PageFingerprint
+from ..types.page.fingerprint import PageFingerprint
 
 
 class PersistenceStore(abc.ABC):

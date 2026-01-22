@@ -1,4 +1,4 @@
-from .types import EntityType
+from .type import EntityType
 from .profile import EntityProfile
 
 __all__ = [
