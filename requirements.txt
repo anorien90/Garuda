@@ -3,3 +3,5 @@ sqlalchemy
 qdrant_client
 requests
 sentence_transformers
+flask_cors
+python-dotenv

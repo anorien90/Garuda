@@ -1,56 +1,12 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <title>Garuda UI</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-</head>
-<body>
-<main class="container">
-  <h1>Garuda Intelligence</h1>
-  <section>
-    <form id="search-form">
-      <input id="q" name="q" type="search" placeholder="Search intel (keyword or entity)"/>
-      <input id="entity" name="entity" type="text" placeholder="Entity (optional)"/>
-      <input id="min_conf" name="min_conf" type="number" min="0" max="1" step="0.05" value="0"/>
-      <button type="submit">Search</button>
-    </form>
-    <pre id="results"></pre>
+{% extends "base.html" %}
+
+{% block main %}
+  {% include "components/settings.html" %}
+  {% include "components/status.html" %}
+  <section class="grid">
+    {% include "components/intel.html" %}
+    {% include "components/semantic.html" %}
+    {% include "components/chat.html" %}
   </section>
-  <section>
-    <h3>Pages</h3>
-    <button id="load-pages">List pages</button>
-    <ul id="pages"></ul>
-  </section>
-</main>
-<script>
-async function fetchIntel(e){
-  e.preventDefault();
-  const q = document.getElementById('q').value;
-  const entity = document.getElementById('entity').value;
-  const min_conf = document.getElementById('min_conf').value || 0;
-  const params = new URLSearchParams({q, entity, min_conf});
-  const res = await fetch('/api/intel?' + params.toString());
-  document.getElementById('results').textContent = JSON.stringify(await res.json(), null, 2);
-}
-async function loadPages(){
-  const res = await fetch('/api/pages');
-  const pages = await res.json();
-  const ul = document.getElementById('pages');
-  ul.innerHTML = '';
-  pages.forEach(p => {
-    const li = document.createElement('li');
-    const a = document.createElement('a');
-    a.href = '#'; a.textContent = p.url || p.id;
-    a.onclick = async () => {
-      const d = await (await fetch('/api/page?url=' + encodeURIComponent(p.url))).json();
-      alert(JSON.stringify(d, null, 2));
-    };
-    li.appendChild(a); ul.appendChild(li);
-  });
-}
-document.getElementById('search-form').addEventListener('submit', fetchIntel);
-document.getElementById('load-pages').addEventListener('click', loadPages);
-</script>
-</body>
-</html>
+  {% include "components/pages.html" %}
+{% endblock %}

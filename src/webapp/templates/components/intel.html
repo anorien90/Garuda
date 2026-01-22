@@ -1,0 +1,11 @@
+<article>
+  <h3>Intel Search (SQL)</h3>
+  <form id="search-form">
+    <input id="q" name="q" type="search" placeholder="keyword or entity"/>
+    <input id="entity" name="entity" type="text" placeholder="Entity (optional)"/>
+    <label>Min confidence <input id="min_conf" name="min_conf" type="number" min="0" max="1" step="0.05" value="0"/></label>
+    <label>Limit <input id="limit" name="limit" type="number" min="1" max="200" value="50"/></label>
+    <button type="submit">Search</button>
+  </form>
+  <div id="results" class="cards"></div>
+</article>
