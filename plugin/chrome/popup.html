@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial,sans-serif; min-width:260px; }
+    .tab { display: inline-block; margin: 0 8px 4px 0; padding: 6px 13px; border-radius: 8px 8px 0 0; cursor: pointer; background: #ddd;}
+    .tab.selected { background: #fff; border: 1px solid #bbb; border-bottom: none; }
+    .tabcontent { display: none; border: 1px solid #bbb; border-top:none; padding: 12px;}
+    .tabcontent.active { display: block; }
+    button { margin:7px 0 2px; width: 170px; height: 35px; font-weight: bold;}
+    input,select {margin-top:8px; width:170px;}
+    #search-results { max-height: 180px; overflow:auto; margin-top:7px;}
+    #status { margin-top: 9px; font-size: 12px; min-height: 18px;}
+  </style>
+</head>
+<body>
+  <div>
+    <span class="tab selected" data-tab="record">Record</span>
+    <span class="tab" data-tab="search">Search</span>
+    <span class="tab" data-tab="view">View</span>
+    <span class="tab" data-tab="settings">Settings</span>
+  </div>
+  <div class="tabcontent active" id="tab-record">
+    <input id="session_id" type="text" placeholder="Session ID (opt)">
+    <br>
+    <button id="mark-page">Mark Page (Shift+P)</button><br>
+    <button id="mark-element">Mark Element (Shift+E)</button><br>
+    <button id="mark-image">Mark Image (Shift+I)</button>
+    <div id="status"></div>
+  </div>
+  <div class="tabcontent" id="tab-search">
+    <input id="search-q" type="text" placeholder="Enter keyword..."><br>
+    <button id="search-btn">Search</button>
+    <div id="search-results"></div>
+  </div>
+  <div class="tabcontent" id="tab-view">
+    <input id="view-url" type="text" placeholder="Enter full page URL"><br>
+    <button id="view-btn">Fetch Page</button>
+    <pre id="view-content" style="max-width:250px;max-height:160px;overflow:auto;"></pre>
+  </div>
+  <div class="tabcontent" id="tab-settings">
+    <input id="server-url" type="text" placeholder="http://127.0.0.1:8765"><br>
+    <input id="api-key" type="text" placeholder="API Key"><br>
+    <button id="save-settings">Save</button>
+    <div id="settings-saved" style="color:green;"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
