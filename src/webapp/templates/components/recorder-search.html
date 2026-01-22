@@ -1,0 +1,28 @@
+<article class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
+  <div>
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Recorder</p>
+    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Raw Intel Search (Recorder /search)</h3>
+    <p class="text-sm text-slate-600 dark:text-slate-300">Keyword search with optional entity/page filters from the recorder backend.</p>
+  </div>
+  <form id="recorder-search-form" class="space-y-3">
+    <input id="recorder-q" type="search" placeholder="keyword" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"/>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Entity type
+        <input id="recorder-entity-type" type="text" placeholder="company, person, ..." class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Page type
+        <input id="recorder-page-type" type="text" placeholder="homepage, profile, ..." class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+    </div>
+    <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+      Limit
+      <input id="recorder-limit" type="number" min="1" max="100" value="20" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+    </label>
+    <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-brand-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
+      Search recorder
+    </button>
+  </form>
+  <div id="recorder-results" class="grid gap-3"></div>
+</article>

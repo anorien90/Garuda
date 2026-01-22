@@ -1,18 +1,21 @@
 {% extends "base.html" %}
 
 {% block main %}
-  <section class="grid gap-6 lg:grid-cols-3">
-    <article class="lg:col-span-2 space-y-6">
-      {% include "components/settings.html" %}
+  <section class="grid gap-6 lg:grid-cols-12">
+    <article class="lg:col-span-8 space-y-6">
       {% include "components/status.html" %}
-      <div class="grid gap-6 md:grid-cols-2">
+      <div class="grid gap-6 lg:grid-cols-2">
         {% include "components/intel.html" %}
         {% include "components/semantic.html" %}
       </div>
       {% include "components/chat.html" %}
+      {% include "components/recorder-search.html" %}
+      {% include "components/crawl.html" %}
     </article>
-    <aside class="space-y-6">
+    <aside class="lg:col-span-4 space-y-6 lg:sticky lg:top-6 h-full">
+      {% include "components/settings.html" %}
       {% include "components/pages.html" %}
+      {% include "components/recorder-admin.html" %}
     </aside>
   </section>
 {% endblock %}

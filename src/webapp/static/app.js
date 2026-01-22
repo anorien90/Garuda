@@ -18,9 +18,16 @@ const els = {
   themeToggle: document.getElementById('theme-toggle'),
   themeToggleLabel: document.getElementById('theme-toggle-label'),
   themeToggleIcon: document.getElementById('theme-toggle-icon'),
+  recorderSearchForm: document.getElementById('recorder-search-form'),
+  recorderResults: document.getElementById('recorder-results'),
+  recorderHealth: document.getElementById('recorder-health'),
+  recorderHealthRefresh: document.getElementById('recorder-health-refresh'),
+  recorderMarkForm: document.getElementById('recorder-mark-form'),
+  recorderMarkStatus: document.getElementById('recorder-mark-status'),
+  crawlForm: document.getElementById('crawl-form'),
+  crawlOutputPanel: document.getElementById('crawl-output-panel'),
 };
 
-/* ---------- Theme handling ---------- */
 function applyTheme(mode) {
   const root = document.documentElement;
   const next = mode === 'dark' ? 'dark' : 'light';
@@ -36,7 +43,6 @@ function initTheme() {
   applyTheme(saved || (prefersDark ? 'dark' : 'light'));
 }
 
-/* ---------- Settings ---------- */
 function loadSettings() {
   els.baseUrl.value = localStorage.getItem('garuda_base_url') || 'http://localhost:8080';
   els.apiKey.value = localStorage.getItem('garuda_api_key') || '';
@@ -56,7 +62,6 @@ async function fetchWithAuth(path, opts = {}) {
   return fetch(url, { ...opts, headers });
 }
 
-/* ---------- Render helpers ---------- */
 function pill(text) {
   return `<span class="inline-flex items-center rounded-full bg-brand-100 text-brand-800 dark:bg-brand-900/60 dark:text-brand-100 px-2 py-0.5 text-xs font-medium">${text}</span>`;
 }
@@ -171,7 +176,6 @@ function summarizeIntel(r) {
   return parts.filter(Boolean).join('');
 }
 
-/* ---------- Render sections ---------- */
 function renderIntel(results, target) {
   target.innerHTML = '';
   if (!results || !results.length) {
@@ -259,7 +263,7 @@ function renderPages(pages) {
         Entity: ${p.entity_type || '-'} • Page: ${p.page_type || '-'} • Score: ${p.score ?? '-'}
       </div>
       <div class="text-xs text-slate-500 dark:text-slate-400">Last fetch: ${p.last_fetch_at || p.created_at || ''}</div>
-      <button class="inline-flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-slate-800 dark:text-slate-100 hover:border-brand-400 dark:hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900" data-url="${p.url}">View details</button>
+      <button class="inline-flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-slate-800 dark:text-slate-100 hover:border-brand-400 dark:hover;border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900" data-url="${p.url}">View details</button>
     `;
     card.querySelector('button').onclick = () => loadPageDetail(p.url);
     els.pagesList.appendChild(card);
@@ -286,7 +290,52 @@ async function loadPageDetail(url) {
   els.pageDetail.appendChild(card);
 }
 
-/* ---------- Actions ---------- */
+function renderRecorderResults(data) {
+  els.recorderResults.innerHTML = '';
+  const results = (data && data.results) || [];
+  if (!results.length) {
+    els.recorderResults.innerHTML = '<article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm text-slate-500">No recorder results.</article>';
+    return;
+  }
+  results.forEach((r) => {
+    const card = document.createElement('article');
+    card.className = 'rounded-lg border border-slate-200 dark;border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 space-y-2';
+    card.innerHTML = `
+      <div class="text-sm font-semibold text-slate-900 dark:text-white break-words">${r.url || '(no url)'}</div>
+      <div class="text-xs text-slate-500 dark:text-slate-400">Entity: ${r.entity_type || '-'} • Page: ${r.page_type || '-'}</div>
+      <div class="text-xs text-slate-500 dark:text-slate-400">Score: ${r.score ?? '-'}</div>
+      <details class="text-sm text-slate-600 dark:text-slate-300"><summary class="cursor-pointer">Raw JSON</summary><pre class="mt-2 text-xs bg-slate-100 dark:bg-slate-800/70 rounded p-2 overflow-auto">${JSON.stringify(r, null, 2)}</pre></details>
+    `;
+    els.recorderResults.appendChild(card);
+  });
+}
+function renderRecorderHealth(data) {
+  els.recorderHealth.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'grid gap-3 sm:grid-cols-2';
+  grid.innerHTML = `
+    <article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 space-y-2">
+      <div class="text-sm font-semibold text-slate-800 dark:text-slate-100">Health</div>
+      <div class="text-sm text-slate-700 dark:text-slate-300">${JSON.stringify(data.health || data, null, 2)}</div>
+    </article>
+    <article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 space-y-2">
+      <div class="text-sm font-semibold text-slate-800 dark:text-slate-100">Queue</div>
+      <div class="text-sm text-slate-700 dark:text-slate-300">${JSON.stringify(data.queue || data, null, 2)}</div>
+    </article>
+  `;
+  els.recorderHealth.appendChild(grid);
+}
+function renderCrawlOutput(payload) {
+  els.crawlOutputPanel.innerHTML = '';
+  const card = document.createElement('article');
+  card.className = 'rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 space-y-2';
+  card.innerHTML = `
+    <div class="text-sm font-semibold text-slate-900 dark:text-white">Crawl response</div>
+    <details class="text-sm text-slate-600 dark:text-slate-300" open><summary class="cursor-pointer">Raw JSON</summary><pre class="mt-2 text-xs bg-slate-100 dark:bg-slate-800/70 rounded p-2 overflow-auto">${JSON.stringify(payload, null, 2)}</pre></details>
+  `;
+  els.crawlOutputPanel.appendChild(card);
+}
+
 async function refreshStatus() {
   if (els.statusCards) els.statusCards.innerHTML = '<article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Loading...</article>';
   const res = await fetchWithAuth('/api/status');
@@ -316,7 +365,7 @@ async function semanticSearch(e) {
 }
 async function chatAsk(e) {
   e.preventDefault();
-  els.chatAnswer.innerHTML = '<article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Thinking…</article>';
+  els.chatAnswer.innerHTML = '<article class="rounded-lg border border-slate-200 dark;border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Thinking…</article>';
   const body = {
     question: document.getElementById('chat-q').value,
     entity: document.getElementById('chat-entity').value,
@@ -335,8 +384,73 @@ async function loadPages() {
   const res = await fetchWithAuth('/api/pages?limit=' + limit);
   renderPages(await res.json());
 }
+async function recorderSearch(e) {
+  e.preventDefault();
+  els.recorderResults.innerHTML = '<article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Loading…</article>';
+  const params = new URLSearchParams({
+    q: document.getElementById('recorder-q').value,
+    entity_type: document.getElementById('recorder-entity-type').value,
+    page_type: document.getElementById('recorder-page-type').value,
+    limit: document.getElementById('recorder-limit').value || 20,
+  });
+  const res = await fetchWithAuth('/search?' + params.toString());
+  renderRecorderResults(await res.json());
+}
+async function recorderRefreshHealth() {
+  els.recorderHealth.innerHTML = '<article class="rounded-lg border border-slate-200 dark;border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Loading…</article>';
+  const [healthRes, queueRes] = await Promise.all([
+    fetchWithAuth('/healthz'),
+    fetchWithAuth('/queue_info'),
+  ]);
+  const health = await healthRes.json();
+  const queue = await queueRes.json();
+  renderRecorderHealth({ health, queue });
+}
+async function recorderMark(e) {
+  e.preventDefault();
+  els.recorderMarkStatus.textContent = 'Sending…';
+  const body = {
+    url: document.getElementById('recorder-mark-url').value,
+    mode: document.getElementById('recorder-mark-mode').value || 'manual',
+    session_id: document.getElementById('recorder-mark-session').value || 'ui-session',
+  };
+  const res = await fetchWithAuth('/mark_page', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  els.recorderMarkStatus.textContent = `Result: ${JSON.stringify(data)}`;
+}
+async function runCrawl(e) {
+  e.preventDefault();
+  els.crawlOutputPanel.innerHTML = '<article class="rounded-lg border border-slate-200 dark;border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Running…</article>';
+  // This assumes a backend shim exists that proxies to search.py CLI; adjust endpoint as implemented.
+  const body = {
+    entity: document.getElementById('crawl-entity').value,
+    type: document.getElementById('crawl-type').value,
+    max_pages: Number(document.getElementById('crawl-max-pages').value || 10),
+    total_pages: Number(document.getElementById('crawl-total-pages').value || 50),
+    max_depth: Number(document.getElementById('crawl-max-depth').value || 2),
+    score_threshold: Number(document.getElementById('crawl-score-threshold').value || 35),
+    seed_limit: Number(document.getElementById('crawl-seed-limit').value || 25),
+    use_selenium: !!document.getElementById('crawl-use-selenium').checked,
+    active_mode: !!document.getElementById('crawl-active-mode').checked,
+    output: document.getElementById('crawl-output').value || '',
+    list_pages: Number(document.getElementById('crawl-list-pages').value || 0),
+    fetch_text: document.getElementById('crawl-fetch-url').value || '',
+    refresh: !!document.getElementById('crawl-refresh').checked,
+    refresh_batch: Number(document.getElementById('crawl-refresh-batch').value || 50),
+  };
+  // Replace /api/crawl with the actual endpoint that wraps search.py; this is the UI hook.
+  const res = await fetchWithAuth('/api/crawl', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  renderCrawlOutput(await res.json());
+}
 
-/* ---------- Init ---------- */
 initTheme();
 loadSettings();
 els.saveBtn?.addEventListener('click', saveSettings);
@@ -349,4 +463,8 @@ els.themeToggle?.addEventListener('click', () => {
   const current = localStorage.getItem('garuda_theme') || (document.documentElement.classList.contains('dark') ? 'dark' : 'light');
   applyTheme(current === 'dark' ? 'light' : 'dark');
 });
+els.recorderSearchForm?.addEventListener('submit', recorderSearch);
+els.recorderHealthRefresh?.addEventListener('click', recorderRefreshHealth);
+els.recorderMarkForm?.addEventListener('submit', recorderMark);
+els.crawlForm?.addEventListener('submit', runCrawl);
 refreshStatus();

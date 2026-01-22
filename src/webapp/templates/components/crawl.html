@@ -1,0 +1,87 @@
+<article class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
+  <div>
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Crawler</p>
+    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Launch / Inspect Crawl (search.py)</h3>
+    <p class="text-sm text-slate-600 dark:text-slate-300">Run crawler/refresh/list/fetch actions from the backend CLI via API shim.</p>
+  </div>
+  <form id="crawl-form" class="space-y-3">
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Entity
+        <input id="crawl-entity" type="text" placeholder="Acme Corp" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Type
+        <select id="crawl-type" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500">
+          <option value="company">company</option>
+          <option value="person">person</option>
+          <option value="topic">topic</option>
+        </select>
+      </label>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Max pages / domain
+        <input id="crawl-max-pages" type="number" min="1" max="200" value="10" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Total pages
+        <input id="crawl-total-pages" type="number" min="1" max="1000" value="50" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Max depth
+        <input id="crawl-max-depth" type="number" min="0" max="6" value="2" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Score threshold
+        <input id="crawl-score-threshold" type="number" step="0.5" value="35" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="inline-flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-100">
+        <input id="crawl-use-selenium" type="checkbox" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500"/>
+        Use Selenium
+      </label>
+      <label class="inline-flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-100">
+        <input id="crawl-active-mode" type="checkbox" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500"/>
+        Active mode (record your browsing)
+      </label>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Seed limit
+        <input id="crawl-seed-limit" type="number" min="1" max="100" value="25" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Output (optional)
+        <input id="crawl-output" type="text" placeholder="crawl-output.json" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        List pages (limit)
+        <input id="crawl-list-pages" type="number" min="0" max="500" value="0" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Fetch text URL
+        <input id="crawl-fetch-url" type="url" placeholder="https://example.com/page" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="inline-flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-100">
+        <input id="crawl-refresh" type="checkbox" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500"/>
+        Refresh stored pages
+      </label>
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Refresh batch
+        <input id="crawl-refresh-batch" type="number" min="1" max="500" value="50" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+    </div>
+    <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-brand-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
+      Run crawl / list / fetch / refresh
+    </button>
+  </form>
+  <div id="crawl-output-panel" class="grid gap-3"></div>
+</article>

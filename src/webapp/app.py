@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_cors import CORS
 from functools import wraps
 import logging
@@ -51,6 +51,17 @@ def api_key_required(fn):
 @app.get("/")
 def home():
     return render_template("index.html")
+
+@app.get("/favicon.ico")
+def favicon():
+    return send_from_directory(
+        app.static_folder, "favicon.ico", mimetype="image/vnd.microsoft.icon"
+    )
+
+
+@app.get("/static/<path:filename>")
+def static_files(filename):
+    return send_from_directory(app.static_folder, filename)
 
 
 @app.get("/api/status")

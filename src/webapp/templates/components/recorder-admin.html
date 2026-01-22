@@ -1,0 +1,32 @@
+<section class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
+  <div class="flex items-start justify-between gap-3">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Recorder Admin</p>
+      <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Health & Queue</h3>
+      <p class="text-sm text-slate-600 dark:text-slate-300">Monitor recorder queue depth and health; trigger a test mark event.</p>
+    </div>
+    <button id="recorder-health-refresh" class="inline-flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-medium text-slate-800 dark:text-slate-100 hover:border-brand-400 dark:hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
+      Refresh
+    </button>
+  </div>
+  <div id="recorder-health" class="grid gap-3 text-sm"></div>
+  <form id="recorder-mark-form" class="space-y-3">
+    <div class="text-sm font-semibold text-slate-800 dark:text-slate-100">Send test mark_page</div>
+    <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+      URL
+      <input id="recorder-mark-url" type="url" placeholder="https://example.com" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500" required/>
+    </label>
+    <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+      Mode
+      <input id="recorder-mark-mode" type="text" placeholder="manual" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+    </label>
+    <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+      Session ID
+      <input id="recorder-mark-session" type="text" placeholder="session-123" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+    </label>
+    <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-brand-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
+      Send mark_page
+    </button>
+    <div id="recorder-mark-status" class="text-sm text-slate-600 dark:text-slate-300"></div>
+  </form>
+</section>
