@@ -1,5 +1,13 @@
-<section>
-  <h3>Status</h3>
-  <button id="refresh-status">Refresh</button>
-  <div id="status-cards" class="cards"></div>
+<section class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
+  <div class="flex items-start justify-between gap-3">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Health</p>
+      <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Status</h3>
+      <p class="text-sm text-slate-600 dark:text-slate-300">Backend, vector store, and model availability.</p>
+    </div>
+    <button id="refresh-status" class="inline-flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-medium text-slate-800 dark:text-slate-100 hover:border-brand-400 dark:hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
+      Refresh
+    </button>
+  </div>
+  <div id="status-cards" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
 </section>

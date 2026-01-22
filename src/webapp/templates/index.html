@@ -1,12 +1,18 @@
 {% extends "base.html" %}
 
 {% block main %}
-  {% include "components/settings.html" %}
-  {% include "components/status.html" %}
-  <section class="grid">
-    {% include "components/intel.html" %}
-    {% include "components/semantic.html" %}
-    {% include "components/chat.html" %}
+  <section class="grid gap-6 lg:grid-cols-3">
+    <article class="lg:col-span-2 space-y-6">
+      {% include "components/settings.html" %}
+      {% include "components/status.html" %}
+      <div class="grid gap-6 md:grid-cols-2">
+        {% include "components/intel.html" %}
+        {% include "components/semantic.html" %}
+      </div>
+      {% include "components/chat.html" %}
+    </article>
+    <aside class="space-y-6">
+      {% include "components/pages.html" %}
+    </aside>
   </section>
-  {% include "components/pages.html" %}
 {% endblock %}

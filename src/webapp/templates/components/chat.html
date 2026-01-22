@@ -1,10 +1,26 @@
-<article>
-  <h3>Chat (RAG)</h3>
-  <form id="chat-form">
-    <textarea id="chat-q" rows="3" placeholder="Ask a question about collected intel"></textarea>
-    <label>Entity (optional) <input id="chat-entity" type="text"/></label>
-    <label>Top K <input id="chat-topk" type="number" min="1" max="20" value="6"/></label>
-    <button type="submit">Ask</button>
+<article class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
+  <div>
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">RAG</p>
+    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Chat</h3>
+  </div>
+  <form id="chat-form" class="space-y-3">
+    <label class="space-y-2 text-sm font-medium text-slate-800 dark:text-slate-100">
+      Question
+      <textarea id="chat-q" rows="3" placeholder="Ask a question about collected intel" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"></textarea>
+    </label>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Entity (optional)
+        <input id="chat-entity" type="text" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Top K
+        <input id="chat-topk" type="number" min="1" max="20" value="6" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+    </div>
+    <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-brand-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
+      Ask
+    </button>
   </form>
-  <div id="chat-answer"></div>
+  <div id="chat-answer" class="space-y-3"></div>
 </article>

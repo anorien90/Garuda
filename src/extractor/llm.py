@@ -549,7 +549,7 @@ class LLMIntelExtractor:
         payload = {"model": self.model, "prompt": prompt, "stream": False}
         
         try:
-            resp = requests.post(self.ollama_url, json=payload, timeout=60)
+            resp = requests.post(self.ollama_url, json=payload, timeout=120)
             resp.raise_for_status()
             ans = resp.json().get("response", "").strip()
             return ans if ans else "INSUFFICIENT_DATA"

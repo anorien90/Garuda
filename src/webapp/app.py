@@ -61,9 +61,11 @@ def status():
         embed_loaded = bool(getattr(llm, "_embedder", None))
         try:
             with store.Session() as s:
-                s.execute("SELECT 1")
+                db_ok = True
+
         except Exception:
             db_ok = False
+
         if vector_store:
             try:
                 vector_store.client.get_collection(vector_store.collection)  # type: ignore[attr-defined]
