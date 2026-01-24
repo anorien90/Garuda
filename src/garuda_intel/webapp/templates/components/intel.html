@@ -1,13 +1,21 @@
 <article class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
   <div>
-    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Entity Intel</p>
-    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Search Results</h3>
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Structured</p>
+    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Intel Search (SQL)</h3>
   </div>
   <form id="search-form" class="space-y-3">
-    <input id="q" type="search" placeholder="search query" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"/>
-    <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
-      Limit <input id="limit" name="limit" type="number" min="1" max="200" value="50" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
-    </label>
+    <input id="q" name="q" type="search" placeholder="keyword or entity" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"/>
+    <input id="entity" name="entity" type="text" placeholder="Entity (optional)" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"/>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Min confidence
+        <input id="min_conf" name="min_conf" type="number" min="0" max="1" step="0.05" value="0" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Limit
+        <input id="limit" name="limit" type="number" min="1" max="200" value="50" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+      </label>
+    </div>
     <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-brand-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
       Search
     </button>

@@ -12,8 +12,9 @@
 
   <div class="mt-6">
     <section data-tab-panel="overview" class="grid gap-6">
-        <div class="p-12 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-            <p class="text-slate-500">System metrics and active crawl tasks will appear here.</p>
+        {% include "components/status.html" %}
+        <div class="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
+          <p class="text-sm text-slate-600 dark:text-slate-300">Use the tabs above to search intel (SQL), semantic vector search (Qdrant), trigger crawls, manage recorder health, and browse captured pages. Connection status is shown above.</p>
         </div>
     </section>
     
