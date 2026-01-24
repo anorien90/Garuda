@@ -1,409 +1,211 @@
-# Garuda
+# Garuda: Entity-Aware Web Intelligence Crawler
 
-Garuda is an entity-aware web intelligence crawler. It seeds the web, explores pages with a scoring frontier, extracts structured intel (LLM + heuristics), stores results in SQL, and optionally indexes embeddings in Qdrant for semantic/hybrid search. It includes a mark server + Chrome helper to manually capture pages, and an interactive chat mode over the collected knowledge.
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+<!-- Uncomment and update the following badges if you add CI or coverage configs
+[![CI](https://github.com/anorien90/Garuda/actions/workflows/ci.yml/badge.svg)](https://github.com/anorien90/Garuda/actions)
+[![codecov](https://codecov.io/gh/anorien90/Garuda/branch/main/graph/badge.svg)](https://codecov.io/gh/anorien90/Garuda)
+-->
 
-## Features
-- **Seeding & discovery:** DuckDuckGo seeding (`ddgs`), regex/domain pattern guidance, URL scoring + frontier.
-- **Browsing & capture:** Selenium-based browser with recording hooks; manual capture via mark server or Chrome extension.
-- **Extraction:** Heuristic extractor (HTML→text, metadata, images, fingerprints) plus LLM intel extractor with reflection/verification.
-- **Persistence:** SQLAlchemy store (SQLite by default) for pages, content, links, intelligence, fingerprints.
-- **Vector search (optional):** Qdrant-backed embeddings for semantic/hybrid search.
-- **Interactive chat:** RAG-style CLI chat over SQL + optional Qdrant.
-- **APIs:** Flask mark/search/view endpoints with API key protection.
-- **Chrome helper:** Popup UI to mark pages/elements/images and search/view stored items.
+Garuda is a modular, entity-focused intelligence crawler leveraging LLMs, heuristic extraction, and hybrid search. It offers a web UI, API, and Chrome extension for streamlined open source investigations and research.
 
-## Architecture (high level)
-- `src/search.py`: CLI entry (`run`, `chat`, `intel`).
-- `src/recorder/app.py`: Flask mark/search/view service (`/mark_page`, `/search`, `/view`, `/healthz`).
-- `src/active_browser.py`, `src/browser.py`: Selenium browser + recording helpers.
-- `src/explorer/`: Intelligent explorer (frontier, URL scoring, extraction).
-- `src/extractor/`: Heuristic + LLM extraction (`LLMIntelExtractor`, `ContentExtractor`).
-- `src/persistence/`: SQLAlchemy store and models; fingerprints (`src/types/fingerprint.py`).
-- `src/vector_store.py`: Qdrant client wrapper.
-- `plugin/chrome/`: Extension popup UI.
+---
 
-Data flow:
-1) **Seed** queries → candidates (DuckDuckGo) → scored frontier.  
-2) **Explore** with Selenium → capture HTML/text/links → store in SQL.  
-3) **Extract** intel with LLM + heuristics; verify; persist intel + embeddings (if Qdrant enabled).  
-4) **Query** via CLI (`intel`/`chat`) or API `/search` + optional UI/extension.
+## Table of Contents
+
+- [Key Features](#key-features)
+- [New in v2.x / Refactored](#new-in-v2x--refactored)
+- [Architecture Overview](#architecture-overview)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Quickstart](#quickstart)
+- [Screenshots](#screenshots)
+- [Example Use Cases](#example-use-cases)
+- [Demo Data & Public Datasets](#demo-data--public-datasets)
+- [Contributing](#contributing)
+- [Bug Reporting & Help](#bug-reporting--help)
+- [Security Notes](#security-notes)
+- [Roadmap](#roadmap)
+
+---
+
+## Key Features
+
+- **Web UI**: Modern Flask-based search, statistics, and API endpoints (`/api/intel`, `/api/intel/semantic`, `/api/status`).
+- **Chrome Extension**: Record pages/elements/images directly in-browser, with fast search, preview, and session handling.
+- **Multi-layer Extraction**: HTML, metadata, images, fingerprints + LLM-powered intel with reflection/verification.
+- **Structured Storage**: SQLAlchemy models and Qdrant vector search integration, with flexible config.
+- **Conversational & Semantic Search**: RAG-style CLI & web chat across database and vectors.
+- **Modular & Extensible**: Python modules organized for easy development and customization.
+- **Strong Security**: API-key protected endpoints, CORS restrictors, and local LLM/vector options.
+
+---
+
+## New in v2.x / Refactored
+
+- 🖥️ **Modern Flask Web App** in [`src/webapp/`](src/webapp): Quick access to search, status, and semantic endpoints.
+- 🧩 **Improved Chrome Extension** in [`plugin/chrome/`](plugin/chrome): Multi-tab popup, session-aware marking, Tailwind-powered layout, settings persistence.
+- 📦 **Configurable settings** via `.env` and `src/webapp/config.py`.
+- 🦾 **Cleaner repo structure**: All modules isolated under `src/`, for browser, extractor, vector, database, etc.
+- ⚡ **Enhanced extensibility**: Add new storage, LLM/vector backends, and UI components with ease.
+- ✨ **UI improvements**: Extension features tabbed nav (Record, Search, View, Settings).
+
+---
+
+## Architecture Overview
+
+```mermaid
+flowchart LR
+    A[Seed (DuckDuckGo, Patterns)] --> B[Discover/Score Frontier]
+    B --> C[Browser & Recorder]
+    C --> D[Extraction: Heuristic & LLM]
+    D --> E[SQL DB/Qdrant]
+    E --> F[API/UI/Chrome Ext/CLI]
+```
+
+- **WebApp**: [`src/webapp/app.py`](src/webapp/app.py)
+- **Database**: [`src/database/`](src/database/)
+- **Search CLI**: [`src/search.py`](src/search.py)
+- **Extension**: [`plugin/chrome/`](plugin/chrome/)
+
+---
 
 ## Requirements
+
 - Python 3.10+
-- Chrome/Chromium + chromedriver on PATH (for crawling)
-- Optional: Qdrant (local or remote) for vectors
-- Optional: Ollama (defaults to `granite3.1-dense:8b`) or any OpenAI-compatible endpoint
+- Chrome/Chromium & chromedriver (for crawling)
+- (Optional) [Qdrant](https://qdrant.tech/) for vector search
+- (Optional) [Ollama](https://ollama.ai/) or OpenAI-compatible backend
+- (Optional) `pytest`, `ruff`, `mypy` for development
+
+---
 
 ## Installation
+
 ```bash
 git clone https://github.com/anorien90/Garuda.git
 cd Garuda
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt   # or: pip install -e .
+pip install -r requirements.txt
 ```
+
+---
 
 ## Configuration
-Environment variables (examples):
-- `MARK_SERVER_API_KEY=changeme`
-- `MARK_SERVER_HOST=0.0.0.0`
-- `MARK_SERVER_PORT=8765`
-- `MARK_SERVER_DB=sqlite:///crawler.db`
-- `QDRANT_URL=http://localhost:6333`
-- `QDRANT_COLLECTION=pages`
-- `OLLAMA_URL=http://localhost:11434/api/generate`
-- `OLLAMA_MODEL=granite3.1-dense:8b`
-- `BROWSER_HEADLESS=true`
 
-You can also use a `.env` file (loaders are present in code).
+Configure via `.env` (see included sample) or environment variables. Main entries:
+
+```env
+GARUDA_DB_URL=sqlite:///crawler.db
+GARUDA_OLLAMA_URL=http://localhost:11434/api/generate
+GARUDA_OLLAMA_MODEL=granite3.1-dense:8b
+GARUDA_QDRANT_URL=http://localhost:6333
+GARUDA_QDRANT_COLLECTION=pages
+GARUDA_UI_API_KEY=changeme
+GARUDA_UI_CORS_ORIGINS=*
+```
+
+---
 
 ## Quickstart
-1) **Start mark server** (for manual capture/API):
+
+**1. Start the Web UI:**
 ```bash
-python -m src.recorder.app
-# or inside CLI run: mark server thread auto-starts when enabled
+python -m src.webapp.app
+```
+Web UI available at `http://localhost:5000` (default).
+
+**2. Run a crawl:**
+```bash
+python -m src.search run --sqlite-path crawler.db --qdrant-url http://localhost:6333 --model granite3.1-dense:8b --verbose
 ```
 
-2) **Run a crawl** (SQLite; Qdrant optional):
-```bash
-python -m src.search run \
-  --sqlite-path crawler.db \
-  --qdrant-url http://localhost:6333 \
-  --qdrant-collection pages \
-  --ollama-url http://localhost:11434/api/generate \
-  --model granite3.1-dense:8b \
-  --verbose
-```
+**3. Query intel via Web UI, CLI, or Extension.**
 
-3) **Query intel (semantic/hybrid):**
-```bash
-python -m src.search intel --semantic-search "acme corp leadership" --top-k 5
-# or SQL-only search flags as needed
-```
+**4. Use the Chrome Extension:**
+- Load `plugin/chrome/` as an unpacked extension in Chrome.
+- Go to the extension, set your API endpoint and key in "Settings".
+- Use "Record", "Search", and "View" tabs to interact!
 
-4) **Chat over collected knowledge (RAG):**
-```bash
-python -m src.search chat \
-  --entity-name "Acme Corp" \
-  --sqlite-path crawler.db \
-  --qdrant-url http://localhost:6333 \
-  --qdrant-collection pages
-```
+---
 
-5) **Mark pages via API (requires API key):**
-```bash
-curl -X POST "http://localhost:8765/mark_page" \
-  -H "x-api-key: $MARK_SERVER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://example.com","mode":"page","session_id":"demo"}'
-```
-View stored page:
-```bash
-curl -H "x-api-key: $MARK_SERVER_API_KEY" "http://localhost:8765/view?url=https://example.com"
-```
+## Screenshots
 
-6) **Chrome extension:**
-- Load `plugin/chrome` as an unpacked extension in Chrome.
-- Use popup tabs to mark/search/view; API key must match mark server.
+<!--
+Paste your screenshots in a `screenshots/` folder and reference them here.
+-->
+**Web UI:**  
+![Web UI Home](screenshots/webui_home.png)
 
-## Optional: lightweight web UI
-A simple Flask/React (or pure Flask + HTMX) UI can sit on `/ui` to:
-- Search intel (filters: query, entity, type, confidence, date)
-- Browse pages and view stored text/HTML/metadata
-- Trigger chat against stored data (proxy to CLI logic or backend endpoint)
+**Extension - Record:**  
+![Chrome Record Tab](screenshots/ext_record.png)
 
-See `webapp/` sample below.
+**Extension - Search:**  
+![Chrome Search Tab](screenshots/ext_search.png)
 
-## Development
-- Run tests: `pytest`
-- Lint/format: `ruff check . && black .`
-- Typecheck: `mypy src`
-- Suggested make targets:
-  - `make dev` (install deps with dev extras)
-  - `make crawl` (sample crawl command)
-  - `make chat` (sample chat)
-  - `make up` (docker compose: qdrant + mark server + ui)
+---
 
-## Security notes
-- Protect mark/search/view endpoints with strong API keys; restrict CORS in production.
-- Be mindful of LLM prompts leaking sensitive data; run Ollama locally when possible.
-- Headless browser can execute untrusted JS—consider sandboxing or domain allowlists.
+## Example Use Cases
 
-## Roadmap / next improvements
-- Config unification and validation (pydantic-settings)
-- Vector/LLM provider interfaces with fallbacks
-- Alembic migrations + schema docs
-- Better dedupe/normalization of URLs and links
-- More extractor fingerprints per entity type
-- UI polish: live crawl status, intel review/approval# Garuda
+- **Corporate OSINT**: Gather, structure, and search company leadership and product info.
+- **Brand Monitoring**: Find, tag, and cluster factual and reputational mentions.
+- **Threat Intelligence**: Explore and extract intelligence on infrastructure, actors, & TTPs from public data.
+- **Academic Research**: Build entity datasets and knowledge graphs from news, orgs, science, and more.
 
-Garuda is an entity-aware web intelligence crawler. It seeds the web, explores pages with a scoring frontier, extracts structured intel (LLM + heuristics), stores results in SQL, and optionally indexes embeddings in Qdrant for semantic/hybrid search. It includes a mark server + Chrome helper to manually capture pages, and an interactive chat mode over the collected knowledge.
+---
 
-## Features
-- **Seeding & discovery:** DuckDuckGo seeding (`ddgs`), regex/domain pattern guidance, URL scoring + frontier.
-- **Browsing & capture:** Selenium-based browser with recording hooks; manual capture via mark server or Chrome extension.
-- **Extraction:** Heuristic extractor (HTML→text, metadata, images, fingerprints) plus LLM intel extractor with reflection/verification.
-- **Persistence:** SQLAlchemy store (SQLite by default) for pages, content, links, intelligence, fingerprints.
-- **Vector search (optional):** Qdrant-backed embeddings for semantic/hybrid search.
-- **Interactive chat:** RAG-style CLI chat over SQL + optional Qdrant.
-- **APIs:** Flask mark/search/view endpoints with API key protection.
-- **Chrome helper:** Popup UI to mark pages/elements/images and search/view stored items.
+## Demo Data & Public Datasets
 
-## Architecture (high level)
-- `src/search.py`: CLI entry (`run`, `chat`, `intel`).
-- `src/recorder/app.py`: Flask mark/search/view service (`/mark_page`, `/search`, `/view`, `/healthz`).
-- `src/active_browser.py`, `src/browser.py`: Selenium browser + recording helpers.
-- `src/explorer/`: Intelligent explorer (frontier, URL scoring, extraction).
-- `src/extractor/`: Heuristic + LLM extraction (`LLMIntelExtractor`, `ContentExtractor`).
-- `src/persistence/`: SQLAlchemy store and models; fingerprints (`src/types/fingerprint.py`).
-- `src/vector_store.py`: Qdrant client wrapper.
-- `plugin/chrome/`: Extension popup UI.
+- Example Datasets:  
+  - [Sample Intel Export](https://github.com/anorien90/Garuda/releases/download/demo/intel_sample.json)
+  - [Demo Crawl Output](https://github.com/anorien90/Garuda/releases/download/demo/demo_crawl.db)
+- Have a public crawl/dataset link? [Let us know](#bug-reporting--help)!
 
-Data flow:
-1) **Seed** queries → candidates (DuckDuckGo) → scored frontier.  
-2) **Explore** with Selenium → capture HTML/text/links → store in SQL.  
-3) **Extract** intel with LLM + heuristics; verify; persist intel + embeddings (if Qdrant enabled).  
-4) **Query** via CLI (`intel`/`chat`) or API `/search` + optional UI/extension.
+---
 
-## Requirements
-- Python 3.10+
-- Chrome/Chromium + chromedriver on PATH (for crawling)
-- Optional: Qdrant (local or remote) for vectors
-- Optional: Ollama (defaults to `granite3.1-dense:8b`) or any OpenAI-compatible endpoint
+## Contributing
 
-## Installation
-```bash
-git clone https://github.com/anorien90/Garuda.git
-cd Garuda
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt   # or: pip install -e .
-```
+Contributions are very welcome—bugfixes, doc improvements, and new features!  
+To start:
+- Fork & PR, or file an issue.
+- Code must pass tests (`pytest`), linters (`ruff`, `black`), and typing (`mypy`).
+- See [`CONTRIBUTING.md`](CONTRIBUTING.md) if present for guidelines.
 
-## Configuration
-Environment variables (examples):
-- `MARK_SERVER_API_KEY=changeme`
-- `MARK_SERVER_HOST=0.0.0.0`
-- `MARK_SERVER_PORT=8765`
-- `MARK_SERVER_DB=sqlite:///crawler.db`
-- `QDRANT_URL=http://localhost:6333`
-- `QDRANT_COLLECTION=pages`
-- `OLLAMA_URL=http://localhost:11434/api/generate`
-- `OLLAMA_MODEL=granite3.1-dense:8b`
-- `BROWSER_HEADLESS=true`
+---
 
-You can also use a `.env` file (loaders are present in code).
+## Bug Reporting & Help
 
-## Quickstart
-1) **Start mark server** (for manual capture/API):
-```bash
-python -m src.recorder.app
-# or inside CLI run: mark server thread auto-starts when enabled
-```
+- **Issues**: [File a GitHub issue](https://github.com/anorien90/Garuda/issues)
+- **Email**: <h.lorenzen@nxs.solutions>
+- **Discussions**: (Planned)  
+Please provide logs, error messages, and details for faster help!
 
-2) **Run a crawl** (SQLite; Qdrant optional):
-```bash
-python -m src.search run \
-  --sqlite-path crawler.db \
-  --qdrant-url http://localhost:6333 \
-  --qdrant-collection pages \
-  --ollama-url http://localhost:11434/api/generate \
-  --model granite3.1-dense:8b \
-  --verbose
-```
+---
 
-3) **Query intel (semantic/hybrid):**
-```bash
-python -m src.search intel --semantic-search "acme corp leadership" --top-k 5
-# or SQL-only search flags as needed
-```
+## Security Notes
 
-4) **Chat over collected knowledge (RAG):**
-```bash
-python -m src.search chat \
-  --entity-name "Acme Corp" \
-  --sqlite-path crawler.db \
-  --qdrant-url http://localhost:6333 \
-  --qdrant-collection pages
-```
+- All API endpoints protected via API Key (set in env/config).
+- Restrict CORS origins in production.
+- LLM prompts may leak sensitive/confidential data—run locally if feasible.
+- Headless browser can execute JS—use domain allowlists or sandboxing methods.
 
-5) **Mark pages via API (requires API key):**
-```bash
-curl -X POST "http://localhost:8765/mark_page" \
-  -H "x-api-key: $MARK_SERVER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://example.com","mode":"page","session_id":"demo"}'
-```
-View stored page:
-```bash
-curl -H "x-api-key: $MARK_SERVER_API_KEY" "http://localhost:8765/view?url=https://example.com"
-```
+---
 
-6) **Chrome extension:**
-- Load `plugin/chrome` as an unpacked extension in Chrome.
-- Use popup tabs to mark/search/view; API key must match mark server.
+## Roadmap
 
-## Optional: lightweight web UI
-A simple Flask/React (or pure Flask + HTMX) UI can sit on `/ui` to:
-- Search intel (filters: query, entity, type, confidence, date)
-- Browse pages and view stored text/HTML/metadata
-- Trigger chat against stored data (proxy to CLI logic or backend endpoint)
+- Enhanced user/account system for multi-user UI
+- Prebuilt Docker & demo compose setup
+- More advanced extractor fingerprints
+- Support for additional vector/LLM providers
+- Live crawl status dashboard in UI
+- Export & report modules
 
-See `webapp/` sample below.
+---
 
-## Development
-- Run tests: `pytest`
-- Lint/format: `ruff check . && black .`
-- Typecheck: `mypy src`
-- Suggested make targets:
-  - `make dev` (install deps with dev extras)
-  - `make crawl` (sample crawl command)
-  - `make chat` (sample chat)
-  - `make up` (docker compose: qdrant + mark server + ui)
+**License:** GPL-3.0 © [anorien90](https://github.com/anorien90)
 
-## Security notes
-- Protect mark/search/view endpoints with strong API keys; restrict CORS in production.
-- Be mindful of LLM prompts leaking sensitive data; run Ollama locally when possible.
-- Headless browser can execute untrusted JS—consider sandboxing or domain allowlists.
-
-## Roadmap / next improvements
-- Config unification and validation (pydantic-settings)
-- Vector/LLM provider interfaces with fallbacks
-- Alembic migrations + schema docs
-- Better dedupe/normalization of URLs and links
-- More extractor fingerprints per entity type
-- UI polish: live crawl status, intel review/approval# Garuda
-
-Garuda is an entity-aware web intelligence crawler. It seeds the web, explores pages with a scoring frontier, extracts structured intel (LLM + heuristics), stores results in SQL, and optionally indexes embeddings in Qdrant for semantic/hybrid search. It includes a mark server + Chrome helper to manually capture pages, and an interactive chat mode over the collected knowledge.
-
-## Features
-- **Seeding & discovery:** DuckDuckGo seeding (`ddgs`), regex/domain pattern guidance, URL scoring + frontier.
-- **Browsing & capture:** Selenium-based browser with recording hooks; manual capture via mark server or Chrome extension.
-- **Extraction:** Heuristic extractor (HTML→text, metadata, images, fingerprints) plus LLM intel extractor with reflection/verification.
-- **Persistence:** SQLAlchemy store (SQLite by default) for pages, content, links, intelligence, fingerprints.
-- **Vector search (optional):** Qdrant-backed embeddings for semantic/hybrid search.
-- **Interactive chat:** RAG-style CLI chat over SQL + optional Qdrant.
-- **APIs:** Flask mark/search/view endpoints with API key protection.
-- **Chrome helper:** Popup UI to mark pages/elements/images and search/view stored items.
-
-## Architecture (high level)
-- `src/search.py`: CLI entry (`run`, `chat`, `intel`).
-- `src/recorder/app.py`: Flask mark/search/view service (`/mark_page`, `/search`, `/view`, `/healthz`).
-- `src/active_browser.py`, `src/browser.py`: Selenium browser + recording helpers.
-- `src/explorer/`: Intelligent explorer (frontier, URL scoring, extraction).
-- `src/extractor/`: Heuristic + LLM extraction (`LLMIntelExtractor`, `ContentExtractor`).
-- `src/persistence/`: SQLAlchemy store and models; fingerprints (`src/types/fingerprint.py`).
-- `src/vector_store.py`: Qdrant client wrapper.
-- `plugin/chrome/`: Extension popup UI.
-
-Data flow:
-1) **Seed** queries → candidates (DuckDuckGo) → scored frontier.  
-2) **Explore** with Selenium → capture HTML/text/links → store in SQL.  
-3) **Extract** intel with LLM + heuristics; verify; persist intel + embeddings (if Qdrant enabled).  
-4) **Query** via CLI (`intel`/`chat`) or API `/search` + optional UI/extension.
-
-## Requirements
-- Python 3.10+
-- Chrome/Chromium + chromedriver on PATH (for crawling)
-- Optional: Qdrant (local or remote) for vectors
-- Optional: Ollama (defaults to `granite3.1-dense:8b`) or any OpenAI-compatible endpoint
-
-## Installation
-```bash
-git clone https://github.com/anorien90/Garuda.git
-cd Garuda
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt   # or: pip install -e .
-```
-
-## Configuration
-Environment variables (examples):
-- `MARK_SERVER_API_KEY=changeme`
-- `MARK_SERVER_HOST=0.0.0.0`
-- `MARK_SERVER_PORT=8765`
-- `MARK_SERVER_DB=sqlite:///crawler.db`
-- `QDRANT_URL=http://localhost:6333`
-- `QDRANT_COLLECTION=pages`
-- `OLLAMA_URL=http://localhost:11434/api/generate`
-- `OLLAMA_MODEL=granite3.1-dense:8b`
-- `BROWSER_HEADLESS=true`
-
-You can also use a `.env` file (loaders are present in code).
-
-## Quickstart
-1) **Start mark server** (for manual capture/API):
-```bash
-python -m src.recorder.app
-# or inside CLI run: mark server thread auto-starts when enabled
-```
-
-2) **Run a crawl** (SQLite; Qdrant optional):
-```bash
-python -m src.search run \
-  --sqlite-path crawler.db \
-  --qdrant-url http://localhost:6333 \
-  --qdrant-collection pages \
-  --ollama-url http://localhost:11434/api/generate \
-  --model granite3.1-dense:8b \
-  --verbose
-```
-
-3) **Query intel (semantic/hybrid):**
-```bash
-python -m src.search intel --semantic-search "acme corp leadership" --top-k 5
-# or SQL-only search flags as needed
-```
-
-4) **Chat over collected knowledge (RAG):**
-```bash
-python -m src.search chat \
-  --entity-name "Acme Corp" \
-  --sqlite-path crawler.db \
-  --qdrant-url http://localhost:6333 \
-  --qdrant-collection pages
-```
-
-5) **Mark pages via API (requires API key):**
-```bash
-curl -X POST "http://localhost:8765/mark_page" \
-  -H "x-api-key: $MARK_SERVER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://example.com","mode":"page","session_id":"demo"}'
-```
-View stored page:
-```bash
-curl -H "x-api-key: $MARK_SERVER_API_KEY" "http://localhost:8765/view?url=https://example.com"
-```
-
-6) **Chrome extension:**
-- Load `plugin/chrome` as an unpacked extension in Chrome.
-- Use popup tabs to mark/search/view; API key must match mark server.
-
-## Optional: lightweight web UI
-A simple Flask/React (or pure Flask + HTMX) UI can sit on `/ui` to:
-- Search intel (filters: query, entity, type, confidence, date)
-- Browse pages and view stored text/HTML/metadata
-- Trigger chat against stored data (proxy to CLI logic or backend endpoint)
-
-See `webapp/` sample below.
-
-## Development
-- Run tests: `pytest`
-- Lint/format: `ruff check . && black .`
-- Typecheck: `mypy src`
-- Suggested make targets:
-  - `make dev` (install deps with dev extras)
-  - `make crawl` (sample crawl command)
-  - `make chat` (sample chat)
-  - `make up` (docker compose: qdrant + mark server + ui)
-
-## Security notes
-- Protect mark/search/view endpoints with strong API keys; restrict CORS in production.
-- Be mindful of LLM prompts leaking sensitive data; run Ollama locally when possible.
-- Headless browser can execute untrusted JS—consider sandboxing or domain allowlists.
-
-## Roadmap / next improvements
-- Config unification and validation (pydantic-settings)
-- Vector/LLM provider interfaces with fallbacks
-- Alembic migrations + schema docs
-- Better dedupe/normalization of URLs and links
-- More extractor fingerprints per entity type
-- UI polish: live crawl status, intel review/approval
+<!--
+Links:
+[View all code and UI files in anorien90/Garuda](https://github.com/anorien90/Garuda)
+-->
