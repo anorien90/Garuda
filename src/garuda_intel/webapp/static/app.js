@@ -1,101 +1,49 @@
 const els = {
-  // --- Settings & Status ---
   baseUrl: document.getElementById('base-url'),
   apiKey: document.getElementById('api-key'),
   saveBtn: document.getElementById('save-settings'),
   saveStatus: document.getElementById('save-status'),
   statusBtn: document.getElementById('refresh-status'),
   statusCards: document.getElementById('status-cards'),
-
-  // --- Forms & Results ---
   searchForm: document.getElementById('search-form'),
   results: document.getElementById('results'),
-  
   semanticForm: document.getElementById('semantic-form'),
   semanticResults: document.getElementById('semantic-results'),
-  
   chatForm: document.getElementById('chat-form'),
   chatAnswer: document.getElementById('chat-answer'),
-  
   pagesBtn: document.getElementById('load-pages'),
   pagesLimit: document.getElementById('pages-limit'),
   pagesList: document.getElementById('pages'),
   pageDetail: document.getElementById('page-detail'),
-  
-  // --- Recorder & Crawl ---
   recorderSearchForm: document.getElementById('recorder-search-form'),
   recorderResults: document.getElementById('recorder-results'),
   recorderHealth: document.getElementById('recorder-health'),
-  recorderHealthRefresh: document.getElementById('recorder-health-refresh'),
-  recorderMarkForm: document.getElementById('recorder-mark-form'),
-  recorderMarkStatus: document.getElementById('recorder-mark-status'),
-  
-  crawlForm: document.getElementById('crawl-form'),
-  crawlOutputPanel: document.getElementById('crawl-output-panel'),
-
-  // --- Navigation & Theme ---
   themeToggle: document.getElementById('theme-toggle'),
   themeToggleLabel: document.getElementById('theme-toggle-label'),
   themeToggleIcon: document.getElementById('theme-toggle-icon'),
   tabButtons: document.querySelectorAll('[data-tab-btn]'),
   tabPanels: document.querySelectorAll('[data-tab-panel]'),
+  recorderHealthRefresh: document.getElementById('recorder-health-refresh'),
+  crawlForm: document.getElementById('crawl-form'),
+  crawlOutputPanel: document.getElementById('crawl-output-panel'),
+  
 };
 
-/* =========================================
-   CORE: Fetch & Settings
-   ========================================= */
+/* BASIC UI UTILS */
 
-function loadSettings() {
-  // Default to the Flask port 8080 if not set
-  els.baseUrl.value = localStorage.getItem('garuda_base_url') || 'http://localhost:8080';
-  els.apiKey.value = localStorage.getItem('garuda_api_key') || '';
+function pill(text) {
+  return `<span class="inline-flex items-center rounded-full bg-brand-100 text-brand-800 dark:bg-brand-900/60 dark:text-brand-100 px-2 py-0.5 text-xs font-medium">${text}</span>`;
 }
-
-function saveSettings() {
-  localStorage.setItem('garuda_base_url', els.baseUrl.value.trim());
-  localStorage.setItem('garuda_api_key', els.apiKey.value.trim());
-  els.saveStatus.textContent = 'Saved';
-  setTimeout(() => (els.saveStatus.textContent = ''), 1500);
-  refreshStatus(); // Refresh connection immediately on save
+function chips(arr = []) {
+  return arr.filter(Boolean).map((t) => pill(t)).join(' ');
 }
-
-async function fetchWithAuth(path, opts = {}) {
-  // 1. Get Base URL, ensure no trailing slash
-  let base = (els.baseUrl.value || 'http://localhost:8080').trim().replace(/\/+$/, '');
-  
-  // 2. Ensure path starts with /
-  const endpoint = path.startsWith('/') ? path : `/${path}`;
-  const url = base + endpoint;
-
-  // 3. Prepare Headers
-  const headers = { ...(opts.headers || {}) };
-  const key = els.apiKey.value.trim();
-  if (key) headers['X-API-Key'] = key;
-
-  try {
-    const res = await fetch(url, { ...opts, headers });
-    if (!res.ok) {
-        // Handle 404/500 errors gracefully
-        const text = await res.text();
-        throw new Error(`API Error ${res.status}: ${text}`);
-    }
-    return res;
-  } catch (err) {
-    // If fetch failed completely (network error, wrong port)
-    console.error("Fetch failed:", err);
-    throw new Error(`Connection failed to ${url}. Check if backend is running on port 8080.`);
-  }
-}
-
-/* =========================================
-   UI: Theme & Tabs
-   ========================================= */
 
 function applyTheme(mode) {
   const root = document.documentElement;
   const next = mode === 'dark' ? 'dark' : 'light';
   root.classList.toggle('dark', next === 'dark');
   localStorage.setItem('garuda_theme', next);
+  // Optional: update theme toggle UI if you have labels/icons
   if (els.themeToggleLabel) els.themeToggleLabel.textContent = next === 'dark' ? 'Dark' : 'Light';
   if (els.themeToggleIcon) els.themeToggleIcon.textContent = next === 'dark' ? '🌙' : '🌞';
 }
@@ -106,153 +54,138 @@ function initTheme() {
   applyTheme(saved || (prefersDark ? 'dark' : 'light'));
 }
 
-function setActiveTab(name) {
-  els.tabButtons.forEach((btn) => {
-    const isActive = btn.dataset.tabBtn === name;
-    // Simple toggle logic for Tailwind classes
-    if(isActive) {
-        btn.classList.add('active', 'bg-brand-600', 'text-white', 'shadow-sm', 'border-transparent');
-        btn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border-slate-200', 'dark:border-slate-700');
-    } else {
-        btn.classList.remove('active', 'bg-brand-600', 'text-white', 'shadow-sm', 'border-transparent');
-        btn.classList.add('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border-slate-200', 'dark:border-slate-700');
-    }
-  });
-  els.tabPanels.forEach((panel) => {
-    panel.classList.toggle('hidden', panel.dataset.tabPanel !== name);
-  });
-  localStorage.setItem('garuda_active_tab', name);
+function collapsible(label, content) {
+  if (!content) return '';
+  return `
+      <details class="text-xs my-1 group">
+        <summary class="cursor-pointer font-bold">${label}</summary>
+        <div class="mt-2 ml-2">${content}</div>
+      </details>
+  `;
 }
 
-function initTabs() {
-  const saved = localStorage.getItem('garuda_active_tab') || 'overview';
-  setActiveTab(saved);
-  els.tabButtons.forEach((btn) => {
-    btn.addEventListener('click', () => setActiveTab(btn.dataset.tabBtn));
-  });
+function renderKeyValTable(obj) {
+  if (!obj || typeof obj !== 'object') return '';
+  return `
+    <table class="text-xs w-full mb-2">
+      <tbody>
+        ${Object.entries(obj).map(([k, v]) => `<tr><td class="pr-1 text-slate-400">${k}</td><td>${v}</td></tr>`).join('')}
+      </tbody>
+    </table>
+  `;
 }
 
-/* =========================================
-   RENDERERS
-   ========================================= */
+function renderIntelCard(hit) {
+  // Accepts either {entity, confidence, data, ...} or plain .data or .basic_info shape
+  let info = hit.data?.basic_info || hit.basic_info || {};
+  let data = hit.data || hit;
+  let metrics = data.metrics || [];
+  let persons = data.persons || [];
+  let jobs = data.jobs || [];
+  let locations = data.locations || [];
+  let events = data.events || [];
+  let products = data.products || [];
+  let financials = data.financials || [];
 
-function pill(text) {
-  return `<span class="inline-flex items-center rounded-full bg-brand-100 text-brand-800 dark:bg-brand-900/60 dark:text-brand-100 px-2 py-0.5 text-xs font-medium">${text}</span>`;
-}
-function chips(arr = []) {
-  return arr.filter(Boolean).map((t) => pill(t)).join(' ');
+  return `
+  <article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 space-y-3">
+    <div class="flex justify-between items-center">
+      <div>
+        <h4 class="text-lg font-semibold text-slate-900 dark:text-white">${hit.entity || info.official_name || ''}</h4>
+        <div class="text-xs uppercase text-brand-600">${hit.entity_type || ''}</div>
+      </div>
+      <span class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded" title="Confidence">${hit.confidence ?? (hit.score?.toFixed?.(2) ?? '')}</span>
+    </div>
+    ${info.description ? `<div class="text-sm text-slate-700 dark:text-slate-300">${info.description}</div>` : ''}
+
+    <div class="flex flex-wrap gap-2 mt-2">
+      ${info.industry ? pill(info.industry) : ''}
+      ${info.ticker ? pill('Ticker: '+info.ticker) : ''}
+      ${info.founded ? pill('Founded: '+info.founded) : ''}
+      ${info.website ? pill('🌐 ' + info.website) : ''}
+    </div>
+    ${metrics.length || financials.length ? collapsible('Financial Metrics',
+      `<ul>${metrics.map(m=>`<li>${pill(m.type)}: <b>${m.value}</b> ${m.unit||''}</li>`).join('')}
+                     ${financials.map(f=>`<li>${pill(f.year)} ${pill(f.currency)} Rev: <b>${f.revenue || ''}</b> Profit: <b>${f.profit||''}</b></li>`).join('')}
+      </ul>`) : ''}
+    ${persons.length ? collapsible('Persons', 
+      persons.map(p=>`<div class="mb-1">
+      <b>${p.name||''}</b> 
+      ${p.title?pill(p.title):''} 
+      ${p.role?pill(p.role):''}
+      <div class="text-xs text-slate-500">${p.bio||''}</div>
+      </div>`).join('')
+      ) : ''}
+    ${jobs.length ? collapsible('Jobs', jobs.map(j=>`<div class="mb-1">${pill(j.title)} at ${j.location||''} <div class="text-xs text-slate-500">${j.description||''}</div></div>`).join('')) : ''}
+    ${locations.length ? collapsible('Locations', locations.map(l=>`<div class="mb-1">${pill(l.type)} ${l.city||''}, ${l.country||''} (${l.address||''})</div>`).join('')) : ''}
+    ${events.length ? collapsible('Events', events.map(ev=>`<div class="mb-1"><strong>${ev.title || ''}</strong> &mdash; ${ev.date||''}<div class="text-xs">${ev.description||''}</div></div>`).join('')) : ''}
+    ${products.length ? collapsible('Products', products.map(pr=>`<div class="mb-1">${pill(pr.status||'')} <b>${pr.name||''}</b> <span class="text-xs text-slate-400">${pr.description||''}</span></div>`).join('')) : ''}
+    ${data.text ? collapsible("Hit Text", `<div class='text-xs bg-slate-100 dark:bg-slate-800 p-2 rounded overflow-x-auto'>${data.text?.slice(0,500)}${data.text?.length>500?'…':''}</div>`) : ''}
+    <details class="text-xs text-slate-400 cursor-pointer mt-2"><summary>Raw Data</summary>
+      <pre class="mt-2 bg-slate-100 dark:bg-slate-800 p-2 rounded overflow-auto">${JSON.stringify(hit, null, 2)}</pre>
+    </details>
+  </article>
+  `;
 }
 
-// 1. Status Bar Renderer
+/* RENDERERS */
+
 function renderStatus(data) {
   els.statusCards.innerHTML = '';
   if (!data || typeof data !== 'object') {
     els.statusCards.innerHTML = '<div class="p-4 text-sm text-rose-500">Invalid status data received.</div>';
     return;
   }
-  
   const items = [
-      { label: 'Database', status: data.db_ok, info: '' },
-      { label: 'Vector Store', status: data.qdrant_ok, info: data.qdrant_url || 'Not configured' },
-      { label: 'Embedding', status: data.embedding_loaded, info: data.model || 'No model' },
-      { label: 'Ollama', status: !!data.ollama_url, info: data.ollama_url || 'Not configured' }
+      { label: 'Database', status: data.db_ok, info: '', diag: data.db_ok ? '' : 'DB not reachable or query failed.' },
+      { label: 'Vector Store', status: data.qdrant_ok, info: data.qdrant_url || 'Not configured', diag: data.qdrant_ok ? '' : 'Qdrant unreachable or collection missing.' },
+      { label: 'Embedding', status: data.embedding_loaded, info: data.model || 'No model', diag: data.embedding_loaded ? '' : 'Embedding model not loaded.' },
+      { label: 'Ollama', status: !!data.ollama_url, info: data.ollama_url || 'Not configured', diag: data.ollama_url ? '' : 'Ollama API URL not set.' }
   ];
 
   items.forEach(item => {
       const div = document.createElement('div');
-      div.className = `p-3 rounded-lg border ${item.status ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20' : 'border-rose-200 bg-rose-50 dark:bg-rose-900/20'}`;
+      div.className = `p-3 rounded-lg border flex flex-col gap-1 ${item.status ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20' : 'border-rose-200 bg-rose-50 dark:bg-rose-900/20'}`;
       div.innerHTML = `
         <div class="flex items-center gap-2">
-            <div class="h-2 w-2 rounded-full ${item.status ? 'bg-emerald-500' : 'bg-rose-500'}"></div>
-            <span class="text-xs font-bold uppercase text-slate-700 dark:text-slate-200">${item.label}</span>
+          <div class="h-2 w-2 rounded-full ${item.status ? 'bg-emerald-500' : 'bg-rose-500'}" title="${item.status ? 'Healthy' : 'Unhealthy'}"></div>
+          <span class="text-xs font-bold uppercase text-slate-700 dark:text-slate-200">${item.label}</span>
         </div>
         <div class="text-[10px] mt-1 text-slate-500 dark:text-slate-400 truncate">${item.info}</div>
+        ${item.diag&&(!item.status) ? `<div class="text-[10px] text-rose-600 mt-1 italic">${item.diag}</div>` : ''}
       `;
+      div.title = item.diag || '';
       els.statusCards.appendChild(div);
   });
 }
 
-// 2. Intel Renderer
 function renderIntel(results, target) {
   target.innerHTML = '';
-  // Handle both array and single object responses
   const list = Array.isArray(results) ? results : [results];
-  
   if (!list.length) {
     target.innerHTML = '<div class="p-4 text-sm text-slate-500">No results found.</div>';
     return;
   }
-  list.forEach((r) => {
-    const card = document.createElement('article');
-    card.className = 'rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 space-y-2';
-    
-    // Parse Intel Data
-    const data = r.data || {};
-    const info = data.basic_info || {};
-    const metrics = (data.metrics || []).slice(0,3).map(m => `${m.type}: ${m.value}`).join(' • ');
-
-    card.innerHTML = `
-      <div class="flex justify-between items-start">
-        <div>
-            <div class="text-xs text-slate-500 uppercase font-bold">${r.entity_type || 'Entity'}</div>
-            <h4 class="text-lg font-semibold text-slate-900 dark:text-white">${r.entity || info.official_name || '(unknown)'}</h4>
-        </div>
-        <span class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded">Conf: ${r.confidence ?? 0}</span>
-      </div>
-      
-      ${info.description ? `<p class="text-sm text-slate-700 dark:text-slate-300">${info.description}</p>` : ''}
-      ${metrics ? `<div class="text-xs text-slate-500 mt-2">${metrics}</div>` : ''}
-      
-      <details class="text-xs text-slate-400 cursor-pointer"><summary>Raw Data</summary>
-        <pre class="mt-2 bg-slate-100 dark:bg-slate-800 p-2 rounded overflow-auto">${JSON.stringify(r, null, 2)}</pre>
-      </details>
-    `;
-    target.appendChild(card);
-  });
+  list.forEach((r) => target.insertAdjacentHTML('beforeend', renderIntelCard(r)));
 }
 
-// 3. Semantic Search Renderer
 function renderSemantic(data, target) {
-  target.innerHTML = '';
-  // app.py returns {"semantic": [...]}
-  const hits = (data && data.semantic) ? data.semantic : [];
-  
-  if (!hits.length) {
-    target.innerHTML = '<div class="p-4 text-sm text-slate-500">No semantic matches found.</div>';
-    return;
-  }
-  
-  hits.forEach((h) => {
-    const card = document.createElement('div');
-    card.className = 'p-3 border-b border-slate-100 dark:border-slate-800 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/50';
-    card.innerHTML = `
-        <div class="flex justify-between text-xs mb-1">
-            <a href="${h.url}" target="_blank" class="text-brand-600 hover:underline truncate w-3/4">${h.url}</a>
-            <span class="text-slate-400 font-mono">${h.score ? h.score.toFixed(3) : '0.00'}</span>
-        </div>
-        <p class="text-sm text-slate-700 dark:text-slate-300 line-clamp-2">"${h.text || h.snippet || 'No text content'}"</p>
-        <div class="mt-1 flex gap-2">
-            ${h.entity ? `<span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1 rounded text-slate-500">${h.entity}</span>` : ''}
-            ${h.page_type ? `<span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-1 rounded text-slate-500">${h.page_type}</span>` : ''}
-        </div>
-    `;
-    target.appendChild(card);
-  });
+  // Accept hits in .semantic, fallback to top array
+  const hits = (data && data.semantic) ? data.semantic : Array.isArray(data) ? data : [];
+  target.innerHTML = hits.length
+    ? hits.map(renderIntelCard).join('')
+    : '<div class="p-4 text-sm text-slate-500">No semantic matches found.</div>';
 }
 
-// 4. Pages Renderer
 function renderPages(pages) {
   els.pagesList.innerHTML = '';
-  // app.py returns a direct List [...]
   if (!pages || !Array.isArray(pages) || !pages.length) {
     els.pagesList.innerHTML = '<div class="p-4 text-sm text-slate-500">No pages indexed.</div>';
     return;
   }
-  
   pages.forEach((p) => {
     const card = document.createElement('article');
     card.className = 'p-3 border rounded-lg border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 hover:border-brand-300 transition cursor-pointer';
-    
     card.innerHTML = `
       <div class="flex justify-between items-start">
         <div class="w-full">
@@ -269,80 +202,51 @@ function renderPages(pages) {
         </div>
       </div>
     `;
-    // Click to load details
     card.onclick = () => loadPageDetail(p.url);
     els.pagesList.appendChild(card);
   });
 }
 
-// 5. Chat Renderer
 function renderChat(payload) {
   els.chatAnswer.innerHTML = '';
   if (!payload || !payload.answer) {
     els.chatAnswer.innerHTML = '<div class="p-4 text-sm text-rose-500">No answer generated.</div>';
     return;
   }
-  
   const div = document.createElement('div');
   div.className = 'space-y-4';
   div.innerHTML = `
     <div class="prose prose-sm dark:prose-invert max-w-none bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg border border-slate-100 dark:border-slate-800">
         <p>${payload.answer.replace(/\n/g, '<br>')}</p>
     </div>
-    
     <div>
         <h5 class="text-xs font-bold uppercase text-slate-500 mb-2">Sources & Context</h5>
         <div class="space-y-2">
-            ${(payload.context || []).map(ctx => `
-                <div class="text-xs p-2 border border-slate-100 dark:border-slate-800 rounded bg-white dark:bg-slate-900">
-                    <div class="flex justify-between text-brand-600 mb-1">
-                        <span class="truncate w-3/4">${ctx.url || 'Database Context'}</span>
-                        <span>${ctx.score ? ctx.score.toFixed(2) : ''}</span>
-                    </div>
-                    <p class="text-slate-600 dark:text-slate-400 line-clamp-2">"${ctx.snippet || ctx.text || ''}"</p>
-                </div>
-            `).join('')}
+            ${(payload.context || []).map(renderIntelCard).join('')}
         </div>
     </div>
   `;
   els.chatAnswer.appendChild(div);
 }
 
-// 6. Recorder Results
 function renderRecorderResults(data) {
   els.recorderResults.innerHTML = '';
-  const results = data.results || []; // app.py returns {"results": [...]}
-  
+  const results = data.results || [];
   if (!results.length) {
     els.recorderResults.innerHTML = '<div class="p-4 text-sm text-slate-500">No recorder hits.</div>';
     return;
   }
-  
-  results.forEach(r => {
-    const div = document.createElement('div');
-    div.className = 'p-2 border-b border-slate-100 dark:border-slate-800 text-sm';
-    div.innerHTML = `
-        <div class="font-medium text-slate-900 dark:text-white truncate">${r.url}</div>
-        <div class="text-xs text-slate-500">${r.entity_type} • ${r.page_type} • Score: ${r.score}</div>
-    `;
-    els.recorderResults.appendChild(div);
-  });
+  results.forEach(r => els.recorderResults.insertAdjacentHTML('beforeend', renderIntelCard(r)));
 }
-
-/* =========================================
-   ACTIONS
-   ========================================= */
 
 async function loadPageDetail(url) {
   els.pageDetail.innerHTML = '<div class="p-4 animate-pulse text-sm">Fetching page content...</div>';
   try {
     const res = await fetchWithAuth(`/api/page?url=${encodeURIComponent(url)}`);
     const data = await res.json(); // returns { url, content: {...}, page: {...} }
-    
-    const content = data.content || {}; 
+    const content = data.content || {};
     const meta = content.metadata || {};
     const text = content.text || "";
-
     els.pageDetail.innerHTML = `
         <div class="space-y-4">
             <div class="border-b border-slate-200 dark:border-slate-700 pb-2">
@@ -351,11 +255,9 @@ async function loadPageDetail(url) {
                     ${chips([meta.content_type, `Size: ${text.length}`])}
                 </div>
             </div>
-            
             <div class="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-mono h-64 overflow-y-auto whitespace-pre-wrap text-slate-700 dark:text-slate-300">
                 ${text.slice(0, 5000)}${text.length > 5000 ? '...' : ''}
             </div>
-
             <details class="text-xs"><summary class="cursor-pointer font-bold">Metadata JSON</summary>
                 <pre class="mt-2 bg-slate-100 dark:bg-slate-800 p-2 rounded overflow-auto">${JSON.stringify(meta, null, 2)}</pre>
             </details>
@@ -365,6 +267,8 @@ async function loadPageDetail(url) {
     els.pageDetail.innerHTML = `<div class="p-4 text-rose-500">Error: ${e.message}</div>`;
   }
 }
+
+/* Add full rest of setup/handlers as before, unchanged except render functions usage... */
 
 async function refreshStatus() {
   try {
@@ -509,7 +413,41 @@ async function runCrawl(e) {
 
 /* =========================================
    INITIALIZATION
-   ========================================= */
+========================================= */
+
+function loadSettings() {
+  // Default to the Flask port 8080 if not set
+  if (!els.baseUrl || !els.apiKey) return;
+  els.baseUrl.value = localStorage.getItem('garuda_base_url') || 'http://localhost:8080';
+  els.apiKey.value = localStorage.getItem('garuda_api_key') || '';
+}
+
+function saveSettings() {
+  if (!els.baseUrl || !els.apiKey || !els.saveStatus) return;
+  localStorage.setItem('garuda_base_url', els.baseUrl.value.trim());
+  localStorage.setItem('garuda_api_key', els.apiKey.value.trim());
+  els.saveStatus.textContent = 'Saved';
+  setTimeout(() => (els.saveStatus.textContent = ''), 1500);
+  refreshStatus(); // Optional: refresh status after saving settings
+}
+
+function setActiveTab(name) {
+  els.tabButtons.forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tabBtn === name);
+  });
+  els.tabPanels.forEach((panel) => {
+    panel.classList.toggle('hidden', panel.dataset.tabPanel !== name);
+  });
+  localStorage.setItem('garuda_active_tab', name);
+}
+
+function initTabs() {
+  const saved = localStorage.getItem('garuda_active_tab') || 'overview';
+  setActiveTab(saved);
+  els.tabButtons.forEach((btn) => {
+    btn.addEventListener('click', () => setActiveTab(btn.dataset.tabBtn));
+  });
+}
 
 function init() {
     initTheme();

@@ -1,73 +1,16 @@
-<form id="settings-form" class="card-surface rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-6">
-  <input type="text" name="username" value="GarudaAdmin" autocomplete="username" class="hidden">
-
-  <div class="flex items-center justify-between">
-    <div>
-      <h3 class="text-lg font-bold text-slate-900 dark:text-white">Configuration</h3>
-      <p class="text-xs text-slate-500">Persistent local storage sync</p>
-    </div>
-    <div id="save-status" class="text-[10px] font-bold text-emerald-500 uppercase"></div>
+<article class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
+  <div>
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Vector</p>
+    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Semantic Search (Qdrant)</h3>
   </div>
-
-  <div class="space-y-5">
-    <div class="space-y-3">
-      <h4 class="text-[10px] font-bold uppercase tracking-widest text-brand-600">Connectivity</h4>
-      <div class="grid gap-3">
-        <label class="block space-y-1">
-          <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">Base API URL</span>
-          <input id="base-url" type="url" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-sm" placeholder="http://localhost:8080">
-        </label>
-        <label class="block space-y-1">
-          <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">X-API-Key</span>
-          <input id="api-key" type="password" autocomplete="current-password" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-sm">
-        </label>
-      </div>
-    </div>
-
-    <div class="space-y-3">
-      <h4 class="text-[10px] font-bold uppercase tracking-widest text-brand-600">Data Stores</h4>
-      <div class="grid gap-3">
-        <label class="block space-y-1">
-          <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">SQL Database URL</span>
-          <input id="db-url" type="text" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-sm">
-        </label>
-        <div class="grid grid-cols-2 gap-2">
-          <label class="block space-y-1">
-            <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">Qdrant URL</span>
-            <input id="qdrant-url" type="text" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-sm">
-          </label>
-          <label class="block space-y-1">
-            <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">Collection</span>
-            <input id="qdrant-collection" type="text" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-sm">
-          </label>
-        </div>
-      </div>
-    </div>
-
-    <div class="space-y-3">
-      <h4 class="text-[10px] font-bold uppercase tracking-widest text-brand-600">AI Engine</h4>
-      <div class="grid gap-3">
-        <label class="block space-y-1">
-          <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">Ollama API URL</span>
-          <input id="ollama-url" type="text" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-sm">
-        </label>
-        <div class="grid grid-cols-2 gap-2">
-          <label class="block space-y-1">
-            <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">LLM Model</span>
-            <input id="ollama-model" type="text" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-sm">
-          </label>
-          <label class="block space-y-1">
-            <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">Embed Model</span>
-            <input id="embed-model" type="text" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-sm">
-          </label>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="pt-4 border-t border-slate-100 dark:border-slate-800">
-    <button type="submit" class="w-full py-2 bg-brand-600 text-white rounded-lg font-bold hover:bg-brand-500 transition shadow-lg shadow-brand-500/20">
-      Apply & Save Config
+  <form id="semantic-form" class="space-y-3">
+    <input id="semantic-q" type="search" placeholder="semantic query" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"/>
+    <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+      Top K <input id="semantic-topk" type="number" min="1" max="50" value="10" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+    </label>
+    <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-brand-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
+      Search
     </button>
-  </div>
-</form>
+  </form>
+  <div id="semantic-results" class="grid gap-3"></div>
+</article>
