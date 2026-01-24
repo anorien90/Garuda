@@ -28,13 +28,14 @@ services:
     volumes:
       - qdrant-db-data:/qdrant/storage
 
-  # Optionally, add Ollama or LLM provider (upgrade as needed)
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: garuda-ollama
-  #   restart: unless-stopped
-  #   ports:
-  #     - "11434:11434"
+  ollama:
+    image: ollama/ollama:latest
+    container_name: garuda-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    profiles:
+      - "llm"
 
 volumes:
   garuda-db-data:
