@@ -5,19 +5,25 @@ services:
     restart: unless-stopped
     environment:
       - GARUDA_UI_API_KEY=${GARUDA_UI_API_KEY:-changeme}
-      - GARUDA_DB_URL=${GARUDA_DB_URL:-sqlite:///crawler.db}
-      - GARUDA_QDRANT_URL=${GARUDA_QDRANT_URL:-http://qdrant:6333}
+      - GARUDA_DB_URL=${GARUDA_DB_URL:-sqlite:////app/data/crawler.db}
+      - GARUDA_QDRANT_URL=${GARUDA_QDRANT_URL:-http://garuda-qdrant:6333}
       - GARUDA_QDRANT_COLLECTION=${GARUDA_QDRANT_COLLECTION:-pages}
-      - GARUDA_OLLAMA_URL=${GARUDA_OLLAMA_URL:-http://ollama:11434/api/generate}
+      - GARUDA_OLLAMA_URL=${GARUDA_OLLAMA_URL:-http://garuda-ollama:11434/api/generate}
       - GARUDA_OLLAMA_MODEL=${GARUDA_OLLAMA_MODEL:-granite3.1-dense:8b}
       - GARUDA_UI_CORS_ORIGINS=*
     ports:
-      - "5000:5000"        # Flask webapp
-      - "8765:8765"        # Mark server, if enabled
+      - "8080:8080"
     volumes:
-      - garuda-db-data:/app/crawler.db
+      - ./data/garuda/:/app/data/:rw
     depends_on:
       - qdrant
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]  # Remove this block if no GPU
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -26,7 +32,7 @@ services:
     ports:
       - "6333:6333"
     volumes:
-      - qdrant-db-data:/qdrant/storage
+      - ./data/qdrant/:/qdrant/storage
 
   ollama:
     image: ollama/ollama:latest
@@ -36,7 +42,13 @@ services:
       - "11434:11434"
     profiles:
       - "llm"
+    volumes:
+      - ./data/ollama-llm:/root/.ollama:rw
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]  # Remove this block if no GPU
 
-volumes:
-  garuda-db-data:
-  qdrant-db-data:

@@ -1,0 +1,118 @@
+[build-system]
+requires = ["setuptools>=65.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "garuda-intel"
+version = "0.1.0"
+description = "Entity-aware web intelligence crawler with LLM and RAG, Chrome extension, flask webapp, search CLI, and Docker/CI tools."
+authors = [
+    { name = "anorien90", email = "h.lorenzen@nxs.solutions" }
+]
+license = { file = "LICENSE" }
+readme = "README.md"
+keywords = [
+    "crawler", "intelligence", "llm", "rag", "web scraping", "osint", "embedding", "nlp",
+    "flask", "chrome-extension", "qdrant", "entity-extraction", "docker", "cli", "search"
+]
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search"
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    "flask>=2.2",
+    "sqlalchemy>=1.4",
+    "requests",
+    "selenium>=4.7",
+    "duckduckgo-search",
+    "python-dotenv",
+    "qdrant-client",
+    "sentence-transformers",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "black", "mypy"]
+chrome-ext = ["pychrome"]
+docs = ["mkdocs", "mkdocs-material"]
+ci = ["pytest-cov", "tox"]
+
+[project.urls]
+Homepage = "https://github.com/anorien90/Garuda"
+Documentation = "https://github.com/anorien90/Garuda#readme"
+Issues = "https://github.com/anorien90/Garuda/issues"
+Source = "https://github.com/anorien90/Garuda"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+
+[tool.setuptools.package-data]
+garuda_intel = [
+    "py.typed",
+    "*.html",
+    "*.css",
+    "*.js",
+    "*.json",
+    "*.png",
+    "*.ico",
+    "webapp/*.ico",
+    "webapp/static/*.js",
+    "webapp/static/*.css",
+    "webapp/static/*.png",
+    "webapp/static/*.ico",
+    "webapp/static/media/*.png",
+    "webapp/templates/*.html",
+    "webapp/templates/**/*.html"
+]
+
+[project.scripts]
+garuda-intel-webapp = "garuda_intel.webapp.app:main"
+garuda-intel-search = "garuda_intel.search:main"
+garuda-search = "garuda_intel.search:main"
+garuda-intel-recorder = "garuda_intel.recorder.app:main"
+garuda-docker = "garuda_intel.docker.tool:main"
+
+[project.entry-points."console_scripts"]
+garuda-intel-web = "garuda_intel.webapp.app:main"
+garuda-intel-search = "garuda_intel.search:main"
+garuda-search = "garuda_intel.search:main"
+garuda-docker = "garuda_intel.docker.tool:main"
+
+[tool.mypy]
+python_version = "3.10"
+files = "src"
+disallow_untyped_defs = true
+ignore_missing_imports = true
+strict_optional = true
+
+[tool.ruff]
+line-length = 100
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "--cov=garuda_intel --tb=short -ra -q"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["garuda_intel"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "if __name__ == .__main__.:",
+    "pragma: no cover"
+]

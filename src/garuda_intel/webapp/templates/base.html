@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Garuda Control</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { colors: { brand: { 50: '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe', 300: '#93c5fd', 400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a' } } } }
+    };
+  </script>
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 min-h-screen">
+  <div class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+    <header class="flex flex-col sm:flex-row justify-between items-center gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+      <div class="flex items-center gap-4">
+        <img src="{{ url_for('static', filename='media/LogoSmallFullTransparent.png') }}" alt="Logo" class="h-10 w-auto"/>
+        <h1 class="text-xl font-bold tracking-tight">Garuda <span class="text-brand-600">Control</span></h1>
+      </div>
+      
+      <div class="flex items-center gap-4 px-4 py-2 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+        <div class="flex items-center gap-1.5" title="API Backend"><span id="status-api" class="h-2 w-2 rounded-full bg-slate-300"></span><span class="text-[10px] font-bold text-slate-500">API</span></div>
+        <div class="flex items-center gap-1.5" title="Database"><span id="status-db" class="h-2 w-2 rounded-full bg-slate-300"></span><span class="text-[10px] font-bold text-slate-500">DB</span></div>
+        <div class="flex items-center gap-1.5" title="Vector Store"><span id="status-vector" class="h-2 w-2 rounded-full bg-slate-300"></span><span class="text-[10px] font-bold text-slate-500">VEC</span></div>
+        <div class="flex items-center gap-1.5" title="LLM Engine"><span id="status-llm" class="h-2 w-2 rounded-full bg-slate-300"></span><span class="text-[10px] font-bold text-slate-500">LLM</span></div>
+        <button id="refresh-status" class="ml-2 text-slate-400 hover:text-brand-500 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        </button>
+      </div>
+
+      <button id="theme-toggle" class="p-2 rounded-lg bg-slate-100 dark:bg-slate-800"><span id="theme-toggle-icon">🌞</span></button>
+    </header>
+
+    {% block main %}{% endblock %}
+  </div>
+
+  <div class="fixed bottom-6 right-6 z-50">
+    <button id="chat-toggle" class="h-14 w-14 rounded-full bg-brand-600 text-white shadow-lg hover:bg-brand-500 flex items-center justify-center transition-transform hover:scale-110">
+      <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+    </button>
+    
+    <div id="chat-container" class="hidden absolute bottom-20 right-0 w-[420px] h-[600px] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
+        <div class="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+            <h3 class="font-bold">Intelligence Assistant</h3>
+            <button onclick="document.getElementById('chat-container').classList.add('hidden')" class="text-slate-400 hover:text-slate-600">&times;</button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4 space-y-4" id="chat-answer"></div>
+        <div class="p-4 bg-slate-50 dark:bg-slate-800/50">
+            {% include "components/chat.html" %}
+        </div>
+    </div>
+  </div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
