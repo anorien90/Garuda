@@ -4,8 +4,8 @@ import queue
 from flask import Flask, request, jsonify, abort
 from flask_cors import CORS
 from functools import wraps
-from .recorder_ingest import RecorderIngestor
-from .persistence.sqlalchemy_store import SQLAlchemyStore
+from .ingest import RecorderIngestor
+from ..database.engine import SQLAlchemyStore
 
 app = Flask(__name__)
 

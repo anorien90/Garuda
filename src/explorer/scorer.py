@@ -1,7 +1,7 @@
 import re
 from typing import List, Tuple, Dict
 from urllib.parse import urlparse
-from .models.entities import EntityType
+from ..types.entity.type import EntityType
 
 
 class URLScorer:

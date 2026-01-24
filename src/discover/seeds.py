@@ -2,8 +2,9 @@
 
 from typing import List
 import logging
-from ..models.entities import EntityType, EntityProfile
-from ..extract.llm_extractor import LLMIntelExtractor 
+from ..types.entity.type import EntityType
+from ..types.entity.profile import EntityProfile
+from ..extractor.llm import LLMIntelExtractor 
 
 logger = logging.getLogger(__name__)
 

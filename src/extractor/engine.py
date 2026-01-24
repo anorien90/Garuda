@@ -5,8 +5,8 @@ import logging
 from bs4 import BeautifulSoup
 from typing import List, Dict
 from .filter import SemanticFilter
-from .models.entities import EntityType
-from .models.page_fingerprint import PageFingerprint
+from ..types.entity.type import EntityType
+from ..types.page.fingerprint import PageFingerprint
 
 
 class ContentExtractor:

@@ -26,6 +26,8 @@ const els = {
   recorderMarkStatus: document.getElementById('recorder-mark-status'),
   crawlForm: document.getElementById('crawl-form'),
   crawlOutputPanel: document.getElementById('crawl-output-panel'),
+  tabButtons: document.querySelectorAll('[data-tab-btn]'),
+  tabPanels: document.querySelectorAll('[data-tab-panel]'),
 };
 
 function applyTheme(mode) {
@@ -43,6 +45,37 @@ function initTheme() {
   applyTheme(saved || (prefersDark ? 'dark' : 'light'));
 }
 
+/* ---------- Tabs ---------- */
+function setActiveTab(name) {
+  els.tabButtons.forEach((btn) => {
+    const isActive = btn.dataset.tabBtn === name;
+    btn.classList.toggle('active', isActive);
+    btn.classList.toggle('bg-brand-600', isActive);
+    btn.classList.toggle('text-white', isActive);
+    btn.classList.toggle('shadow-sm', isActive);
+    btn.classList.toggle('border-transparent', isActive);
+    btn.classList.toggle('bg-white', !isActive);
+    btn.classList.toggle('dark:bg-slate-900', !isActive);
+    btn.classList.toggle('text-slate-800', !isActive);
+    btn.classList.toggle('dark:text-slate-100', !isActive);
+    btn.classList.toggle('border-slate-200', !isActive);
+    btn.classList.toggle('dark:border-slate-700', !isActive);
+  });
+  els.tabPanels.forEach((panel) => {
+    const show = panel.dataset.tabPanel === name;
+    panel.classList.toggle('hidden', !show);
+  });
+  localStorage.setItem('garuda_active_tab', name);
+}
+function initTabs() {
+  const saved = localStorage.getItem('garuda_active_tab') || 'overview';
+  setActiveTab(saved);
+  els.tabButtons.forEach((btn) => {
+    btn.addEventListener('click', () => setActiveTab(btn.dataset.tabBtn));
+  });
+}
+
+/* ---------- Settings ---------- */
 function loadSettings() {
   els.baseUrl.value = localStorage.getItem('garuda_base_url') || 'http://localhost:8080';
   els.apiKey.value = localStorage.getItem('garuda_api_key') || '';
@@ -62,6 +95,7 @@ async function fetchWithAuth(path, opts = {}) {
   return fetch(url, { ...opts, headers });
 }
 
+/* ---------- Render helpers (unchanged) ---------- */
 function pill(text) {
   return `<span class="inline-flex items-center rounded-full bg-brand-100 text-brand-800 dark:bg-brand-900/60 dark:text-brand-100 px-2 py-0.5 text-xs font-medium">${text}</span>`;
 }
@@ -176,6 +210,7 @@ function summarizeIntel(r) {
   return parts.filter(Boolean).join('');
 }
 
+/* ---------- Render sections (unchanged) ---------- */
 function renderIntel(results, target) {
   target.innerHTML = '';
   if (!results || !results.length) {
@@ -263,7 +298,7 @@ function renderPages(pages) {
         Entity: ${p.entity_type || '-'} • Page: ${p.page_type || '-'} • Score: ${p.score ?? '-'}
       </div>
       <div class="text-xs text-slate-500 dark:text-slate-400">Last fetch: ${p.last_fetch_at || p.created_at || ''}</div>
-      <button class="inline-flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-slate-800 dark:text-slate-100 hover:border-brand-400 dark:hover;border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900" data-url="${p.url}">View details</button>
+      <button class="inline-flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-slate-800 dark:text-slate-100 hover:border-brand-400 dark:hover:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900" data-url="${p.url}">View details</button>
     `;
     card.querySelector('button').onclick = () => loadPageDetail(p.url);
     els.pagesList.appendChild(card);
@@ -299,7 +334,7 @@ function renderRecorderResults(data) {
   }
   results.forEach((r) => {
     const card = document.createElement('article');
-    card.className = 'rounded-lg border border-slate-200 dark;border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 space-y-2';
+    card.className = 'rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 space-y-2';
     card.innerHTML = `
       <div class="text-sm font-semibold text-slate-900 dark:text-white break-words">${r.url || '(no url)'}</div>
       <div class="text-xs text-slate-500 dark:text-slate-400">Entity: ${r.entity_type || '-'} • Page: ${r.page_type || '-'}</div>
@@ -336,6 +371,7 @@ function renderCrawlOutput(payload) {
   els.crawlOutputPanel.appendChild(card);
 }
 
+/* ---------- Actions ---------- */
 async function refreshStatus() {
   if (els.statusCards) els.statusCards.innerHTML = '<article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Loading...</article>';
   const res = await fetchWithAuth('/api/status');
@@ -365,7 +401,7 @@ async function semanticSearch(e) {
 }
 async function chatAsk(e) {
   e.preventDefault();
-  els.chatAnswer.innerHTML = '<article class="rounded-lg border border-slate-200 dark;border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Thinking…</article>';
+  els.chatAnswer.innerHTML = '<article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Thinking…</article>';
   const body = {
     question: document.getElementById('chat-q').value,
     entity: document.getElementById('chat-entity').value,
@@ -393,14 +429,14 @@ async function recorderSearch(e) {
     page_type: document.getElementById('recorder-page-type').value,
     limit: document.getElementById('recorder-limit').value || 20,
   });
-  const res = await fetchWithAuth('/search?' + params.toString());
+  const res = await fetchWithAuth('/api/recorder/search?' + params.toString());
   renderRecorderResults(await res.json());
 }
 async function recorderRefreshHealth() {
-  els.recorderHealth.innerHTML = '<article class="rounded-lg border border-slate-200 dark;border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Loading…</article>';
+  els.recorderHealth.innerHTML = '<article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Loading…</article>';
   const [healthRes, queueRes] = await Promise.all([
-    fetchWithAuth('/healthz'),
-    fetchWithAuth('/queue_info'),
+    fetchWithAuth('/api/recorder/health'),
+    fetchWithAuth('/api/recorder/queue'),
   ]);
   const health = await healthRes.json();
   const queue = await queueRes.json();
@@ -414,7 +450,7 @@ async function recorderMark(e) {
     mode: document.getElementById('recorder-mark-mode').value || 'manual',
     session_id: document.getElementById('recorder-mark-session').value || 'ui-session',
   };
-  const res = await fetchWithAuth('/mark_page', {
+  const res = await fetchWithAuth('/api/recorder/mark', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -424,8 +460,7 @@ async function recorderMark(e) {
 }
 async function runCrawl(e) {
   e.preventDefault();
-  els.crawlOutputPanel.innerHTML = '<article class="rounded-lg border border-slate-200 dark;border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Running…</article>';
-  // This assumes a backend shim exists that proxies to search.py CLI; adjust endpoint as implemented.
+  els.crawlOutputPanel.innerHTML = '<article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 text-sm">Running…</article>';
   const body = {
     entity: document.getElementById('crawl-entity').value,
     type: document.getElementById('crawl-type').value,
@@ -442,7 +477,6 @@ async function runCrawl(e) {
     refresh: !!document.getElementById('crawl-refresh').checked,
     refresh_batch: Number(document.getElementById('crawl-refresh-batch').value || 50),
   };
-  // Replace /api/crawl with the actual endpoint that wraps search.py; this is the UI hook.
   const res = await fetchWithAuth('/api/crawl', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -451,8 +485,10 @@ async function runCrawl(e) {
   renderCrawlOutput(await res.json());
 }
 
+/* ---------- Init ---------- */
 initTheme();
 loadSettings();
+initTabs();
 els.saveBtn?.addEventListener('click', saveSettings);
 els.statusBtn?.addEventListener('click', refreshStatus);
 els.searchForm?.addEventListener('submit', searchIntel);

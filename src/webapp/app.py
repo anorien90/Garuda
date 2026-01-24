@@ -8,6 +8,7 @@ from ..database.engine import SQLAlchemyStore
 from ..vector.engine import QdrantVectorStore
 from ..extractor.llm import LLMIntelExtractor
 from .config import Settings
+from ..search import run_crawl_api
 
 settings = Settings.from_env()
 
@@ -52,6 +53,7 @@ def api_key_required(fn):
 def home():
     return render_template("index.html")
 
+
 @app.get("/favicon.ico")
 def favicon():
     return send_from_directory(
@@ -67,32 +69,31 @@ def static_files(filename):
 @app.get("/api/status")
 @api_key_required
 def status():
-        db_ok = True
-        qdrant_ok = bool(vector_store)
-        embed_loaded = bool(getattr(llm, "_embedder", None))
+    db_ok = True
+    qdrant_ok = bool(vector_store)
+    embed_loaded = bool(getattr(llm, "_embedder", None))
+    try:
+        with store.Session() as _:
+            db_ok = True
+    except Exception:
+        db_ok = False
+
+    if vector_store:
         try:
-            with store.Session() as s:
-                db_ok = True
-
+            vector_store.client.get_collection(vector_store.collection)  # type: ignore[attr-defined]
         except Exception:
-            db_ok = False
-
-        if vector_store:
-            try:
-                vector_store.client.get_collection(vector_store.collection)  # type: ignore[attr-defined]
-            except Exception:
-                qdrant_ok = False
-        return jsonify(
-            {
-                "db_ok": db_ok,
-                "qdrant_ok": qdrant_ok,
-                "embedding_loaded": embed_loaded,
-                "qdrant_url": settings.qdrant_url,
-                "qdrant_collection": settings.qdrant_collection,
-                "ollama_url": settings.ollama_url,
-                "model": settings.ollama_model,
-            }
-        )
+            qdrant_ok = False
+    return jsonify(
+        {
+            "db_ok": db_ok,
+            "qdrant_ok": qdrant_ok,
+            "embedding_loaded": embed_loaded,
+            "qdrant_url": settings.qdrant_url,
+            "qdrant_collection": settings.qdrant_collection,
+            "ollama_url": settings.ollama_url,
+            "model": settings.ollama_model,
+        }
+    )
 
 
 @app.get("/api/intel")
@@ -148,7 +149,7 @@ def api_intel_semantic():
 def api_pages():
     limit = int(request.args.get("limit", 200))
     pages = store.get_all_pages() or []
-    # Sort by last_fetch_at or created_at, fallback to epoch to avoid None comparisons
+
     def sort_key(p):
         ts = getattr(p, "last_fetch_at", None) or getattr(p, "created_at", None)
         if ts is None:
@@ -209,6 +210,62 @@ def api_chat():
     merged_hits = context_hits + vector_hits
     answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
     return jsonify({"answer": answer, "context": merged_hits, "entity": entity})
+
+
+# --- Recorder-like helpers exposed to UI (search, health, queue, mark)
+@app.get("/api/recorder/search")
+@api_key_required
+def api_recorder_search():
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "q required"}), 400
+    limit = min(int(request.args.get("limit", 20)), 100)
+    entity_type = request.args.get("entity_type")
+    page_type = request.args.get("page_type")
+    results = store.search_intel(
+        keyword=q, limit=limit, entity_type=entity_type, page_type=page_type
+    )
+    return jsonify({"results": results})
+
+
+@app.get("/api/recorder/health")
+@api_key_required
+def api_recorder_health():
+    return jsonify({"status": "ok"})
+
+
+@app.get("/api/recorder/queue")
+@api_key_required
+def api_recorder_queue():
+    return jsonify({"length": 0, "status": "ok"})
+
+
+@app.post("/api/recorder/mark")
+@api_key_required
+def api_recorder_mark():
+    body = request.get_json(silent=True) or {}
+    url = body.get("url")
+    if not url:
+        return jsonify({"error": "url required"}), 400
+    mode = body.get("mode", "manual")
+    session_id = body.get("session_id", "ui-session")
+    logger.info(f"[recorder-mark] ({session_id}) mode={mode} url={url}")
+    return jsonify({"status": "received", "url": url, "mode": mode, "session_id": session_id})
+
+
+# --- Crawl: now wired to search.py logic instead of dummy stub
+@app.post("/api/crawl")
+@api_key_required
+def api_crawl():
+    body = request.get_json(silent=True) or {}
+    try:
+        result = run_crawl_api(body)
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("Crawl failed")
+        return jsonify({"error": f"crawl failed: {e}"}), 500
 
 
 if __name__ == "__main__":

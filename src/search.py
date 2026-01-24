@@ -24,26 +24,24 @@ logger = logging.getLogger(__name__)
 
 from ddgs import DDGS
 from sqlalchemy import select
-
-from .mark_server import start_server_thread
-from .active_browser import RecordingBrowser, get_env_chrome_args, get_browser_start_url, get_session_id
-from .recorder_ingest import RecorderIngestor
-from .browser import SeleniumBrowser
-from .discovery.seeds import generate_seeds
-from .extract.llm_extractor import LLMIntelExtractor
-from .explorer import IntelligentExplorer
-from .models.entities import EntityProfile, EntityType
-from .persistence.sqlalchemy_store import SQLAlchemyStore
-from .persistence.models import Link, Page, PageContent, Intelligence, Entity
-from .refresh import RefreshRunner
-from .scorer import URLScorer
-from .vector_store import QdrantVectorStore
 from qdrant_client.http import models as qmodels
 
+from .recorder.app import start_server_thread
+from .browser.active import RecordingBrowser, get_env_chrome_args, get_browser_start_url, get_session_id
+from .recorder.ingest import RecorderIngestor
+from .browser.selenium import SeleniumBrowser
+from .discover.seeds import generate_seeds
+from .extractor.llm import LLMIntelExtractor
+from .explorer.engine import IntelligentExplorer
+from .types.entity import EntityProfile, EntityType
+from .database.engine import SQLAlchemyStore
+from .database.models import Link, Page, PageContent, Intelligence, Entity
+from .discover.refresh import RefreshRunner
+from .explorer.scorer import URLScorer
+from .vector.engine import QdrantVectorStore
 
 def add_common_logging(parser: argparse.ArgumentParser):
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
-
 
 def add_store_args(parser: argparse.ArgumentParser):
     parser.add_argument("--use-sqlite", action="store_true", help="Use SQLite DB at sqlite-path (default crawler.db)")
@@ -656,32 +654,36 @@ def interactive_chat(args):
             logger.error(f"Chat Loop Error: {e}")
 
 
-def handle_run(args):
+# ... existing imports remain ...
+
+def handle_run(args, return_result: bool = False):
     persistence_enabled = args.use_sqlite or bool(args.db_url)
     db_url = normalize_db_url(args.db_url, args.sqlite_path) if persistence_enabled else ""
     store = SQLAlchemyStore(db_url) if persistence_enabled else None
-    # Always initialize the vector store so embeddings get persisted during crawl
     vector_store = init_vector_store(args)
     llm = LLMIntelExtractor(args.ollama_url, args.model, embedding_model=args.embedding_model)
 
-    if args.active_mode:
+    if args.active_mode and not return_result:
         run_active_session(store)
-    else:
-        print(">> Running in automated mode...")
+    elif args.active_mode and return_result:
+        raise ValueError("active_mode is not supported via API")
 
     # Search-only paths
     if args.semantic_search or args.hybrid_search:
         if not vector_store:
+            if return_result:
+                raise ValueError("Semantic/hybrid search requires Qdrant.")
             logging.error("Semantic/hybrid search requires Qdrant.")
             sys.exit(1)
         query_vec = llm.embed_text(args.semantic_search or args.hybrid_search)
         if not query_vec:
+            if return_result:
+                raise ValueError("Embedding model not available.")
             logging.error("Embedding model not available.")
             sys.exit(1)
         filt = _kind_filter(args.semantic_kind)
         results = vector_store.search(query_vec, top_k=args.top_k, filter_=filt)
         results = _dedupe_payload_hits(results)
-        print(f"Results for query: '{args.semantic_search or args.hybrid_search}'")
         hits = [
             {
                 "url": r.payload.get("url"),
@@ -712,14 +714,19 @@ def handle_run(args):
             payload = {"semantic": hits}
         if args.hybrid_search:
             keyword = args.hybrid_search.lower()
-            exact_hits = store.search_intel(keyword, limit=args.top_k) if store else []
+            exact_hits = store.search_intelligence_data(keyword) if store else []
             payload["exact"] = exact_hits
+        if return_result:
+            return payload
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     if args.list_pages or args.fetch_text or args.refresh or args.search_intel:
         if not store:
-            logging.error("This operation requires a DB (use --use-sqlite or --db-url).")
+            msg = "This operation requires a DB (use --use-sqlite or --db-url)."
+            if return_result:
+                raise ValueError(msg)
+            logging.error(msg)
             sys.exit(1)
         if args.search_intel:
             results = store.search_intel(
@@ -728,25 +735,42 @@ def handle_run(args):
                 entity_type=args.search_entity_type or None,
                 page_type=args.search_page_type or None,
             )
+            if return_result:
+                return {"results": results}
             print(json.dumps(results, ensure_ascii=False, indent=2))
             return
         if args.list_pages:
-            list_pages(store)
+            pages = store.get_all_pages()
+            data = [p.to_dict() for p in pages]
+            if return_result:
+                return {"pages": data}
+            def serial(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                raise TypeError("Type not serializable")
+            print(json.dumps(data, default=serial, indent=2))
             return
         if args.fetch_text:
             found = fetch_text(store, args.fetch_text)
             if found:
+                if return_result:
+                    return {"fetch_text": args.fetch_text, "status": "ok"}
                 return
             logging.info("Text not found; refetching page...")
             rr = RefreshRunner(store=store, use_selenium=args.use_selenium, vector_store=vector_store, llm_extractor=llm)
             rr.run(batch=1)
             found = fetch_text(store, args.fetch_text)
             if not found:
-                logging.error("Text still not available after refetch.")
+                msg = "Text still not available after refetch."
+                if return_result:
+                    return {"fetch_text": args.fetch_text, "status": "missing"}
+                logging.error(msg)
             return
         if args.refresh:
             rr = RefreshRunner(store=store, use_selenium=args.use_selenium, vector_store=vector_store, llm_extractor=llm)
             rr.run(batch=args.refresh_batch)
+            if return_result:
+                return {"refresh": "ok", "batch": args.refresh_batch}
             logging.info("Refresh complete.")
             return
 
@@ -757,7 +781,10 @@ def handle_run(args):
         except Exception:
             entity_name = "seeded-entity"
     if not entity_name:
-        logging.error("Entity name is required (or provide --seed-url/--seed-from-links/--seed-from-pages).")
+        msg = "Entity name is required (or provide --seed-url/--seed-from-links/--seed-from-pages)."
+        if return_result:
+            raise ValueError(msg)
+        logging.error(msg)
         sys.exit(1)
     profile = EntityProfile(
         name=entity_name,
@@ -765,7 +792,6 @@ def handle_run(args):
         location_hint=args.location,
         official_domains=[],
     )
-    llm = llm  # already constructed above
 
     seed_urls = []
     official_domains = []
@@ -856,9 +882,69 @@ def handle_run(args):
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         logging.info(f"Wrote results to {args.output}")
+    elif return_result:
+        return result
     else:
         print(json.dumps(result, ensure_ascii=False, indent=2))
 
+
+def run_crawl_api(payload: dict) -> dict:
+    """
+    Entry point for web API: maps JSON payload to argparse-style Namespace
+    and returns crawl/search results as a dict. Does not sys.exit.
+    """
+    # Defaults aligned with parse_args()
+    args = argparse.Namespace(
+        command="run",
+        verbose=False,
+        # persistence
+        use_sqlite=bool(payload.get("use_sqlite", True)),
+        db_url=payload.get("db_url", ""),
+        sqlite_path=payload.get("sqlite_path", "crawler.db"),
+        # llm/vector
+        ollama_url=payload.get("ollama_url", "http://localhost:11434/api/generate"),
+        model=payload.get("model", "granite3.1-dense:8b"),
+        embedding_model=payload.get("embedding_model", "sentence-transformers/all-MiniLM-L6-v2"),
+        qdrant_url=payload.get("qdrant_url", "http://localhost:6333"),
+        qdrant_collection=payload.get("qdrant_collection", "pages"),
+        top_k=int(payload.get("top_k", 10)),
+        # crawl
+        entity=payload.get("entity"),
+        type=payload.get("type", "company"),
+        location=payload.get("location", ""),
+        max_pages=int(payload.get("max_pages", 10)),
+        total_pages=int(payload.get("total_pages", 50)),
+        max_depth=int(payload.get("max_depth", 2)),
+        score_threshold=float(payload.get("score_threshold", 35.0)),
+        seed_limit=int(payload.get("seed_limit", 25)),
+        use_selenium=bool(payload.get("use_selenium", False)),
+        active_mode=bool(payload.get("active_mode", False)),
+        output=payload.get("output", ""),
+        list_pages=bool(payload.get("list_pages", False)),
+        fetch_text=payload.get("fetch_text", ""),
+        refresh=bool(payload.get("refresh", False)),
+        refresh_batch=int(payload.get("refresh_batch", 50)),
+        seed_url=payload.get("seed_url", []) or [],
+        seed_query=payload.get("seed_query", ""),
+        seed_from_links=bool(payload.get("seed_from_links", False)),
+        seed_from_pages=bool(payload.get("seed_from_pages", False)),
+        seed_domain=payload.get("seed_domain", []) or [],
+        seed_pattern=payload.get("seed_pattern", []) or [],
+        min_link_score=float(payload.get("min_link_score", 0.0)),
+        seed_limit_db=int(payload.get("seed_limit_db", 20)),
+        search_intel=payload.get("search_intel", ""),
+        search_entity_type=payload.get("search_entity_type", ""),
+        search_page_type=payload.get("search_page_type", ""),
+        enable_llm_link_rank=bool(payload.get("enable_llm_link_rank", False)),
+        # semantic/hybrid (not used by current UI but kept)
+        semantic_search=payload.get("semantic_search", ""),
+        hybrid_search=payload.get("hybrid_search", ""),
+        semantic_kind=payload.get("semantic_kind", "any"),
+        entity_name=payload.get("entity_name", ""),
+        entity_field=payload.get("entity_field", []) or [],
+        hydrate_sql=bool(payload.get("hydrate_sql", False)),
+    )
+    return handle_run(args, return_result=True)
 
 
 def main():
@@ -867,15 +953,16 @@ def main():
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
-    
+
     if args.command == "chat":
         interactive_chat(args)
-    
+
     if args.command == "intel":
         handle_intel(args)
-    
+
     elif args.command == "run":
         handle_run(args)
-    
+
+
 if __name__ == "__main__":
     main()

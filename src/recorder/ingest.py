@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from .extractor import ContentExtractor
+from ..extractor.engine import ContentExtractor
 
 
 

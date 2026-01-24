@@ -1,21 +1,49 @@
 {% extends "base.html" %}
 
 {% block main %}
-  <section class="grid gap-6 lg:grid-cols-12">
-    <article class="lg:col-span-8 space-y-6">
-      {% include "components/status.html" %}
-      <div class="grid gap-6 lg:grid-cols-2">
-        {% include "components/intel.html" %}
-        {% include "components/semantic.html" %}
-      </div>
-      {% include "components/chat.html" %}
-      {% include "components/recorder-search.html" %}
-      {% include "components/crawl.html" %}
-    </article>
-    <aside class="lg:col-span-4 space-y-6 lg:sticky lg:top-6 h-full">
-      {% include "components/settings.html" %}
-      {% include "components/pages.html" %}
-      {% include "components/recorder-admin.html" %}
-    </aside>
+  <section class="space-y-4">
+    <nav class="flex flex-wrap gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-3">
+      <button data-tab-btn="overview" class="tab-btn active inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold border border-transparent bg-brand-600 text-white shadow-sm">Overview</button>
+      <button data-tab-btn="search" class="tab-btn inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">Search &amp; Chat</button>
+      <button data-tab-btn="recorder" class="tab-btn inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">Recorder</button>
+      <button data-tab-btn="crawl" class="tab-btn inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">Crawl</button>
+    </nav>
+
+    <div class="space-y-6">
+      <!-- Overview: status + settings + pages -->
+      <section data-tab-panel="overview" class="space-y-6">
+        <div class="grid gap-6 lg:grid-cols-3">
+          <div class="lg:col-span-2 space-y-6">
+            {% include "components/status.html" %}
+            {% include "components/pages.html" %}
+          </div>
+          <aside class="space-y-6">
+            {% include "components/settings.html" %}
+          </aside>
+        </div>
+      </section>
+
+      <!-- Search & Chat: SQL, semantic, chat -->
+      <section data-tab-panel="search" class="space-y-6 hidden">
+        <div class="grid gap-6 lg:grid-cols-2">
+          {% include "components/intel.html" %}
+          {% include "components/semantic.html" %}
+        </div>
+        {% include "components/chat.html" %}
+      </section>
+
+      <!-- Recorder: raw search + admin -->
+      <section data-tab-panel="recorder" class="space-y-6 hidden">
+        <div class="grid gap-6 lg:grid-cols-2">
+          {% include "components/recorder-search.html" %}
+          {% include "components/recorder-admin.html" %}
+        </div>
+      </section>
+
+      <!-- Crawl -->
+      <section data-tab-panel="crawl" class="space-y-6 hidden">
+        {% include "components/crawl.html" %}
+      </section>
+    </div>
   </section>
 {% endblock %}

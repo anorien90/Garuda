@@ -4,7 +4,7 @@ LLM-assisted pattern/domain augmentation (outline).
 import json
 import requests
 from typing import List, Dict
-from ..models.entities import EntityType
+from ..types.entity import EntityType
 
 
 def refresh_patterns(entity: str, entity_type: EntityType, seeds: List[str], ollama_url: str, model: str) -> Dict[str, List[Dict]]:
@@ -23,3 +23,12 @@ def refresh_patterns(entity: str, entity_type: EntityType, seeds: List[str], oll
         }
     except Exception:
         return {"patterns": [], "domains": []}
+
+
+class RefreshRunner:
+    def __init__(self, ollama_url: str, model: str):
+        self.ollama_url = ollama_url
+        self.model = model
+
+    def run(self, entity: str, entity_type: EntityType, seeds: List[str]) -> Dict[str, List[Dict]]:
+        return refresh_patterns(entity, entity_type, seeds, self.ollama_url, self.model)

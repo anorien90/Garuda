@@ -7,14 +7,14 @@ from typing import List, Dict, Optional, Set, Tuple, Any
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 
-from .browser import SeleniumBrowser
-from .extractor import ContentExtractor
+from ..browser.selenium import SeleniumBrowser
+from ..extractor.engine import ContentExtractor
 from .scorer import URLScorer
-from .discovery import Frontier
-from .types import EntityType, EntityProfile
-from .db import PersistenceStore
-from .vector import VectorStore
-from .extract import LLMIntelExtractor
+from ..discover.frontier import Frontier
+from ..types.entity import EntityType, EntityProfile
+from ..database.store import PersistenceStore
+from ..vector.engine import VectorStore
+from ..extractor.llm import LLMIntelExtractor
 
 
 class IntelligentExplorer:
