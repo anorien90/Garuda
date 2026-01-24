@@ -57,30 +57,18 @@ Garuda is a modular, entity-focused intelligence crawler leveraging LLMs, heuris
 
 ```mermaid
 flowchart TD
-    subgraph SEED
-      A1[DuckDuckGo Search/Regex Patterns]
-      A2[Manual Seeds]
-    end
-    subgraph EXPLORE
-      B1[Selenium Browser]
-      B2[Mark API/Extension]
-    end
-    subgraph EXTRACT
-      C1[Heuristic Extractor]
-      C2[LLM Intel Extractor]
-    end
-    subgraph EMBED
-      D1[Create Embeddings]
-      D2[Qdrant Vector DB]
-    end
-    subgraph STORE
-      E1[SQL DB (Intel, Entities)]
-    end
-    subgraph QUERY
-      F1[User Query/RAG]
-      F2[CLI/Web/API]
-      F3[Extension Popup]
-    end
+    A1[DuckDuckGo Search / Regex Patterns]
+    A2[Manual Seeds]
+    B1[Selenium Browser]
+    B2[Mark API / Extension]
+    C1[Heuristic Extractor]
+    C2[LLM Intel Extractor]
+    E1[SQL DB (Intel, Entities)]
+    D1[Create Embeddings]
+    D2[Qdrant Vector DB]
+    F1[User Query / RAG Pipeline]
+    F2[CLI / Web / API]
+    F3[Extension Popup]
 
     %% Data flow
     A1 -->|Seed URLs| B1
@@ -91,22 +79,19 @@ flowchart TD
     B2 -->|Manual Capture| C2
     C1 -->|Extracted Intel| E1
     C2 -->|LLM Entities| E1
-
+    C2 -->|Entities/Docs| D1
     E1 -- Persisted Data --> D1
-    C2 -- Entities/Docs --> D1
     D1 -- Embeddings --> D2
-
     F1 -.->|Text Query| D2
     F1 -.->|Text Query| E1
     D2 -- Relevant entities --> F1
     E1 -- Factual/context data --> F1
-
     F2 --> F1
     F3 --> F1
-
     F1 -->|Final Results/Answer| F2
     F1 -->|Final Results/Answer| F3
 ```
+
 
 - **WebApp**: [`src/webapp/app.py`](src/webapp/app.py)
 - **Database**: [`src/database/`](src/database/)
