@@ -60,7 +60,7 @@ flowchart TD
     A1[DuckDuckGo Search Patterns]
     A2[Manual Seeds]
     B1[Selenium Browser]
-    B1.1[Headless Chrome]
+    B1.1[BeautifulSoup Parser]
     B2[Mark API or Extension]
     C1[Heuristic Extractor]
     C2[LLM Intel Extractor]
@@ -73,8 +73,9 @@ flowchart TD
 
     A1 -->|Seed URLs| B1
     A2 -->|Seed URLs| B1
-    B1 -->|HTML Text Meta| C1
-    B1 -->|HTML Text Meta| C2
+    B1 --> B1.1
+    B1.1 -->|HTML Text Meta| C1
+    B1.1 -->|HTML Text Meta| C2
     B2 -->|Manual Capture| C1
     B2 -->|Manual Capture| C2
     C1 -->|Extracted Intel| E1
