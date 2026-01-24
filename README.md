@@ -57,11 +57,11 @@ Garuda is a modular, entity-focused intelligence crawler leveraging LLMs, heuris
 
 ```mermaid
 flowchart LR
-    A[Seed (DuckDuckGo, Patterns)] --> B[Discover/Score Frontier]
-    B --> C[Browser & Recorder]
-    C --> D[Extraction: Heuristic & LLM]
-    D --> E[SQL DB/Qdrant]
-    E --> F[API/UI/Chrome Ext/CLI]
+  A[Seed] --> B[Discover]
+  B --> C[Browser]
+  C --> D[Extraction]
+  D --> E[Persistence]
+  E --> F[API/UI/Extension]
 ```
 
 - **WebApp**: [`src/webapp/app.py`](src/webapp/app.py)

@@ -1,0 +1,41 @@
+services:
+  garuda:
+    build: .
+    container_name: garuda-webapp
+    restart: unless-stopped
+    environment:
+      - GARUDA_UI_API_KEY=${GARUDA_UI_API_KEY:-changeme}
+      - GARUDA_DB_URL=${GARUDA_DB_URL:-sqlite:///crawler.db}
+      - GARUDA_QDRANT_URL=${GARUDA_QDRANT_URL:-http://qdrant:6333}
+      - GARUDA_QDRANT_COLLECTION=${GARUDA_QDRANT_COLLECTION:-pages}
+      - GARUDA_OLLAMA_URL=${GARUDA_OLLAMA_URL:-http://ollama:11434/api/generate}
+      - GARUDA_OLLAMA_MODEL=${GARUDA_OLLAMA_MODEL:-granite3.1-dense:8b}
+      - GARUDA_UI_CORS_ORIGINS=*
+    ports:
+      - "5000:5000"        # Flask webapp
+      - "8765:8765"        # Mark server, if enabled
+    volumes:
+      - garuda-db-data:/app/crawler.db
+    depends_on:
+      - qdrant
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: garuda-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-db-data:/qdrant/storage
+
+  # Optionally, add Ollama or LLM provider (upgrade as needed)
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: garuda-ollama
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+
+volumes:
+  garuda-db-data:
+  qdrant-db-data:
