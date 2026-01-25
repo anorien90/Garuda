@@ -22,6 +22,10 @@ export const els = {
   },
   healthIndicator: document.getElementById('health-indicator'),
 
+  // --- Log / Steps panel ---
+  logList: document.getElementById('log-list'),
+  logClearBtn: document.getElementById('log-clear'),
+
   // --- Forms & Results ---
   searchForm: document.getElementById('search-form'),
   results: document.getElementById('results'),

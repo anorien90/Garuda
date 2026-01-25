@@ -26,7 +26,7 @@
         <div class="flex items-center gap-1.5" title="Vector Store"><span id="status-vector" class="h-2 w-2 rounded-full bg-slate-300"></span><span class="text-[10px] font-bold text-slate-500">VEC</span></div>
         <div class="flex items-center gap-1.5" title="LLM Engine"><span id="status-llm" class="h-2 w-2 rounded-full bg-slate-300"></span><span class="text-[10px] font-bold text-slate-500">LLM</span></div>
         <button id="refresh-status" class="ml-2 text-slate-400 hover:text-brand-500 transition">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 -960 960 960" fill="#1f1f1f"><path d="M480-192q-120 0-204-84t-84-204q0-120 84-204t204-84q65 0 120.5 27t95.5 72v-99h72v240H528v-72h131q-29-44-76-70t-103-26q-90 0-153 63t-63 153q0 90 63 153t153 63q84 0 144-55.5T693-456h74q-9 112-91 188t-196 76Z"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-192q-120 0-204-84t-84-204q0-120 84-204t204-84q65 0 120.5 27t95.5 72v-99h72v240H528v-72h131q-29-44-76-70t-103-26q-90 0-153 63t-63 153q0 90 63 153t153 63q84 0 144-55.5T693-456h74q-9 112-91 188t-196 76Z"/></svg>
         </button>
       </div>
 
@@ -54,6 +54,25 @@
         </div>
     </div>
   </div>
+
+  <!-- Floating logs toggle + panel -->
+  <div class="fixed bottom-6 left-6 z-40 flex flex-col items-start gap-2">
+    <button id="log-toggle" class="px-3 py-2 rounded-full bg-slate-800 text-white text-xs font-semibold shadow-lg hover:bg-slate-700 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white transition">
+      Logs
+    </button>
+    <section id="log-panel" class="hidden w-[92vw] sm:w-[520px] max-h-[60vh] overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-3 space-y-2">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">Live Steps / Logs</h2>
+          <span id="log-status" class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">live</span>
+        </div>
+        <button id="log-clear" class="text-xs text-blue-600 hover:text-blue-500 underline">Clear</button>
+      </div>
+      <div id="log-list" class="space-y-1 text-xs font-mono bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded p-2 min-h-[160px]"></div>
+    </section>
+  </div>
+
   <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+  <script type="module" src="/static/ui-logs.js"></script>
 </body>
 </html>

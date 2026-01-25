@@ -1,8 +1,12 @@
-from flask import Flask, request, jsonify, render_template, send_from_directory
+from flask import Flask, request, jsonify, render_template, send_from_directory, Response
 from flask_cors import CORS
 from functools import wraps
 import logging
 from datetime import datetime, timezone
+import json
+import queue
+import threading
+from collections import deque
 
 from ..database.engine import SQLAlchemyStore
 from ..vector.engine import QdrantVectorStore
@@ -31,7 +35,6 @@ print(f"Qdrant Vector Store: {settings.qdrant_url} Collection: {settings.qdrant_
 print(f"Ollama LLM: {settings.ollama_url} Model: {settings.ollama_model}")
 print(f"Embedding Model: {settings.embedding_model}")
 
-
 store = SQLAlchemyStore(settings.db_url)
 llm = LLMIntelExtractor(
     ollama_url=settings.ollama_url,
@@ -49,10 +52,59 @@ if settings.vector_enabled:
         logger.warning(f"Qdrant unavailable: {e}")
         vector_store = None
 
+# --- Structured event broadcaster for UI logging ---
+_EVENT_BUFFER_LIMIT = 1000
+_event_buffer = deque(maxlen=_EVENT_BUFFER_LIMIT)
+_event_listeners: list[queue.Queue] = []
+_event_lock = threading.Lock()
 
+
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def emit_event(step: str, message: str, level: str = "info", payload=None, session_id=None):
+    evt = {
+        "ts": _now_iso(),
+        "step": step,
+        "level": level,
+        "message": message,
+        "payload": payload or {},
+        "session_id": session_id,
+    }
+    with _event_lock:
+        _event_buffer.append(evt)
+        dead = []
+        for q in _event_listeners:
+            try:
+                q.put_nowait(evt)
+            except Exception:
+                dead.append(q)
+        for q in dead:
+            if q in _event_listeners:
+                _event_listeners.remove(q)
+    logger.log(getattr(logging, level.upper(), logging.INFO), f"[{step}] {message}")
+
+
+def _event_stream():
+    q: queue.Queue = queue.Queue()
+    with _event_lock:
+        _event_listeners.append(q)
+    try:
+        while True:
+            evt = q.get()
+            yield f"data: {json.dumps(evt)}\n\n"
+    except GeneratorExit:
+        with _event_lock:
+            if q in _event_listeners:
+                _event_listeners.remove(q)
+
+
+# --- Auth helper ---
 def api_key_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        # If no key configured, allow open access (for local dev)
         if not settings.api_key:
             return fn(*args, **kwargs)
         key = request.headers.get("X-API-Key") or request.args.get("api_key")
@@ -63,6 +115,7 @@ def api_key_required(fn):
     return wrapper
 
 
+# --- Static / HTML ---
 @app.get("/")
 def home():
     return render_template("index.html")
@@ -80,6 +133,7 @@ def static_files(filename):
     return send_from_directory(app.static_folder, filename)
 
 
+# --- Status ---
 @app.get("/api/status")
 @api_key_required
 def status():
@@ -110,6 +164,37 @@ def status():
     )
 
 
+# --- Logging endpoints ---
+@app.get("/api/logs/stream")
+@api_key_required
+def logs_stream():
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return Response(_event_stream(), mimetype="text/event-stream", headers=headers)
+
+
+@app.get("/api/logs/recent")
+@api_key_required
+def logs_recent():
+    limit = min(int(request.args.get("limit", 200)), _EVENT_BUFFER_LIMIT)
+    with _event_lock:
+        data = list(_event_buffer)[-limit:]
+    return jsonify({"events": data})
+
+
+@app.post("/api/logs/clear")
+@api_key_required
+def logs_clear():
+    with _event_lock:
+        _event_buffer.clear()
+    emit_event("logs_clear", "Log buffer cleared")
+    return jsonify({"status": "cleared"})
+
+
+# --- Intel APIs ---
 @app.get("/api/intel")
 @api_key_required
 def api_intel():
@@ -117,12 +202,14 @@ def api_intel():
     entity = request.args.get("entity")
     min_conf = float(request.args.get("min_conf", 0))
     limit = int(request.args.get("limit", 50))
+    emit_event("intel", "intel request received", payload={"q": q, "entity": entity})
     if q:
         rows = store.search_intelligence_data(q)
     else:
         rows = store.get_intelligence(
             entity_name=entity, min_confidence=min_conf, limit=limit
         )
+    emit_event("intel", f"intel response ready", payload={"count": len(rows)})
     return jsonify(rows)
 
 
@@ -138,9 +225,11 @@ def api_intel_semantic():
     vec = llm.embed_text(query)
     if not vec:
         return jsonify({"error": "embedding unavailable"}), 503
+    emit_event("semantic_search", "start", payload={"q": query, "top_k": top_k})
     try:
         results = vector_store.search(vec, top_k=top_k)
     except Exception as e:
+        emit_event("semantic_search", f"vector search failed: {e}", level="error")
         return jsonify({"error": f"vector search failed: {e}"}), 502
     hits = [
         {
@@ -155,6 +244,7 @@ def api_intel_semantic():
         }
         for r in results
     ]
+    emit_event("semantic_search", "done", payload={"returned": len(hits)})
     return jsonify({"semantic": hits})
 
 
@@ -174,6 +264,7 @@ def api_pages():
 
     pages = sorted(pages, key=sort_key, reverse=True)
     data = [p.to_dict() for p in pages[:limit]]
+    emit_event("pages", "pages listed", payload={"count": len(data)})
     return jsonify(data)
 
 
@@ -183,6 +274,7 @@ def api_page():
     url = request.args.get("url")
     if not url:
         return jsonify({"error": "url required"}), 400
+    emit_event("page", "page fetch", payload={"url": url})
     return jsonify(
         {
             "url": url,
@@ -226,8 +318,11 @@ def api_chat():
     question = body.get("question") or request.args.get("q")
     entity = body.get("entity") or request.args.get("entity")
     top_k = int(body.get("top_k") or request.args.get("top_k") or 6)
+    session_id = body.get("session_id") or request.args.get("session_id")
     if not question:
         return jsonify({"error": "question required"}), 400
+
+    emit_event("chat", "chat request received", payload={"session_id": session_id})
 
     def gather_hits(q: str, limit: int):
         ctx = store.search_intel(keyword=q, limit=limit)
@@ -248,6 +343,7 @@ def api_chat():
                     ]
                 except Exception as e:
                     logger.warning(f"Vector chat search failed: {e}")
+                    emit_event("chat", f"vector search failed: {e}", level="warning")
         return ctx + vec_hits
 
     merged_hits = gather_hits(question, top_k)
@@ -278,12 +374,15 @@ def api_chat():
 
             browser = None
             try:
+                emit_event("chat", "starting crawl", payload={"urls": live_urls})
                 if getattr(settings, "chat_use_selenium", False):
                     browser = SeleniumBrowser(headless=True)
                     browser._init_driver()
                 explorer.explore(live_urls, browser)
+                emit_event("chat", "crawl complete", payload={"urls": live_urls})
             except Exception as e:
                 logger.warning(f"Chat crawl failed: {e}")
+                emit_event("chat", f"crawl failed: {e}", level="warning")
             finally:
                 if browser:
                     try:
@@ -298,10 +397,10 @@ def api_chat():
             "INSUFFICIENT_DATA",
             "I searched online but still couldn't find a definitive answer.",
         )
-        # If it still sounds like a refusal, soften it.
         if _looks_like_refusal(answer):
             answer = "I searched online but still couldn't find a definitive answer."
 
+    emit_event("chat", "chat completed", payload={"session_id": session_id})
     return jsonify(
         {
             "answer": answer,
@@ -323,21 +422,25 @@ def api_recorder_search():
     limit = min(int(request.args.get("limit", 20)), 100)
     entity_type = request.args.get("entity_type")
     page_type = request.args.get("page_type")
+    emit_event("recorder", "search", payload={"q": q, "limit": limit})
     results = store.search_intel(
         keyword=q, limit=limit, entity_type=entity_type, page_type=page_type
     )
+    emit_event("recorder", "search done", payload={"count": len(results)})
     return jsonify({"results": results})
 
 
 @app.get("/api/recorder/health")
 @api_key_required
 def api_recorder_health():
+    emit_event("recorder", "health")
     return jsonify({"status": "ok"})
 
 
 @app.get("/api/recorder/queue")
 @api_key_required
 def api_recorder_queue():
+    emit_event("recorder", "queue")
     return jsonify({"length": 0, "status": "ok"})
 
 
@@ -350,21 +453,26 @@ def api_recorder_mark():
         return jsonify({"error": "url required"}), 400
     mode = body.get("mode", "manual")
     session_id = body.get("session_id", "ui-session")
+    emit_event("recorder", "mark", payload={"url": url, "mode": mode, "session_id": session_id})
     logger.info(f"[recorder-mark] ({session_id}) mode={mode} url={url}")
     return jsonify({"status": "received", "url": url, "mode": mode, "session_id": session_id})
 
 
-# --- Crawl: now wired to search.py logic instead of dummy stub
+# --- Crawl: wired to search.py logic ---
 @app.post("/api/crawl")
 @api_key_required
 def api_crawl():
     body = request.get_json(silent=True) or {}
+    emit_event("crawl", "start", payload={"body": body})
     try:
         result = run_crawl_api(body)
+        emit_event("crawl", "done", payload={"status": "ok"})
         return jsonify(result)
     except ValueError as e:
+        emit_event("crawl", f"bad request: {e}", level="warning")
         return jsonify({"error": str(e)}), 400
     except Exception as e:
+        emit_event("crawl", f"failed: {e}", level="error")
         logger.exception("Crawl failed")
         return jsonify({"error": f"crawl failed: {e}"}), 500
 
