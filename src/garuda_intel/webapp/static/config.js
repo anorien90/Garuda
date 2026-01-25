@@ -37,12 +37,17 @@ export const els = {
   chatAnswer: document.getElementById('chat-answer'),
   chatToggle: document.getElementById('chat-toggle'),
   chatContainer: document.getElementById('chat-container'),
-
-  pagesBtn: document.getElementById('load-pages'),
-  pagesLimit: document.getElementById('pages-limit'),
-  pagesSearch: document.getElementById('pages-search'),
+  
+    // --- Pages ---
   pagesList: document.getElementById('pages'),
   pageDetail: document.getElementById('page-detail'),
+  pagesSearch: document.getElementById('pages-search'),
+  pagesEntityFilter: document.getElementById('pages-entity-filter'),
+  pagesTypeFilter: document.getElementById('pages-type-filter'),
+  pagesMinScore: document.getElementById('pages-min-score'),
+  pagesSort: document.getElementById('pages-sort'),
+  pagesLimit: document.getElementById('pages-limit'),
+  pagesLoad: document.getElementById('load-pages'),
   pageModal: document.getElementById('page-modal'),
   pageModalContent: document.getElementById('page-modal-content'),
   pageModalClose: document.getElementById('page-modal-close'),

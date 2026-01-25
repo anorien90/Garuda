@@ -34,3 +34,46 @@ export function renderKeyValTable(obj) {
     </table>
   `;
 }
+
+// NEW: render a single page result
+export function renderCrawlPage(url, page) {
+  const intel = (page.extracted_intel || []).map((fi, i) => collapsible(
+    `Finding ${i + 1}`,
+    [
+      renderKeyValTable(fi.basic_info),
+      fi.events?.length ? collapsible('Events', fi.events.map(e => `<div class="mb-1"><div class="font-semibold">${e.title || ''}</div><div class="text-slate-500">${e.date || ''}</div><div>${e.description || ''}</div></div>`).join('')) : '',
+      fi.products?.length ? collapsible('Products', fi.products.map(p => `<div class="mb-1"><div class="font-semibold">${p.name || ''}</div><div>${p.description || ''}</div></div>`).join('')) : '',
+    ].join('')
+  )).join('');
+
+  return `
+    <article class="border border-slate-200 dark:border-slate-800 rounded-lg p-3 bg-white dark:bg-slate-900 space-y-2">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <div class="text-xs text-slate-500 truncate">${page.domain_key || ''}</div>
+          <a class="text-sm font-semibold break-all text-blue-600 hover:underline" href="${url}" target="_blank" rel="noreferrer">${url}</a>
+        </div>
+        <div class="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800">score ${page.score ?? ''}</div>
+      </div>
+      ${page.summary ? `<p class="text-xs text-slate-700 dark:text-slate-200">${page.summary}</p>` : ''}
+      ${intel || '<div class="text-xs text-slate-400">No extracted intel</div>'}
+      <div class="flex flex-wrap gap-1 text-[10px] text-slate-500">
+        ${page.page_type ? pill(page.page_type) : ''}
+        ${page.entity_type ? pill(page.entity_type) : ''}
+        ${page.depth !== undefined ? pill(`depth ${page.depth}`) : ''}
+        ${page.text_length ? pill(`${page.text_length} chars`) : ''}
+      </div>
+    </article>
+  `;
+}
+
+// NEW: render full crawl result
+export function renderCrawlResult(payload) {
+  if (!payload || !payload.explored_data) {
+    return `<div class="text-xs text-slate-400">No crawl results</div>`;
+  }
+  const cards = Object.entries(payload.explored_data)
+    .map(([url, page]) => renderCrawlPage(url, page))
+    .join('');
+  return `<div class="space-y-3">${cards}</div>`;
+}

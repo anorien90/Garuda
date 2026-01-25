@@ -16,9 +16,9 @@ function render() {
       (e) => `
       <div class="log-row flex gap-2 items-start">
         <span class="log-ts text-[10px] text-slate-500">${new Date(e.ts).toLocaleTimeString()}</span>
-        <span class="log-step text-[11px] font-semibold text-slate-700 dark:text-slate-200">${e.step}</span>
         <span class="log-level text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 uppercase">${e.level}</span>
-        <span class="log-msg text-[11px] text-slate-800 dark:text-slate-100 break-words">${e.message}</span>
+        <span class="log-step text-[11px] font-semibold text-slate-700 dark:text-slate-200">${e.step}</span>
+       <span class="log-msg text-[11px] text-slate-800 dark:text-slate-100 break-words">${e.message}</span>
       </div>`
     )
     .join('');

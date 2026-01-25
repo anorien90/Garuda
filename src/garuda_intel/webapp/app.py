@@ -52,26 +52,13 @@ if settings.vector_enabled:
         logger.warning(f"Qdrant unavailable: {e}")
         vector_store = None
 
-# --- Structured event broadcaster for UI logging ---
 _EVENT_BUFFER_LIMIT = 1000
 _event_buffer = deque(maxlen=_EVENT_BUFFER_LIMIT)
 _event_listeners: list[queue.Queue] = []
 _event_lock = threading.Lock()
 
-
-def _now_iso():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def emit_event(step: str, message: str, level: str = "info", payload=None, session_id=None):
-    evt = {
-        "ts": _now_iso(),
-        "step": step,
-        "level": level,
-        "message": message,
-        "payload": payload or {},
-        "session_id": session_id,
-    }
+def _publish_event(evt: dict):
+    """Push an event to the in-memory buffer and live listeners."""
     with _event_lock:
         _event_buffer.append(evt)
         dead = []
@@ -83,8 +70,61 @@ def emit_event(step: str, message: str, level: str = "info", payload=None, sessi
         for q in dead:
             if q in _event_listeners:
                 _event_listeners.remove(q)
+
+
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def emit_event(step: str, message: str, level: str = "info", payload=None, session_id=None):
+    """Primary emitter used across the app when logging explicit steps."""
+    evt = {
+        "ts": _now_iso(),
+        "level": level,
+        "step": step,
+        "message": message,
+        "payload": payload or {},
+        "session_id": session_id,
+    }
+    _publish_event(evt)
     logger.log(getattr(logging, level.upper(), logging.INFO), f"[{step}] {message}")
 
+
+class EventQueueHandler(logging.Handler):
+    """Logging handler that mirrors all log records into the UI event stream."""
+    def emit(self, record: logging.LogRecord):
+        try:
+            evt = {
+                "ts": _now_iso(),
+                "level": record.levelname.lower(),
+                "step": getattr(record, "step", record.name),
+                "message": self.format(record),
+                "payload": getattr(record, "payload", {}) or {},
+                "session_id": getattr(record, "session_id", None),
+            }
+            _publish_event(evt)
+        except Exception:
+            # Never break app logging on handler errors
+            pass
+
+
+def init_event_logging():
+    """Attach the event queue handler to the root logger so all modules funnel into UI logs."""
+    handler = EventQueueHandler()
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    if root_logger.level > logging.INFO:
+        root_logger.setLevel(logging.INFO)
+
+    # Tone down noisy HTTP access logs but still capture warnings/errors
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
+
+# Initialize central log funnel on import
+init_event_logging()
 
 def _event_stream():
     q: queue.Queue = queue.Queue()
@@ -98,7 +138,6 @@ def _event_stream():
         with _event_lock:
             if q in _event_listeners:
                 _event_listeners.remove(q)
-
 
 # --- Auth helper ---
 def api_key_required(fn):
@@ -252,19 +291,42 @@ def api_intel_semantic():
 @api_key_required
 def api_pages():
     limit = int(request.args.get("limit", 200))
-    pages = store.get_all_pages() or []
+    q = (request.args.get("q") or "").strip()
+    entity_filter = (request.args.get("entity_type") or "").strip()
+    page_type_filter = (request.args.get("page_type") or "").strip()
+    min_score = request.args.get("min_score")
+    sort_by = (request.args.get("sort") or "fresh").lower()
 
-    def sort_key(p):
-        ts = getattr(p, "last_fetch_at", None) or getattr(p, "created_at", None)
-        if ts is None:
-            return datetime(1970, 1, 1, tzinfo=timezone.utc)
-        if getattr(ts, "tzinfo", None) is None:
-            return ts.replace(tzinfo=timezone.utc)
-        return ts
+    try:
+        min_score_val = float(min_score) if min_score not in (None, "",) else None
+    except ValueError:
+        min_score_val = None
 
-    pages = sorted(pages, key=sort_key, reverse=True)
-    data = [p.to_dict() for p in pages[:limit]]
-    emit_event("pages", "pages listed", payload={"count": len(data)})
+    pages = store.get_all_pages(
+        q=q,
+        entity_type=entity_filter or None,
+        page_type=page_type_filter or None,
+        min_score=min_score_val,
+        sort=sort_by,
+        limit=limit,
+    )
+
+    data = [p.to_dict() for p in pages]
+    emit_event(
+        "pages",
+        "pages listed",
+        payload={
+            "count": len(data),
+            "filters": {
+                "q": q,
+                "entity_type": entity_filter,
+                "page_type": page_type_filter,
+                "min_score": min_score_val,
+                "sort": sort_by,
+                "limit": limit,
+            },
+        },
+    )
     return jsonify(data)
 
 

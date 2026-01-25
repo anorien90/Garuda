@@ -1,9 +1,10 @@
 import { els, val, getEl } from '../config.js';
 import { fetchWithAuth } from '../api.js';
+import { renderCrawlResult } from '../ui.js';
 
 export async function runCrawl(e) {
   if (e) e.preventDefault();
-  if (els.crawlOutputPanel) els.crawlOutputPanel.innerHTML = '<div class="p-4 animate-pulse">Crawl initiated...</div>';
+  if (els.crawlOutputPanel) els.crawlOutputPanel.innerHTML = '<div class="p-4 animate-pulse text-xs text-slate-500">Crawl initiated...</div>';
   try {
     const body = {
       entity: val('crawl-entity'),
@@ -27,8 +28,11 @@ export async function runCrawl(e) {
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (els.crawlOutputPanel) els.crawlOutputPanel.innerHTML = `<pre class="text-xs bg-slate-900 text-green-400 p-4 rounded overflow-auto h-64">${JSON.stringify(data, null, 2)}</pre>`;
+
+    if (els.crawlOutputPanel) {
+      els.crawlOutputPanel.innerHTML = renderCrawlResult(data);
+    }
   } catch (err) {
-    if (els.crawlOutputPanel) els.crawlOutputPanel.innerHTML = `<div class="text-rose-500">${err.message}</div>`;
+    if (els.crawlOutputPanel) els.crawlOutputPanel.innerHTML = `<div class="text-rose-500 text-sm">${err.message}</div>`;
   }
 }

@@ -5,6 +5,7 @@ import logging
 
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, func, select, or_
 
 from .models import Base, Domain, Fingerprint, Link, Page, PageContent, Pattern, Seed, Intelligence, Entity
 from .store import PersistenceStore
@@ -24,10 +25,54 @@ class SQLAlchemyStore(PersistenceStore):
         with self.Session() as s:
             s.add(Seed(query=query, entity_type=entity_type, source=source))
             s.commit()
-
-    def get_all_pages(self) -> List[Page]:
+    
+    def get_all_pages(
+        self,
+        q: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        page_type: Optional[str] = None,
+        min_score: Optional[float] = None,
+        sort: str = "fresh",
+        limit: int = 200,
+    ) -> List[Page]:
+        """
+        Fetch pages with optional filtering and sorting applied at the DB level.
+        sort: "fresh" (last_fetch_at desc) | "score" (score desc, then recency)
+        q: fuzzy match against url, page_type, entity_type, domain_key, last_status, and page text.
+        """
+        q_norm = (q or "").strip().lower()
         with self.Session() as s:
-            stmt = select(Page)
+            stmt = select(Page).outerjoin(PageContent, Page.url == PageContent.page_url)
+
+            conditions = []
+            if q_norm:
+                like = f"%{q_norm}%"
+                conditions.append(
+                    or_(
+                        func.lower(Page.url).ilike(like),
+                        func.lower(Page.page_type).ilike(like),
+                        func.lower(Page.entity_type).ilike(like),
+                        func.lower(Page.domain_key).ilike(like),
+                        func.lower(Page.last_status).ilike(like),
+                        func.lower(PageContent.text).ilike(like),
+                    )
+                )
+            if entity_type:
+                conditions.append(Page.entity_type == entity_type)
+            if page_type:
+                conditions.append(Page.page_type == page_type)
+            if min_score is not None:
+                conditions.append(Page.score >= min_score)
+
+            if conditions:
+                stmt = stmt.where(*conditions)
+
+            if sort == "score":
+                stmt = stmt.order_by(Page.score.desc().nullslast(), Page.last_fetch_at.desc().nullslast())
+            else:  # fresh by default
+                stmt = stmt.order_by(Page.last_fetch_at.desc().nullslast())
+
+            stmt = stmt.limit(limit)
             results = s.execute(stmt).scalars().all()
             return results
 
