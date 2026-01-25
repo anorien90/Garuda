@@ -209,16 +209,17 @@ def _collect_entities_from_json(obj):
             out.extend(_collect_entities_from_json(v))
     return out
 
+
 @app.get("/api/entities/graph")
 @api_key_required
 def api_entities_graph():
     """
-    Build entity co-occurrence graph:
+    Build entity co-occurrence graph with combined semantic + SQL filtering:
     - Canonicalize variants into one node
     - Derive types from payload/entity table when possible
     - Edge weights = co-occurrence count across documents (intel rows, page_content)
     Query params:
-      query: substring filter on label/variant
+      query: semantic filter (vector-backed) combined with SQL substring fallback
       type: optional type filter (matches derived node type)
       min_score: minimum confidence for an intel row (default 0)
       limit: max nodes returned (default 100, cap 500)
@@ -234,6 +235,28 @@ def api_entities_graph():
     variants: dict[str, Counter[str]] = {}
     links: dict[tuple[str, str], int] = {}
     canonical_type: dict[str, str] = {}
+
+    def semantic_entity_hints(query: str, top_k: int = 200) -> set[str]:
+        hints: set[str] = set()
+        if not vector_store or not query:
+            return hints
+        vec = llm.embed_text(query)
+        if not vec:
+            return hints
+        try:
+            results = vector_store.search(vec, top_k=top_k)
+        except Exception as e:
+            logger.warning(f"entities graph semantic search failed: {e}")
+            return hints
+        for r in results:
+            p = getattr(r, "payload", {}) or {}  # type: ignore[attr-defined]
+            for key in ("entity", "entity_name", "name"):
+                val = p.get(key)
+                if val:
+                    canon = _canonical(val)
+                    if canon:
+                        hints.add(canon)
+        return hints
 
     def upsert_node(raw_name: str, kind: str | None, score: float | None):
         if not raw_name:
@@ -259,8 +282,10 @@ def api_entities_graph():
             key = (a, b)
             links[key] = links.get(key, 0) + 1
 
+    # Collect semantic hints (vector) early
+    semantic_allow = semantic_entity_hints(q, top_k=200) if q else set()
+
     with store.Session() as session:
-        # Intel rows
         intel_q = session.query(db_models.Intelligence)
         if q:
             intel_q = intel_q.filter(db_models.Intelligence.entity_name.ilike(f"%{q}%"))
@@ -268,10 +293,8 @@ def api_entities_graph():
             intel_q = intel_q.filter(db_models.Intelligence.confidence >= min_score)
         intel_rows = intel_q.limit(5000).all()
 
-        # PageContent with extracted_json / metadata_json
         page_rows = session.query(db_models.PageContent).limit(5000).all()
 
-        # Entity table type hints
         entity_kinds = {}
         for ent in session.query(db_models.Entity).limit(10000).all():
             canon = _canonical(ent.name)
@@ -324,12 +347,16 @@ def api_entities_graph():
     # Finalize labels to most common variant
     for canon, node in nodes.items():
         node["label"] = _best_label(variants.get(canon, Counter())) or node["label"]
-    # Filter by type / query (substring on label) AFTER edges built
-    
+
+    # Combined filtering: type + semantic hints + substring fallback
     if type_filter:
         nodes = {k: v for k, v in nodes.items() if (v.get("type") or "").lower() == type_filter}
+
+    allowed_keys: set[str] = set(nodes.keys()) if not q else set()
     if q:
-        safe_nodes = {}
+        # semantic allow
+        allowed_keys |= semantic_allow
+        # substring fallback on label
         for k, v in nodes.items():
             lbl = v.get("label")
             try:
@@ -337,14 +364,25 @@ def api_entities_graph():
             except Exception:
                 lbl_norm = ""
             if q in lbl_norm:
-                safe_nodes[k] = v
-        nodes = safe_nodes
+                allowed_keys.add(k)
 
-    # Recompute node set after filters and prune edges
+    if q:
+        nodes = {k: v for k, v in nodes.items() if (not allowed_keys) or (k in allowed_keys)}
+
+    # Expand by links: include neighbors of matched nodes for better link discovery
+    expanded_keys = set(nodes.keys())
+    if q and allowed_keys:
+        for (a, b) in links.keys():
+            if a in allowed_keys or b in allowed_keys:
+                expanded_keys.add(a)
+                expanded_keys.add(b)
+        nodes = {k: v for k, v in nodes.items() if k in expanded_keys}
+
+    # Recompute node set after filters and prune/expand edges
     node_set = set(nodes.keys())
     filtered_links = []
     for (a, b), weight in links.items():
-        if a in node_set and b in node_set:
+        if a in node_set or b in node_set:
             filtered_links.append({"source": a, "target": b, "weight": weight})
 
     # Limit nodes and drop edges to removed nodes
