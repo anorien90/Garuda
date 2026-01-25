@@ -8,7 +8,15 @@ from ..database.engine import SQLAlchemyStore
 from ..vector.engine import QdrantVectorStore
 from ..extractor.llm import LLMIntelExtractor
 from ..config import Settings
-from ..search import run_crawl_api
+from ..search import (
+    run_crawl_api,
+    perform_rag_search,
+    collect_candidates_simple,
+    IntelligentExplorer,
+    EntityProfile,
+    EntityType,
+)
+from ..browser.selenium import SeleniumBrowser
 
 settings = Settings.from_env()
 
@@ -184,9 +192,36 @@ def api_page():
     )
 
 
+def _looks_like_refusal(text: str) -> bool:
+    """Detect common LLM refusal/empty patterns even if not 'INSUFFICIENT_DATA'."""
+    if not text:
+        return True
+    t = text.lower()
+    patterns = [
+        "no information",
+        "not have information",
+        "unable to find",
+        "does not contain",
+        "context provided does not contain",
+        "cannot provide details",
+        "i don't have enough",
+        "no data",
+        "insufficient context",
+        "based solely on the given data",
+    ]
+    return any(p in t for p in patterns)
+
+
 @app.post("/api/chat")
 @api_key_required
 def api_chat():
+    """
+    Align web chat behavior with CLI interactive_chat:
+    - Try local RAG (SQL + vector).
+    - If insufficient, generate seeds, resolve live URLs, run crawl, and re-run RAG.
+    - Never return raw INSUFFICIENT_DATA to the client.
+    - Also treat generic refusals as insufficient to force the crawl path.
+    """
     body = request.get_json(silent=True) or {}
     question = body.get("question") or request.args.get("q")
     entity = body.get("entity") or request.args.get("entity")
@@ -194,28 +229,88 @@ def api_chat():
     if not question:
         return jsonify({"error": "question required"}), 400
 
-    context_hits = store.search_intel(keyword=question, limit=top_k)
-    vector_hits = []
-    if vector_store:
-        vec = llm.embed_text(question)
-        if vec:
-            try:
-                res = vector_store.search(vec, top_k=top_k)
-                vector_hits = [
-                    {
-                        "url": r.payload.get("url"),
-                        "snippet": r.payload.get("text"),
-                        "score": r.score,
-                        "source": "vector",
-                    }
-                    for r in res
-                ]
-            except Exception as e:
-                logger.warning(f"Vector chat search failed: {e}")
+    def gather_hits(q: str, limit: int):
+        ctx = store.search_intel(keyword=q, limit=limit)
+        vec_hits = []
+        if vector_store:
+            vec = llm.embed_text(q)
+            if vec:
+                try:
+                    res = vector_store.search(vec, top_k=limit)
+                    vec_hits = [
+                        {
+                            "url": r.payload.get("url"),
+                            "snippet": r.payload.get("text"),
+                            "score": r.score,
+                            "source": "vector",
+                        }
+                        for r in res
+                    ]
+                except Exception as e:
+                    logger.warning(f"Vector chat search failed: {e}")
+        return ctx + vec_hits
 
-    merged_hits = context_hits + vector_hits
+    merged_hits = gather_hits(question, top_k)
     answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
-    return jsonify({"answer": answer, "context": merged_hits, "entity": entity})
+    online_triggered = False
+    live_urls = []
+
+    is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
+
+    if not is_sufficient:
+        profile = EntityProfile(
+            name=entity or "General Research", entity_type=EntityType.TOPIC
+        )
+        online_triggered = True
+
+        search_queries = llm.generate_seed_queries(question, profile.name)
+        live_urls = collect_candidates_simple(search_queries, limit=5)
+
+        if live_urls:
+            explorer = IntelligentExplorer(
+                profile=profile,
+                persistence=store,
+                vector_store=vector_store,
+                llm_extractor=llm,
+                max_total_pages=getattr(settings, "chat_max_pages", 5),
+                score_threshold=5.0,
+            )
+
+            browser = None
+            try:
+                if getattr(settings, "chat_use_selenium", False):
+                    browser = SeleniumBrowser(headless=True)
+                    browser._init_driver()
+                explorer.explore(live_urls, browser)
+            except Exception as e:
+                logger.warning(f"Chat crawl failed: {e}")
+            finally:
+                if browser:
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+
+            merged_hits = gather_hits(question, top_k)
+            answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
+
+        answer = answer.replace(
+            "INSUFFICIENT_DATA",
+            "I searched online but still couldn't find a definitive answer.",
+        )
+        # If it still sounds like a refusal, soften it.
+        if _looks_like_refusal(answer):
+            answer = "I searched online but still couldn't find a definitive answer."
+
+    return jsonify(
+        {
+            "answer": answer,
+            "context": merged_hits,
+            "entity": entity,
+            "online_search_triggered": online_triggered,
+            "live_urls": live_urls,
+        }
+    )
 
 
 # --- Recorder-like helpers exposed to UI (search, health, queue, mark)
