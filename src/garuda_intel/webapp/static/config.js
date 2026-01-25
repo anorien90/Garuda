@@ -69,10 +69,22 @@ export const els = {
   themeToggleIcon: document.getElementById('theme-toggle-icon'),
   tabButtons: document.querySelectorAll('[data-tab-btn]'),
   tabPanels: document.querySelectorAll('[data-tab-panel]'),
+
+  // --- Entities Graph (NEW) ---
+  entitiesGraphForm: document.getElementById('entities-graph-form'),
+  entitiesGraphQuery: document.getElementById('entities-graph-query'),
+  entitiesGraphType: document.getElementById('entities-graph-type'),
+  entitiesGraphMinScore: document.getElementById('entities-graph-min-score'),
+  entitiesGraphLimit: document.getElementById('entities-graph-limit'),
+  entitiesGraphLoad: document.getElementById('entities-graph-load'),
+  entitiesGraphStatus: document.getElementById('entities-graph-status'),
+  entitiesGraphCanvas: document.getElementById('entities-graph-canvas'),
+  entitiesGraphLegend: document.getElementById('entities-graph-legend'),
+  entitiesGraphDetails: document.getElementById('entities-graph-details'),
 };
 
 export const getEl = (id) => document.getElementById(id);
 export const val = (id) => {
-  const el = getEl(id);
-  return el ? el.value : '';
+  const el = document.getElementById(id);
+  return el?.value;
 };

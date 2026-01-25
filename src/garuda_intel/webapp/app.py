@@ -7,7 +7,14 @@ import json
 import queue
 import threading
 from collections import deque
+import itertools  # NEW
+from typing import Generator
+import re  # NEW
+from collections import Counter  # NEW
 
+
+
+from ..database import models as db_models
 from ..database.engine import SQLAlchemyStore
 from ..vector.engine import QdrantVectorStore
 from ..extractor.llm import LLMIntelExtractor
@@ -159,6 +166,205 @@ def api_key_required(fn):
 def home():
     return render_template("index.html")
 
+def _canonical(name) -> str:
+    # Accept any type, convert to string, then normalize
+    if name is None:
+        return ""
+    try:
+        s = str(name)
+    except Exception:
+        return ""
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", s.lower())).strip()
+
+def _best_label(variants_counter: Counter[str]) -> str:
+    if not variants_counter:
+        return ""
+    return variants_counter.most_common(1)[0][0]
+
+def _collect_entities_from_json(obj):
+    """
+    Recursively walk a JSON-like structure and collect entities.
+    An entity is detected if:
+      - dict has a name/entity/value key
+      - or a string (treated as a name with unknown kind)
+    Returns list of {"name": str, "kind": Optional[str]}
+    """
+    out = []
+    if obj is None:
+        return out
+    if isinstance(obj, str):
+        out.append({"name": obj, "kind": None})
+        return out
+    if isinstance(obj, dict):
+        # If it looks like an entity object
+        maybe_name = obj.get("name") or obj.get("entity") or obj.get("value")
+        maybe_kind = obj.get("type") or obj.get("kind") or obj.get("entity_type")
+        if maybe_name:
+            out.append({"name": maybe_name, "kind": maybe_kind.lower() if maybe_kind else None})
+        # Recurse into values
+        for v in obj.values():
+            out.extend(_collect_entities_from_json(v))
+    elif isinstance(obj, list):
+        for v in obj:
+            out.extend(_collect_entities_from_json(v))
+    return out
+
+@app.get("/api/entities/graph")
+@api_key_required
+def api_entities_graph():
+    """
+    Build entity co-occurrence graph:
+    - Canonicalize variants into one node
+    - Derive types from payload/entity table when possible
+    - Edge weights = co-occurrence count across documents (intel rows, page_content)
+    Query params:
+      query: substring filter on label/variant
+      type: optional type filter (matches derived node type)
+      min_score: minimum confidence for an intel row (default 0)
+      limit: max nodes returned (default 100, cap 500)
+    """
+    q = (request.args.get("query") or "").strip().lower()
+    type_filter = (request.args.get("type") or "").strip().lower()
+    min_score = float(request.args.get("min_score", 0) or 0)
+    limit = min(int(request.args.get("limit", 100) or 100), 500)
+
+    emit_event("entities_graph", "start", payload={"q": q, "type": type_filter, "min_score": min_score, "limit": limit})
+
+    nodes: dict[str, dict] = {}
+    variants: dict[str, Counter[str]] = {}
+    links: dict[tuple[str, str], int] = {}
+    canonical_type: dict[str, str] = {}
+
+    def upsert_node(raw_name: str, kind: str | None, score: float | None):
+        if not raw_name:
+            return None
+        canon = _canonical(raw_name)
+        if not canon:
+            return None
+        variants.setdefault(canon, Counter()).update([raw_name])
+        node = nodes.get(canon, {"id": canon, "label": raw_name, "type": "unknown", "score": 0, "count": 0})
+        node["count"] += 1
+        if score is not None:
+            node["score"] = max(node.get("score") or 0, score)
+        if kind:
+            k = kind.lower()
+            canonical_type[canon] = canonical_type.get(canon) or k
+            node["type"] = canonical_type[canon]
+        nodes[canon] = node
+        return canon
+
+    def add_edges(entity_keys: list[str]):
+        unique_keys = sorted(set([e for e in entity_keys if e]))
+        for a, b in itertools.combinations(unique_keys, 2):
+            key = (a, b)
+            links[key] = links.get(key, 0) + 1
+
+    with store.Session() as session:
+        # Intel rows
+        intel_q = session.query(db_models.Intelligence)
+        if q:
+            intel_q = intel_q.filter(db_models.Intelligence.entity_name.ilike(f"%{q}%"))
+        if min_score:
+            intel_q = intel_q.filter(db_models.Intelligence.confidence >= min_score)
+        intel_rows = intel_q.limit(5000).all()
+
+        # PageContent with extracted_json / metadata_json
+        page_rows = session.query(db_models.PageContent).limit(5000).all()
+
+        # Entity table type hints
+        entity_kinds = {}
+        for ent in session.query(db_models.Entity).limit(10000).all():
+            canon = _canonical(ent.name)
+            if canon and ent.kind:
+                entity_kinds[canon] = ent.kind.lower()
+
+    # Process intel rows as documents
+    for row in intel_rows:
+        try:
+            payload = json.loads(row.data or "{}")
+        except Exception:
+            payload = {}
+        doc_keys = []
+        primary = upsert_node(row.entity_name, payload.get("entity_type") or payload.get("entity_kind"), row.confidence)
+        if primary:
+            doc_keys.append(primary)
+        for ent in _collect_entities_from_json(payload):
+            ck = upsert_node(ent["name"], ent.get("kind"), None)
+            if ck:
+                doc_keys.append(ck)
+        add_edges(doc_keys)
+
+    # Process page_content as documents
+    for p in page_rows:
+        doc_keys = []
+        try:
+            extracted = json.loads(p.extracted_json or "{}")
+        except Exception:
+            extracted = {}
+        try:
+            metadata = json.loads(p.metadata_json or "{}")
+        except Exception:
+            metadata = {}
+        for ent in _collect_entities_from_json(extracted):
+            ck = upsert_node(ent["name"], ent.get("kind"), None)
+            if ck:
+                doc_keys.append(ck)
+        for ent in _collect_entities_from_json(metadata):
+            ck = upsert_node(ent["name"], ent.get("kind"), None)
+            if ck:
+                doc_keys.append(ck)
+        add_edges(doc_keys)
+
+    # Apply type hints from entity table
+    for canon, k in entity_kinds.items():
+        if canon in nodes:
+            canonical_type[canon] = canonical_type.get(canon) or k
+            nodes[canon]["type"] = canonical_type[canon]
+
+    # Finalize labels to most common variant
+    for canon, node in nodes.items():
+        node["label"] = _best_label(variants.get(canon, Counter())) or node["label"]
+    # Filter by type / query (substring on label) AFTER edges built
+    
+    if type_filter:
+        nodes = {k: v for k, v in nodes.items() if (v.get("type") or "").lower() == type_filter}
+    if q:
+        safe_nodes = {}
+        for k, v in nodes.items():
+            lbl = v.get("label")
+            try:
+                lbl_norm = str(lbl).lower()
+            except Exception:
+                lbl_norm = ""
+            if q in lbl_norm:
+                safe_nodes[k] = v
+        nodes = safe_nodes
+
+    # Recompute node set after filters and prune edges
+    node_set = set(nodes.keys())
+    filtered_links = []
+    for (a, b), weight in links.items():
+        if a in node_set and b in node_set:
+            filtered_links.append({"source": a, "target": b, "weight": weight})
+
+    # Limit nodes and drop edges to removed nodes
+    top_nodes = dict(
+        sorted(nodes.items(), key=lambda kv: (kv[1].get("count", 0), kv[1].get("score", 0)), reverse=True)[:limit]
+    )
+    node_set = set(top_nodes.keys())
+    filtered_links = [l for l in filtered_links if l["source"] in node_set and l["target"] in node_set]
+
+    emit_event(
+        "entities_graph",
+        "done",
+        payload={"nodes": len(top_nodes), "links": len(filtered_links)},
+    )
+    return jsonify(
+        {
+            "nodes": list(top_nodes.values()),
+            "links": filtered_links,
+        }
+    )
 
 @app.get("/favicon.ico")
 def favicon():

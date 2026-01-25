@@ -10,6 +10,7 @@ import { loadPages } from './actions/pages.js';
 import { recorderSearch, recorderRefreshHealth, recorderMark } from './actions/recorder.js';
 import { runCrawl } from './actions/crawl.js';
 import { bindDelegatedEvents } from './events.js';
+import { initEntitiesGraph } from './entities-graph.js'; // NEW
 
 export function init() {
   initTheme();
@@ -40,6 +41,9 @@ export function init() {
   if (els.recorderHealthRefresh) els.recorderHealthRefresh.onclick = recorderRefreshHealth;
   if (els.recorderMarkForm) els.recorderMarkForm.onsubmit = recorderMark;
   if (els.crawlForm) els.crawlForm.onsubmit = runCrawl;
+
+  // NEW
+  initEntitiesGraph();
 
   bindDelegatedEvents();
   refreshStatus();

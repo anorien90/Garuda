@@ -8,6 +8,8 @@
     <button data-tab-btn="recorder" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Recorder</button>
     <button data-tab-btn="pages" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Pages</button>
     <button data-tab-btn="settings" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Settings</button>
+    <!-- NEW -->
+    <button data-tab-btn="entities-graph" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Entities Graph</button>
   </nav>
 
   <div class="mt-6">
@@ -27,5 +29,7 @@
     </section>
     <section data-tab-panel="pages" class="hidden">{% include "components/pages.html" %}</section>
     <section data-tab-panel="settings" class="hidden">{% include "components/settings.html" %}</section>
+    <!-- NEW -->
+    <section data-tab-panel="entities-graph" class="hidden">{% include "components/entities-graph.html" %}</section>
   </div>
 {% endblock %}
