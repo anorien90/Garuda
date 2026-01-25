@@ -1,7 +1,7 @@
 <article class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
   <div>
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Crawler</p>
-    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Launch / Inspect Crawl (search.py)</h3>
+    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Launch / Inspect Crawl</h3>
     <p class="text-sm text-slate-600 dark:text-slate-300">Run crawler/refresh/list/fetch actions from the backend CLI via API shim.</p>
   </div>
   <form id="crawl-form" class="space-y-3">
@@ -60,10 +60,6 @@
       </label>
     </div>
     <div class="grid gap-3 sm:grid-cols-2">
-      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
-        List pages (limit)
-        <input id="crawl-list-pages" type="number" min="0" max="500" value="0" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
-      </label>
       <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
         Fetch text URL
         <input id="crawl-fetch-url" type="url" placeholder="https://example.com/page" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>

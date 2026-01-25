@@ -17,7 +17,7 @@
     <header class="flex flex-col sm:flex-row justify-between items-center gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
       <div class="flex items-center gap-4">
         <img src="{{ url_for('static', filename='media/LogoSmallFullTransparent.png') }}" alt="Logo" class="h-10 w-auto"/>
-        <h1 class="text-xl font-bold tracking-tight">Garuda <span class="text-brand-600">Control</span></h1>
+        <h1 class="text-xl font-bold tracking-tight">Garuda <span class="text-brand-600">Control</span> Center</h1>
       </div>
       
       <div class="flex items-center gap-4 px-4 py-2 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
@@ -26,7 +26,7 @@
         <div class="flex items-center gap-1.5" title="Vector Store"><span id="status-vector" class="h-2 w-2 rounded-full bg-slate-300"></span><span class="text-[10px] font-bold text-slate-500">VEC</span></div>
         <div class="flex items-center gap-1.5" title="LLM Engine"><span id="status-llm" class="h-2 w-2 rounded-full bg-slate-300"></span><span class="text-[10px] font-bold text-slate-500">LLM</span></div>
         <button id="refresh-status" class="ml-2 text-slate-400 hover:text-brand-500 transition">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9H9m-5 7h5v5m5.418-2A8.001 8.001 0 0119.418 9H15"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 -960 960 960" fill="#1f1f1f"><path d="M480-192q-120 0-204-84t-84-204q0-120 84-204t204-84q65 0 120.5 27t95.5 72v-99h72v240H528v-72h131q-29-44-76-70t-103-26q-90 0-153 63t-63 153q0 90 63 153t153 63q84 0 144-55.5T693-456h74q-9 112-91 188t-196 76Z"/></svg>
         </button>
       </div>
 

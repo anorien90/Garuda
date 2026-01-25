@@ -16,7 +16,6 @@ export async function runCrawl(e) {
       use_selenium: !!getEl('crawl-use-selenium')?.checked,
       active_mode: !!getEl('crawl-active-mode')?.checked,
       output: val('crawl-output') || '',
-      list_pages: Number(val('crawl-list-pages') || 0),
       fetch_text: val('crawl-fetch-url') || '',
       refresh: !!getEl('crawl-refresh')?.checked,
       refresh_batch: Number(val('crawl-refresh-batch') || 50),
