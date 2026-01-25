@@ -71,6 +71,7 @@ garuda_intel = [
     "webapp/static/*.png",
     "webapp/static/*.ico",
     "webapp/static/media/*.png",
+    "webapp/static/actions/*.js",
     "webapp/templates/*.html",
     "webapp/templates/**/*.html"
 ]
