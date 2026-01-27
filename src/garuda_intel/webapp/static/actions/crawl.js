@@ -2,6 +2,12 @@ import { els, val, getEl } from '../config.js';
 import { fetchWithAuth } from '../api.js';
 import { renderCrawlResult } from '../ui.js';
 
+function renderErrorMessage(message) {
+  return `<div class="p-4 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm">
+    <strong>Error:</strong> ${message}
+  </div>`;
+}
+
 export async function runIntelligentCrawl(e) {
   if (e) e.preventDefault();
   
@@ -36,9 +42,7 @@ export async function runIntelligentCrawl(e) {
     }
   } catch (err) {
     if (outputPanel) {
-      outputPanel.innerHTML = `<div class="p-4 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm">
-        <strong>Error:</strong> ${err.message}
-      </div>`;
+      outputPanel.innerHTML = renderErrorMessage(err.message);
     }
   }
 }
@@ -82,9 +86,7 @@ export async function runUnifiedCrawl(e) {
     }
   } catch (err) {
     if (outputPanel) {
-      outputPanel.innerHTML = `<div class="p-4 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm">
-        <strong>Error:</strong> ${err.message}
-      </div>`;
+      outputPanel.innerHTML = renderErrorMessage(err.message);
     }
   }
 }

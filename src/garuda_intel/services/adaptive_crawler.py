@@ -8,6 +8,7 @@ and real-time feedback.
 import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+from urllib.parse import urlparse
 
 from ..database.store import PersistenceStore
 from ..discover.crawl_learner import CrawlLearner
@@ -17,6 +18,14 @@ from .entity_gap_analyzer import EntityGapAnalyzer
 
 
 logger = logging.getLogger(__name__)
+
+
+# Registry domains to avoid marking as official
+REGISTRY_DOMAINS = [
+    'google.com', 'wikipedia.org', 'linkedin.com',
+    'facebook.com', 'twitter.com', 'youtube.com',
+    'instagram.com', 'reddit.com'
+]
 
 
 class AdaptiveCrawlerService:
@@ -76,8 +85,6 @@ class AdaptiveCrawlerService:
         from ..search import collect_candidates_simple
         from ..explorer.engine import IntelligentExplorer
         from ..types.entity.profile import EntityProfile, EntityType
-        from ..browser.selenium import SeleniumBrowser
-        from urllib.parse import urlparse
         
         self.logger.info(f"Starting intelligent crawl for '{entity_name}'")
         
@@ -163,9 +170,7 @@ class AdaptiveCrawlerService:
                                 try:
                                     domain = urlparse(url).netloc.lower().replace("www.", "")
                                     # Avoid registry domains
-                                    registry_domains = ['google.com', 'wikipedia.org', 'linkedin.com', 
-                                                      'facebook.com', 'twitter.com', 'youtube.com']
-                                    if domain and not any(reg in domain for reg in registry_domains):
+                                    if domain and not any(reg in domain for reg in REGISTRY_DOMAINS):
                                         if domain not in official_domains:
                                             official_domains.append(domain)
                                 except Exception:
