@@ -1,0 +1,237 @@
+<div class="space-y-6">
+  <!-- Entity-Aware Crawling -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">Entity-Aware Crawling</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
+      Start targeted crawls from known entities to fill data gaps and discover relationships.
+    </p>
+    
+    <form id="entity-crawl-form" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Entity Name</label>
+        <input type="text" id="entity-crawl-name" 
+               class="w-full px-3 py-2 border rounded-lg"
+               placeholder="e.g., Bill Gates" required>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">Entity Type</label>
+          <select id="entity-crawl-type" class="w-full px-3 py-2 border rounded-lg">
+            <option value="PERSON">Person</option>
+            <option value="COMPANY">Company</option>
+            <option value="NEWS">News/Event</option>
+            <option value="TOPIC">Topic</option>
+          </select>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium mb-1">Crawl Mode</label>
+          <select id="entity-crawl-mode" class="w-full px-3 py-2 border rounded-lg">
+            <option value="TARGETING">Targeting (Fill Gaps)</option>
+            <option value="DISCOVERY">Discovery (New Entity)</option>
+            <option value="EXPANSION">Expansion (Find Related)</option>
+          </select>
+        </div>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium mb-1">Location Hint (Optional)</label>
+        <input type="text" id="entity-crawl-location" 
+               class="w-full px-3 py-2 border rounded-lg"
+               placeholder="e.g., Seattle, Washington">
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium mb-1">Aliases (Optional, comma-separated)</label>
+        <input type="text" id="entity-crawl-aliases" 
+               class="w-full px-3 py-2 border rounded-lg"
+               placeholder="e.g., William Gates, Bill Gates III">
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium mb-1">Official Domains (Optional, comma-separated)</label>
+        <input type="text" id="entity-crawl-domains" 
+               class="w-full px-3 py-2 border rounded-lg"
+               placeholder="e.g., gatesfoundation.org, gatesnotes.com">
+      </div>
+      
+      <button type="submit" class="btn-primary">
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        Start Entity Crawl
+      </button>
+    </form>
+  </div>
+  
+  <!-- Entity Management -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">Entity Management</h2>
+    
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Deduplication -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Deduplicate Entities</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Find and merge duplicate entities based on similarity.
+        </p>
+        <div class="flex items-center gap-2 mb-3">
+          <label class="text-sm">Threshold:</label>
+          <input type="range" id="dedup-threshold" min="0.5" max="1.0" step="0.05" value="0.85" 
+                 class="flex-1">
+          <span id="dedup-threshold-value" class="text-sm font-mono">0.85</span>
+        </div>
+        <button onclick="deduplicateEntities(parseFloat(document.getElementById('dedup-threshold').value))" 
+                class="btn-secondary w-full">
+          Deduplicate
+        </button>
+      </div>
+      
+      <!-- Find Similar -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Find Similar Entities</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Search for entities similar to a given entity ID.
+        </p>
+        <div class="space-y-2">
+          <input type="text" id="similar-entity-id" 
+                 class="w-full px-3 py-2 border rounded-lg text-sm"
+                 placeholder="Enter Entity ID">
+          <button onclick="findSimilarEntities(document.getElementById('similar-entity-id').value)" 
+                  class="btn-secondary w-full">
+            Find Similar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Relationship Management -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">Relationship Management</h2>
+    
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <!-- Validate -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Validate Relationships</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Check relationship integrity and fix issues.
+        </p>
+        <button onclick="validateRelationships(true)" class="btn-secondary w-full">
+          Validate & Fix
+        </button>
+      </div>
+      
+      <!-- Deduplicate -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Deduplicate Relationships</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Remove duplicate relationship entries.
+        </p>
+        <button onclick="deduplicateRelationships()" class="btn-secondary w-full">
+          Deduplicate
+        </button>
+      </div>
+      
+      <!-- Infer -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Infer Relationships</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Use AI to discover implicit relationships.
+        </p>
+        <input type="text" id="infer-entity-ids" 
+               class="w-full px-3 py-2 border rounded-lg text-sm mb-2"
+               placeholder="Entity IDs (comma-separated)">
+        <button onclick="inferRelationships(document.getElementById('infer-entity-ids').value.split(',').filter(x=>x.trim()))" 
+                class="btn-secondary w-full">
+          Infer
+        </button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Crawl Learning Stats -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">Crawl Learning Statistics</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
+      View adaptive learning metrics and domain reliability scores.
+    </p>
+    
+    <div class="space-y-3">
+      <div>
+        <label class="block text-sm font-medium mb-1">Domains to Check (Optional, comma-separated)</label>
+        <input type="text" id="learning-domains" 
+               class="w-full px-3 py-2 border rounded-lg"
+               placeholder="e.g., wikipedia.org, linkedin.com">
+      </div>
+      
+      <button onclick="getCrawlLearningStats(document.getElementById('learning-domains').value.split(',').filter(x=>x.trim()))" 
+              class="btn-primary">
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+        View Learning Stats
+      </button>
+    </div>
+  </div>
+  
+  <!-- Entity Gap Analysis -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">Entity Gap Analysis</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
+      Analyze data completeness for specific entities and identify missing fields.
+    </p>
+    
+    <div class="space-y-3">
+      <div>
+        <label class="block text-sm font-medium mb-1">Entity ID</label>
+        <input type="text" id="gap-analysis-entity-id" 
+               class="w-full px-3 py-2 border rounded-lg"
+               placeholder="Enter Entity ID">
+      </div>
+      
+      <button onclick="analyzeEntityGaps(document.getElementById('gap-analysis-entity-id').value)" 
+              class="btn-primary">
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+        </svg>
+        Analyze Gaps
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Entity crawl form handler
+document.getElementById('entity-crawl-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  
+  const name = document.getElementById('entity-crawl-name').value;
+  const entityType = document.getElementById('entity-crawl-type').value;
+  const mode = document.getElementById('entity-crawl-mode').value;
+  const location = document.getElementById('entity-crawl-location').value;
+  const aliasesStr = document.getElementById('entity-crawl-aliases').value;
+  const domainsStr = document.getElementById('entity-crawl-domains').value;
+  
+  const aliases = aliasesStr ? aliasesStr.split(',').map(s => s.trim()).filter(s => s) : [];
+  const domains = domainsStr ? domainsStr.split(',').map(s => s.trim()).filter(s => s) : [];
+  
+  try {
+    await executeEntityCrawl(name, {
+      entityType,
+      mode,
+      locationHint: location,
+      aliases,
+      officialDomains: domains
+    });
+  } catch (error) {
+    alert('Entity crawl failed: ' + error.message);
+  }
+});
+
+// Update threshold display
+document.getElementById('dedup-threshold')?.addEventListener('input', (e) => {
+  document.getElementById('dedup-threshold-value').textContent = e.target.value;
+});
+</script>
