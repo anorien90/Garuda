@@ -159,8 +159,12 @@ def _add_relationship_edges(session, ensure_node, add_edge, entry_type_map: dict
     Include explicit Entity->Entity (or other Entry) relationships as edges with metadata.
     
     Includes deduplication to ensure each unique relationship is only added once.
-    Note: Loads relationships in bulk (limit 20000) to maintain original behavior.
-    Consider pagination for very large datasets in future iterations.
+    
+    Note: Currently loads relationships in bulk (limit 20000) to maintain original behavior.
+    TODO: For very large datasets (>20K relationships), implement pagination:
+          - Process relationships in batches of 1000-5000
+          - Use offset-based or cursor-based pagination
+          - This will improve memory usage and prevent timeouts
     """
     seen_edges = set()  # Track (source, target, relation_type) to avoid duplicates
     

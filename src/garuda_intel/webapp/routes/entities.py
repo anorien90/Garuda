@@ -135,14 +135,17 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
             entry_type_map: dict[str, str] = {}
             with store.Session() as session:
                 # Note: Loading entities in bulk (limit 20000) maintains original behavior.
-                # For very large datasets, consider pagination or streaming in future iterations.
+                # TODO: For very large datasets (>20K entities), implement pagination:
+                #       - Process entities in batches of 1000-5000
+                #       - Use offset-based or cursor-based pagination
                 for row in session.query(db_models.Entity).limit(20000).all():
                     canon = _canonical(row.name)
                     ent_uuid = str(row.id)
+                    norm_kind = _norm_kind(row.kind)  # Calculate once
                     entity_ids[canon] = ent_uuid
-                    entity_kinds[canon] = _norm_kind(row.kind)
+                    entity_kinds[canon] = norm_kind
                     if row.kind:
-                        canonical_type[canon] = _norm_kind(row.kind)
+                        canonical_type[canon] = norm_kind
                     entry_type_map[ent_uuid] = "entity"
 
                 semantic_entity_hints = _qdrant_semantic_entity_hints(q, vector_store, llm) if q else set()

@@ -300,7 +300,7 @@ class PostCrawlProcessor:
             
             # 1. Remove intelligence entries with no meaningful data
             empty_intel = session.query(Intelligence).filter(
-                (Intelligence.data == None) | (Intelligence.data == {})
+                (Intelligence.data.is_(None)) | (Intelligence.data == {})
             ).all()
             
             for intel in empty_intel:
@@ -326,9 +326,13 @@ class PostCrawlProcessor:
             
             # 3. Ensure all entities have normalized names
             for entity in all_entities:
-                if entity.name and entity.normalized_name != entity.name.lower().strip():
-                    entity.normalized_name = entity.name.lower().strip()
-                    stats["data_quality_improvements"] += 1
+                if entity.name:
+                    # Check if entity has normalized_name attribute
+                    if hasattr(entity, 'normalized_name'):
+                        expected_normalized = entity.name.lower().strip()
+                        if entity.normalized_name != expected_normalized:
+                            entity.normalized_name = expected_normalized
+                            stats["data_quality_improvements"] += 1
             
             session.commit()
             self.logger.info(f"  Applied {stats['data_quality_improvements']} data quality improvements")
