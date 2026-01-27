@@ -43,6 +43,52 @@ export async function runIntelligentCrawl(e) {
   }
 }
 
+export async function runUnifiedCrawl(e) {
+  if (e) e.preventDefault();
+  
+  const entityName = val('crawl-entity');
+  if (!entityName || !entityName.trim()) {
+    alert('Please enter an entity name');
+    return;
+  }
+  
+  const outputPanel = getEl('crawl-output-panel');
+  if (outputPanel) {
+    outputPanel.innerHTML = '<div class="p-4 animate-pulse text-xs text-violet-600 dark:text-violet-400">🎯 Auto-detecting crawl mode and starting smart crawl...</div>';
+  }
+  
+  try {
+    const body = {
+      entity: entityName.trim(),
+      type: val('crawl-type') || 'company',
+      max_pages: Number(val('crawl-total-pages') || 50),
+      max_depth: Number(val('crawl-max-depth') || 2),
+      use_intelligent: false  // Let backend auto-detect
+    };
+
+    const res = await fetchWithAuth('/api/crawl/unified', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (outputPanel) {
+      if (data.mode === 'intelligent') {
+        outputPanel.innerHTML = renderIntelligentCrawlResult(data);
+      } else {
+        outputPanel.innerHTML = renderCrawlResult(data.results);
+      }
+    }
+  } catch (err) {
+    if (outputPanel) {
+      outputPanel.innerHTML = `<div class="p-4 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm">
+        <strong>Error:</strong> ${err.message}
+      </div>`;
+    }
+  }
+}
+
 function renderIntelligentCrawlResult(data) {
   const plan = data.plan || {};
   const results = data.results || {};

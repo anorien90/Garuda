@@ -8,7 +8,7 @@ import { semanticSearch } from './actions/semantic.js';
 import { chatAsk } from './actions/chat.js';
 import { loadPages } from './actions/pages.js';
 import { recorderSearch, recorderRefreshHealth, recorderMark } from './actions/recorder.js';
-import { runCrawl, runIntelligentCrawl } from './actions/crawl.js';
+import { runCrawl, runIntelligentCrawl, runUnifiedCrawl } from './actions/crawl.js';
 import { analyzeEntityGaps, analyzeAllGaps } from './actions/gaps.js';
 import { bindDelegatedEvents } from './events.js';
 import { initEntitiesGraph } from './entities-graph.js';
@@ -45,6 +45,10 @@ export function init() {
   // NEW: Intelligent crawl button
   const btnIntelligentCrawl = document.getElementById('btn-intelligent-crawl');
   if (btnIntelligentCrawl) btnIntelligentCrawl.onclick = runIntelligentCrawl;
+  
+  // NEW: Unified smart crawl button
+  const btnUnifiedCrawl = document.getElementById('btn-unified-crawl');
+  if (btnUnifiedCrawl) btnUnifiedCrawl.onclick = runUnifiedCrawl;
   
   // NEW: Gap analysis buttons
   const btnAnalyzeGaps = document.getElementById('btn-analyze-gaps');
