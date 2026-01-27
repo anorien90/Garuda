@@ -48,11 +48,11 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
         node_type_filters = _parse_list_param(
             request.args.get("node_types"),
-            default={"entity", "person", "org", "organization", "corporation", "location", "product", "page", "intel", "image"},
+            default={"entity", "person", "org", "organization", "corporation", "location", "product", "page", "intel", "image", "media"},
         )
         edge_kind_filters = _parse_list_param(
             request.args.get("edge_kinds"),
-            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity"},
+            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media"},
         )
 
         emit_event(
@@ -241,6 +241,28 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                             add_edge(page_id, link_id, kind="link", weight=1)
 
                 _add_relationship_edges(session, ensure_node, add_edge, entry_type_map)
+                
+                # Add media items to the graph
+                for media_row in session.query(db_models.MediaItem).limit(1000).all():
+                    media_id = str(media_row.id)
+                    media_label = media_row.url.split('/')[-1][:50] if media_row.url else "media"
+                    media_meta = {
+                        "url": media_row.url,
+                        "media_type": media_row.media_type,
+                        "processed": media_row.processed,
+                        "source_id": media_id
+                    }
+                    ensure_node(media_id, media_label, "media", meta=media_meta)
+                    
+                    # Link to source page
+                    if media_row.source_page_id:
+                        page_id = str(media_row.source_page_id)
+                        add_edge(page_id, media_id, kind="page-media", weight=1)
+                    
+                    # Link to associated entity
+                    if media_row.entity_id:
+                        entity_id = str(media_row.entity_id)
+                        add_edge(entity_id, media_id, kind="entity-media", weight=1)
 
                 for r in _qdrant_semantic_page_hits(q, vector_store, llm):
                     p = r.payload or {}
