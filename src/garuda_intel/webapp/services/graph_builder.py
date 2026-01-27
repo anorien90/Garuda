@@ -158,13 +158,25 @@ def _add_relationship_edges(session, ensure_node, add_edge, entry_type_map: dict
     """
     Include explicit Entity->Entity (or other Entry) relationships as edges with metadata.
     
+    Includes deduplication to ensure each unique relationship is only added once.
     Note: Loads relationships in bulk (limit 20000) to maintain original behavior.
     Consider pagination for very large datasets in future iterations.
     """
+    seen_edges = set()  # Track (source, target, relation_type) to avoid duplicates
+    
     for rel in session.query(db_models.Relationship).limit(20000).all():
         sid = str(rel.source_id)
         tid = str(rel.target_id)
         kind = rel.relation_type or "relationship"
+        
+        # Create a normalized edge key for deduplication
+        edge_key = (min(sid, tid), max(sid, tid), kind)
+        
+        # Skip if we've already added this relationship
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+        
         s_type = entry_type_map.get(sid, "entity")
         t_type = entry_type_map.get(tid, "entity")
         ensure_node(sid, sid, s_type, meta={"entity_id": sid, "source_id": sid})

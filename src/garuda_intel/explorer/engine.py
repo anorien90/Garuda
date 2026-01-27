@@ -13,6 +13,7 @@ from ..extractor.engine import ContentExtractor
 from .scorer import URLScorer
 from ..discover.frontier import Frontier
 from ..discover.crawl_learner import CrawlLearner
+from ..discover.post_crawl_processor import PostCrawlProcessor
 from ..types.entity import EntityType, EntityProfile
 from ..database.store import PersistenceStore
 from ..database.relationship_manager import RelationshipManager
@@ -83,6 +84,15 @@ class IntelligentExplorer:
         
         # Strategy Selection (Phase 4)
         self.strategy_selector = StrategySelector()
+        
+        # Post-crawl Processor (Comprehensive deduplication and aggregation)
+        self.post_crawl_processor = None
+        if persistence:
+            self.post_crawl_processor = PostCrawlProcessor(
+                store=persistence,
+                relationship_manager=self.relationship_manager,
+                llm=llm_extractor
+            )
 
         # URL Scoring Logic
         self.url_scorer = URLScorer(profile.name, profile.entity_type, patterns=scorer_patterns, domains=scorer_domains)
@@ -166,31 +176,21 @@ class IntelligentExplorer:
             if own_browser and browser:
                 browser.close()
             
-            # Phase 3: Post-crawl relationship cleanup and validation
-            if self.relationship_manager and pages_explored > 0:
+            # Comprehensive post-crawl processing
+            if self.post_crawl_processor and pages_explored > 0:
                 try:
-                    self.logger.info("Running post-crawl relationship validation...")
-                    
-                    # Deduplicate relationships
-                    duplicates_removed = self.relationship_manager.deduplicate_relationships()
-                    if duplicates_removed > 0:
-                        self.logger.info(f"Removed {duplicates_removed} duplicate relationships")
-                    
-                    # Validate relationships
-                    validation_report = self.relationship_manager.validate_relationships(fix_invalid=True)
-                    self.logger.info(
-                        f"Relationship validation: {validation_report['valid']}/{validation_report['total']} valid, "
-                        f"{validation_report['fixed']} issues fixed"
-                    )
+                    self.logger.info("Running comprehensive post-crawl processing...")
+                    session_id = f"crawl_{self.profile.name}_{pages_explored}"
+                    stats = self.post_crawl_processor.process(session_id=session_id)
+                    # Stats are already logged by the processor
                 except Exception as e:
-                    self.logger.warning(f"Post-crawl relationship cleanup failed: {e}")
+                    self.logger.warning(f"Post-crawl processing failed: {e}")
             
-            # Phase 4: Record crawl results for learning
+            # Crawl learning (keep this separate as it's about improving future crawls)
             if self.crawl_learner and pages_explored > 0:
                 try:
                     self.logger.info("Recording crawl results for learning...")
                     for url, page_data in self.explored_data.items():
-                        # Record each successful crawl
                         intel_quality = page_data.get("avg_confidence", 0.5)
                         page_type = page_data.get("page_type", "general")
                         extraction_success = page_data.get("has_high_confidence_intel", False)
@@ -203,23 +203,13 @@ class IntelligentExplorer:
                         )
                     
                     # Update URL scorer with learned patterns
-                    if self.url_scorer:
+                    if self.url_scorer and self.explored_data:
                         domain_key = self._get_domain_key(list(self.explored_data.keys())[0])
                         reliability = self.crawl_learner.get_domain_reliability(domain_key)
                         if reliability > 0:
                             self.logger.info(f"Domain {domain_key} reliability: {reliability:.2f}")
                 except Exception as e:
                     self.logger.warning(f"Crawl learning recording failed: {e}")
-            
-            # Phase 2: Post-crawl entity deduplication
-            if self.store and pages_explored > 0:
-                try:
-                    self.logger.info("Running entity deduplication...")
-                    merge_map = self.store.deduplicate_entities(threshold=0.85)
-                    if merge_map:
-                        self.logger.info(f"Merged {len(merge_map)} duplicate entities")
-                except Exception as e:
-                    self.logger.warning(f"Entity deduplication failed: {e}")
 
         return self.explored_data
 
