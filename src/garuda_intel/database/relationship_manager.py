@@ -479,6 +479,130 @@ Only include relationships where confidence >= {min_confidence}.
         
         return report
     
+    def infer_missing_fields(self) -> int:
+        """
+        Infer missing entity fields from related entities through relationships.
+        
+        For example:
+        - If Entity A works at Company B, and Company B has location X,
+          then Entity A's location might also be X.
+        - If Person P is CEO of Company C, and Company C is in Industry I,
+          then Person P might be associated with Industry I.
+        
+        This method traverses the relationship graph and propagates information
+        from related entities to fill in missing fields.
+        
+        Returns:
+            Number of fields inferred and filled
+            
+        Example:
+            >>> # Infer missing fields from relationships
+            >>> inferred = manager.infer_missing_fields()
+            >>> if inferred > 0:
+            ...     print(f"Successfully inferred {inferred} missing fields")
+        """
+        inferences_made = 0
+        
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+            
+            with self.store.Session() as session:
+                # Get all entities and relationships
+                entities = session.execute(select(Entity)).scalars().all()
+                relationships = session.execute(select(Relationship)).scalars().all()
+                
+                # Build a map of entity_id -> entity for quick lookup
+                # Ensure consistent string type for IDs
+                entity_map = {str(e.id): e for e in entities}
+                
+                # For each relationship, try to infer missing fields
+                for rel in relationships:
+                    # Ensure IDs are strings for consistent lookup
+                    source_id = str(rel.source_id)
+                    target_id = str(rel.target_id)
+                    
+                    if source_id not in entity_map or target_id not in entity_map:
+                        continue
+                    
+                    source = entity_map[source_id]
+                    target = entity_map[target_id]
+                    
+                    # Track if source.data was modified
+                    source_modified = False
+                    
+                    # Infer based on relationship type
+                    if rel.relation_type in ["works_at", "employed_by", "employee_of"]:
+                        # If person works at company, they might share location
+                        if target.entity_type in ["organization", "company"]:
+                            target_data = target.data or {}
+                            source_data = source.data or {}
+                            
+                            # Propagate location
+                            if "location" in target_data and "location" not in source_data:
+                                if source.data is None:
+                                    source.data = {}
+                                source.data["location"] = target_data["location"]
+                                inferences_made += 1
+                                source_modified = True
+                            
+                            # Propagate industry
+                            if "industry" in target_data and "industry" not in source_data:
+                                if source.data is None:
+                                    source.data = {}
+                                source.data["industry"] = target_data["industry"]
+                                inferences_made += 1
+                                source_modified = True
+                    
+                    elif rel.relation_type in ["ceo_of", "founder_of", "president_of"]:
+                        # If person is CEO/founder of company, they might share location
+                        if target.entity_type in ["organization", "company"]:
+                            target_data = target.data or {}
+                            source_data = source.data or {}
+                            
+                            if "location" in target_data and "location" not in source_data:
+                                if source.data is None:
+                                    source.data = {}
+                                source.data["location"] = target_data["location"]
+                                inferences_made += 1
+                                source_modified = True
+                    
+                    elif rel.relation_type in ["subsidiary_of", "part_of", "owned_by"]:
+                        # Subsidiary might share parent's industry/location
+                        target_data = target.data or {}
+                        source_data = source.data or {}
+                        
+                        if "industry" in target_data and "industry" not in source_data:
+                            if source.data is None:
+                                source.data = {}
+                            source.data["industry"] = target_data["industry"]
+                            inferences_made += 1
+                            source_modified = True
+                    
+                    elif rel.relation_type in ["located_in", "based_in", "headquarters_in"]:
+                        # Propagate country/region info
+                        target_data = target.data or {}
+                        source_data = source.data or {}
+                        
+                        if "country" in target_data and "country" not in source_data:
+                            if source.data is None:
+                                source.data = {}
+                            source.data["country"] = target_data["country"]
+                            inferences_made += 1
+                            source_modified = True
+                    
+                    # Mark data as modified so SQLAlchemy tracks the change
+                    if source_modified:
+                        flag_modified(source, 'data')
+                
+                if inferences_made > 0:
+                    session.commit()
+                    self.logger.info(f"Inferred {inferences_made} missing fields")
+        
+        except Exception as e:
+            self.logger.error(f"Field inference failed: {e}")
+        
+        return inferences_made
+    
     def add_relationship_confidence(
         self, 
         relationship_id: str, 
