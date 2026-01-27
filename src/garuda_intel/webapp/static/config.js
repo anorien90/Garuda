@@ -1,4 +1,5 @@
 export const DEFAULT_BASE_URL = 'http://localhost:8080';
+export const API_BASE = DEFAULT_BASE_URL;
 
 export const els = {
   baseUrl: document.getElementById('base-url'),
