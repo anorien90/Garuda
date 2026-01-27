@@ -6,6 +6,7 @@ This module provides the main entry point and public API for the search function
 # Re-export types that are used by other modules
 from ..types.entity import EntityProfile, EntityType
 from ..explorer.engine import IntelligentExplorer
+from ..discover.crawl_modes import CrawlMode
 
 # Import main functions
 from .handlers import (
@@ -23,6 +24,7 @@ __all__ = [
     "EntityProfile",
     "EntityType",
     "IntelligentExplorer",
+    "CrawlMode",
     # Main handlers
     "handle_intel",
     "handle_run",
