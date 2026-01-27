@@ -914,3 +914,192 @@ class SQLAlchemyStore(PersistenceStore):
         total = len(set1 | set2)
         
         return overlap / total if total > 0 else 0.0
+
+    # -------- Relationship Queries (Phase 3) --------
+    def get_relationship_by_entities(
+        self, 
+        source_id: str, 
+        target_id: str, 
+        relation_type: Optional[str] = None
+    ) -> Optional[Relationship]:
+        """
+        Get relationship between two entities.
+        
+        Args:
+            source_id: Source entity UUID
+            target_id: Target entity UUID
+            relation_type: Optional relation type filter
+            
+        Returns:
+            Relationship object if found, None otherwise
+        """
+        try:
+            with self.Session() as s:
+                stmt = select(Relationship).where(
+                    Relationship.source_id == source_id,
+                    Relationship.target_id == target_id
+                )
+                if relation_type:
+                    stmt = stmt.where(Relationship.relation_type == relation_type)
+                
+                return s.execute(stmt).scalar_one_or_none()
+        except Exception as e:
+            self.logger.error(f"get_relationship_by_entities failed: {e}")
+            return None
+    
+    def get_all_relationships_for_entity(self, entity_id: str) -> List[Relationship]:
+        """
+        Get all relationships (incoming and outgoing) for an entity.
+        
+        Args:
+            entity_id: Entity UUID
+            
+        Returns:
+            List of Relationship objects
+        """
+        try:
+            with self.Session() as s:
+                outgoing = s.execute(
+                    select(Relationship).where(Relationship.source_id == entity_id)
+                ).scalars().all()
+                
+                incoming = s.execute(
+                    select(Relationship).where(Relationship.target_id == entity_id)
+                ).scalars().all()
+                
+                # Combine and deduplicate
+                all_rels = list(outgoing) + list(incoming)
+                seen = set()
+                unique_rels = []
+                for rel in all_rels:
+                    if rel.id not in seen:
+                        seen.add(rel.id)
+                        unique_rels.append(rel)
+                
+                return unique_rels
+        except Exception as e:
+            self.logger.error(f"get_all_relationships_for_entity failed: {e}")
+            return []
+    
+    def update_relationship_metadata(
+        self, 
+        relationship_id: str, 
+        metadata: Dict
+    ) -> bool:
+        """
+        Update relationship metadata including confidence score.
+        
+        Args:
+            relationship_id: Relationship UUID
+            metadata: Dictionary of metadata to merge with existing
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with self.Session() as s:
+                rel = s.execute(
+                    select(Relationship).where(Relationship.id == relationship_id)
+                ).scalar_one_or_none()
+                
+                if not rel:
+                    self.logger.warning(f"Relationship not found: {relationship_id}")
+                    return False
+                
+                # Merge metadata
+                current_meta = _as_dict(rel.metadata_json)
+                updated_meta = {**current_meta, **metadata}
+                rel.metadata_json = updated_meta
+                
+                s.commit()
+                return True
+        except Exception as e:
+            self.logger.error(f"update_relationship_metadata failed: {e}")
+            return False
+    
+    def delete_relationship(self, relationship_id: str) -> bool:
+        """
+        Delete a relationship.
+        
+        Args:
+            relationship_id: Relationship UUID to delete
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with self.Session() as s:
+                rel = s.execute(
+                    select(Relationship).where(Relationship.id == relationship_id)
+                ).scalar_one_or_none()
+                
+                if not rel:
+                    self.logger.warning(f"Relationship not found: {relationship_id}")
+                    return False
+                
+                s.delete(rel)
+                s.commit()
+                return True
+        except Exception as e:
+            self.logger.error(f"delete_relationship failed: {e}")
+            return False
+    
+    def get_entity_clusters(
+        self, 
+        relation_type: Optional[str] = None,
+        min_cluster_size: int = 2
+    ) -> List[List[str]]:
+        """
+        Find clusters of connected entities.
+        
+        Args:
+            relation_type: Optional filter for specific relationship type
+            min_cluster_size: Minimum number of entities in a cluster
+            
+        Returns:
+            List of clusters, where each cluster is a list of entity UUIDs
+        """
+        try:
+            from collections import defaultdict
+            
+            with self.Session() as s:
+                stmt = select(Relationship)
+                if relation_type:
+                    stmt = stmt.where(Relationship.relation_type == relation_type)
+                
+                relationships = s.execute(stmt).scalars().all()
+                
+                # Build adjacency list (undirected graph)
+                adjacency = defaultdict(set)
+                all_entities = set()
+                
+                for rel in relationships:
+                    source = str(rel.source_id)
+                    target = str(rel.target_id)
+                    adjacency[source].add(target)
+                    adjacency[target].add(source)
+                    all_entities.add(source)
+                    all_entities.add(target)
+                
+                # Find connected components using DFS
+                visited = set()
+                clusters = []
+                
+                def dfs(node, component):
+                    visited.add(node)
+                    component.append(node)
+                    for neighbor in adjacency.get(node, []):
+                        if neighbor not in visited:
+                            dfs(neighbor, component)
+                
+                for entity in all_entities:
+                    if entity not in visited:
+                        component = []
+                        dfs(entity, component)
+                        if len(component) >= min_cluster_size:
+                            clusters.append(component)
+                
+                return clusters
+        except Exception as e:
+            self.logger.error(f"get_entity_clusters failed: {e}")
+            return []

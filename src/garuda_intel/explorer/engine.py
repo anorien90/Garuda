@@ -14,6 +14,7 @@ from .scorer import URLScorer
 from ..discover.frontier import Frontier
 from ..types.entity import EntityType, EntityProfile
 from ..database.store import PersistenceStore
+from ..database.relationship_manager import RelationshipManager
 from ..vector.engine import VectorStore
 from ..extractor.llm import LLMIntelExtractor
 
@@ -61,6 +62,11 @@ class IntelligentExplorer:
         self.llm_extractor = llm_extractor
         self.store = persistence
         self.vector_store = vector_store
+        
+        # Relationship Management (Phase 3)
+        self.relationship_manager = None
+        if persistence and llm_extractor:
+            self.relationship_manager = RelationshipManager(persistence, llm_extractor)
 
         # URL Scoring Logic
         self.url_scorer = URLScorer(profile.name, profile.entity_type, patterns=scorer_patterns, domains=scorer_domains)
@@ -143,6 +149,25 @@ class IntelligentExplorer:
         finally:
             if own_browser and browser:
                 browser.close()
+            
+            # Phase 3: Post-crawl relationship cleanup and validation
+            if self.relationship_manager and pages_explored > 0:
+                try:
+                    self.logger.info("Running post-crawl relationship validation...")
+                    
+                    # Deduplicate relationships
+                    duplicates_removed = self.relationship_manager.deduplicate_relationships()
+                    if duplicates_removed > 0:
+                        self.logger.info(f"Removed {duplicates_removed} duplicate relationships")
+                    
+                    # Validate relationships
+                    validation_report = self.relationship_manager.validate_relationships(fix_invalid=True)
+                    self.logger.info(
+                        f"Relationship validation: {validation_report['valid']}/{validation_report['total']} valid, "
+                        f"{validation_report['fixed']} issues fixed"
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Post-crawl relationship cleanup failed: {e}")
 
         return self.explored_data
 
