@@ -2,9 +2,15 @@ import { els, val, getEl } from '../config.js';
 import { fetchWithAuth } from '../api.js';
 import { renderCrawlResult } from '../ui.js';
 
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 function renderErrorMessage(message) {
   return `<div class="p-4 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm">
-    <strong>Error:</strong> ${message}
+    <strong>Error:</strong> ${escapeHtml(message)}
   </div>`;
 }
 

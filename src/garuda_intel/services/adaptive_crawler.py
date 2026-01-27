@@ -168,9 +168,16 @@ class AdaptiveCrawlerService:
                                 seed_urls.append(url)
                                 # Extract domain for official domain detection
                                 try:
-                                    domain = urlparse(url).netloc.lower().replace("www.", "")
-                                    # Avoid registry domains
-                                    if domain and not any(reg in domain for reg in REGISTRY_DOMAINS):
+                                    domain = urlparse(url).netloc.lower()
+                                    # Remove www. prefix if present
+                                    if domain.startswith('www.'):
+                                        domain = domain[4:]
+                                    # Avoid registry domains (exact match or subdomain)
+                                    is_registry = any(
+                                        domain == reg or domain.endswith('.' + reg)
+                                        for reg in REGISTRY_DOMAINS
+                                    )
+                                    if domain and not is_registry:
                                         if domain not in official_domains:
                                             official_domains.append(domain)
                                 except Exception:
