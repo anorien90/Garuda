@@ -39,6 +39,10 @@ class URLScorer:
         self.domains = domains or []
         self.blacklist_compiled = self._compile_blacklist()
         self.dynamic_domains = {}  # track learned boosts
+        
+        # Learning system attributes
+        self._domain_learning = {}  # domain -> {success_count, fail_count, avg_quality}
+        self._pattern_weights = {}  # pattern -> learned weight adjustment
 
     def boost_domain(self, domain: str, amount: float = 25.0):
         """Allows the explorer to 'learn' which domains are useful."""
@@ -149,6 +153,12 @@ class URLScorer:
             if dom in domain:
                 score += boost
                 reasons.append(f"Learned boost: {dom}")
+        
+        # Apply learned domain boost
+        learned_boost = self.get_learned_boost(domain)
+        if abs(learned_boost) > 0.1:
+            score += learned_boost
+            reasons.append(f"Domain learning: {learned_boost:+.1f}")
 
         # Depth penalty
         score -= current_depth * 5
@@ -162,3 +172,97 @@ class URLScorer:
     def set_official_domains(self, domains: List[str]):
         for d in domains:
             self.official_domains.add(d.lower().replace("www.", ""))
+    
+    def learn_domain_pattern(self, domain: str, success: bool, intel_quality: float) -> None:
+        """
+        Learn from domain crawl results to adjust future scoring.
+        
+        Args:
+            domain: Domain name that was crawled
+            success: Whether the crawl yielded useful intelligence
+            intel_quality: Quality score of extracted intelligence (0-1)
+        """
+        domain = domain.lower().replace("www.", "")
+        
+        if domain not in self._domain_learning:
+            self._domain_learning[domain] = {
+                "success_count": 0,
+                "fail_count": 0,
+                "total_quality": 0.0,
+                "crawl_count": 0,
+            }
+        
+        stats = self._domain_learning[domain]
+        stats["crawl_count"] += 1
+        
+        if success:
+            stats["success_count"] += 1
+            stats["total_quality"] += intel_quality
+        else:
+            stats["fail_count"] += 1
+    
+    def get_learned_boost(self, domain: str) -> float:
+        """
+        Get learned boost factor for a domain.
+        
+        Args:
+            domain: Domain name
+            
+        Returns:
+            Boost score to add to URL score
+        """
+        domain = domain.lower().replace("www.", "")
+        stats = self._domain_learning.get(domain)
+        
+        if not stats or stats["crawl_count"] < 3:
+            # Need at least 3 crawls to learn from
+            return 0.0
+        
+        # Calculate success rate
+        success_rate = stats["success_count"] / stats["crawl_count"]
+        
+        # Calculate average quality
+        avg_quality = 0.0
+        if stats["success_count"] > 0:
+            avg_quality = stats["total_quality"] / stats["success_count"]
+        
+        # Boost is based on both success rate and quality
+        # High success + high quality = strong boost
+        # Low success = penalty
+        if success_rate >= 0.7:
+            boost = avg_quality * 30.0  # Up to +30 for excellent domains
+        elif success_rate >= 0.5:
+            boost = avg_quality * 15.0  # Up to +15 for good domains
+        elif success_rate < 0.3:
+            boost = -20.0  # Penalty for unreliable domains
+        else:
+            boost = 0.0
+        
+        return boost
+    
+    def update_pattern_weights(self, patterns: List[Dict]) -> None:
+        """
+        Update pattern weights based on success metrics.
+        
+        Args:
+            patterns: List of pattern dicts with 'pattern', 'weight', and optionally 'success_count'
+        """
+        for p in patterns:
+            pattern = p.get("pattern")
+            if not pattern:
+                continue
+            
+            # Store learned adjustment
+            success_count = p.get("success_count", 0)
+            total_uses = p.get("total_uses", 1)
+            
+            if total_uses >= 5:  # Need enough data
+                success_rate = success_count / total_uses
+                
+                # Adjust weight based on success rate
+                if success_rate >= 0.8:
+                    self._pattern_weights[pattern] = 10.0  # Boost successful patterns
+                elif success_rate >= 0.6:
+                    self._pattern_weights[pattern] = 5.0
+                elif success_rate < 0.3:
+                    self._pattern_weights[pattern] = -10.0  # Penalize unsuccessful patterns
