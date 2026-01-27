@@ -337,10 +337,10 @@ class PostCrawlProcessor:
                 }
                 
                 for entity in all_entities:
-                    if entity.entity_type and entity.entity_type.lower() in type_mapping:
-                        old_type = entity.entity_type
-                        entity.entity_type = type_mapping[entity.entity_type.lower()]
-                        if old_type != entity.entity_type:
+                    if entity.kind and entity.kind.lower() in type_mapping:
+                        old_type = entity.kind
+                        entity.kind = type_mapping[entity.kind.lower()]
+                        if old_type != entity.kind:
                             stats["data_quality_improvements"] += 1
                 
                 # 3. Ensure all entities have normalized names

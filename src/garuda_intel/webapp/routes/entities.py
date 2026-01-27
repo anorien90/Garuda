@@ -193,8 +193,12 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                     extracted_data = {}
                     metadata = {}
                     if row.content:
-                        extracted_data = row.content.extracted_json or {}
-                        metadata = row.content.metadata_json or {}
+                        # Handle both dict and list cases for extracted_json
+                        raw_extracted = row.content.extracted_json or {}
+                        extracted_data = raw_extracted if isinstance(raw_extracted, dict) else {}
+                        
+                        raw_metadata = row.content.metadata_json or {}
+                        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
                     
                     entities_list = extracted_data.get("entities", [])
                     if entities_list:
