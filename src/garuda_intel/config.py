@@ -31,6 +31,11 @@ class Settings:
     api_key: Optional[str] = None
     cors_origins: List[str] = None
     debug: bool = False
+    
+    # Media processing settings (optional feature)
+    media_processing_enabled: bool = True
+    media_crawling_enabled: bool = True
+    media_auto_embeddings: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -53,6 +58,9 @@ class Settings:
             api_key=os.environ.get("GARUDA_UI_API_KEY"),
             cors_origins=cors_origins,
             debug=_as_bool(os.environ.get("GARUDA_UI_DEBUG"), False),
+            media_processing_enabled=_as_bool(os.environ.get("GARUDA_MEDIA_PROCESSING"), True),
+            media_crawling_enabled=_as_bool(os.environ.get("GARUDA_MEDIA_CRAWLING"), True),
+            media_auto_embeddings=_as_bool(os.environ.get("GARUDA_MEDIA_EMBEDDINGS"), True),
         )
 
     @property

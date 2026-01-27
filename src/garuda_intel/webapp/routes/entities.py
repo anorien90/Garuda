@@ -135,6 +135,12 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
             entry_type_map: dict[str, str] = {}
             with store.Session() as session:
+                # UNIQUENESS GUARANTEE: The graph ensures only unique entities through:
+                # 1. Canonical name normalization (_canonical function)
+                # 2. UUID-based deduplication (entity_ids dict maps canonical -> UUID)
+                # 3. Variant tracking (multiple spellings map to same canonical entity)
+                # This guarantees the graph displays only unique entities with full relations.
+                
                 # Note: Loading entities in bulk (limit 20000) maintains original behavior.
                 # TODO: For very large datasets (>20K entities), implement pagination:
                 #       - Process entities in batches of 1000-5000

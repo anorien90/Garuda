@@ -9,3 +9,12 @@ bs4
 selenium
 pandas
 ddgs
+
+# Optional media processing dependencies
+# Uncomment to enable image OCR
+# pillow
+# pytesseract
+
+# Uncomment to enable audio/video processing
+# SpeechRecognition
+# moviepy
