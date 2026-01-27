@@ -199,6 +199,7 @@ class LLMIntelExtractor:
             "financials": [],
             "products": [],
             "events": [],
+            "relationships": [],
         }
 
         for chunk in chunks:
@@ -215,6 +216,7 @@ class LLMIntelExtractor:
             aggregate["financials"],
             aggregate["products"],
             aggregate["events"],
+            aggregate["relationships"],
         ]):
             return self._rule_based_intel(profile, cleaned_text, url, page_type)
 
@@ -284,8 +286,12 @@ class LLMIntelExtractor:
           "locations": [ {{"address":"","city":"","country":"","type":""}} ],
           "financials": [ {{"year":"","revenue":"","currency":"","profit":""}} ],
           "products": [ {{"name":"","description":"","status":""}} ],
-          "events": [ {{"title":"","date":"","description":""}} ]
+          "events": [ {{"title":"","date":"","description":""}} ],
+          "relationships": [ {{"source":"","target":"","relation_type":"","description":""}} ]
         }}
+        
+        For relationships, extract explicit connections between entities mentioned in the text.
+        Examples: {{"source":"Company A","target":"Person B","relation_type":"employs","description":"B is CEO of A"}}
         """
 
         max_retries = 3
@@ -837,6 +843,7 @@ class LLMIntelExtractor:
             "financials": [],
             "products": [],
             "events": [],
+            "relationships": [],
         }
 
         # Merge basic_info: fill missing fields only
@@ -854,7 +861,7 @@ class LLMIntelExtractor:
                     seen.add(serialized)
             merged[key] = existing
 
-        for list_key in ["persons", "jobs", "metrics", "locations", "financials", "products", "events"]:
+        for list_key in ["persons", "jobs", "metrics", "locations", "financials", "products", "events", "relationships"]:
             _dedup_extend(list_key)
 
         return merged
@@ -1027,5 +1034,6 @@ class LLMIntelExtractor:
             "financials": financials,
             "products": products,
             "events": events,
+            "relationships": [],
         }
         return result

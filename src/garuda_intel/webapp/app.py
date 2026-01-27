@@ -217,6 +217,44 @@ def _collect_entities_from_json(obj, path="root"):
     return out
 
 
+def _collect_relationships_from_json(obj, path="root"):
+    """Extract relationships from JSON structure (e.g., from LLM findings)."""
+    out = []
+    if obj is None:
+        return out
+    if isinstance(obj, dict):
+        # Check if this dict looks like a relationship
+        if "source" in obj and "target" in obj:
+            relation_type = obj.get("relation_type") or obj.get("type") or "related"
+            out.append({
+                "source": obj["source"],
+                "target": obj["target"],
+                "relation_type": relation_type,
+                "description": obj.get("description", ""),
+                "path": path
+            })
+        # Check for a "relationships" key
+        if "relationships" in obj and isinstance(obj["relationships"], list):
+            for i, rel in enumerate(obj["relationships"]):
+                if isinstance(rel, dict) and "source" in rel and "target" in rel:
+                    relation_type = rel.get("relation_type") or rel.get("type") or "related"
+                    out.append({
+                        "source": rel["source"],
+                        "target": rel["target"],
+                        "relation_type": relation_type,
+                        "description": rel.get("description", ""),
+                        "path": f"{path}.relationships[{i}]"
+                    })
+        # Recursively search nested structures
+        for k, v in obj.items():
+            if k != "relationships":  # Avoid double-processing
+                out.extend(_collect_relationships_from_json(v, f"{path}.{k}"))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            out.extend(_collect_relationships_from_json(v, f"{path}[{i}]"))
+    return out
+
+
 def _as_list(val):
     if val is None:
         return []
@@ -531,6 +569,32 @@ def api_entities_graph():
                         kind="intel-mentions",
                         meta={"path": ent.get("path"), "entity": ent.get("name"), "intel_id": intel_id, "payload": payload_preview} if include_meta else None,
                     )
+            
+            # Extract and add semantic relationships from intelligence payload
+            for rel in _collect_relationships_from_json(payload):
+                source_name = rel.get("source")
+                target_name = rel.get("target")
+                relation_type = rel.get("relation_type", "related")
+                
+                if source_name and target_name:
+                    # Create or get entity nodes for source and target
+                    source_node = upsert_entity(source_name, None, None, meta={"path": rel.get("path")})
+                    target_node = upsert_entity(target_name, None, None, meta={"path": rel.get("path")})
+                    
+                    if source_node and target_node:
+                        add_edge(
+                            source_node,
+                            target_node,
+                            kind=f"semantic-{relation_type}",
+                            weight=1,
+                            meta={
+                                "relation_type": relation_type,
+                                "description": rel.get("description", ""),
+                                "intel_id": intel_id,
+                                "path": rel.get("path")
+                            } if include_meta else None,
+                        )
+            
             add_cooccurrence_edges(doc_entity_keys + ([primary] if primary else []))
 
         # Page content
@@ -618,6 +682,32 @@ def api_entities_graph():
                 if ck:
                     doc_entity_keys.append(ck)
                     add_edge(page_node_id, ck, kind="page-mentions", meta={"path": ent.get("path"), "source": "metadata", "page_id": page_uuid, "page_url": page_url_val} if include_meta else None)
+            
+            # Extract and add semantic relationships from page extracted data
+            for rel in _collect_relationships_from_json(extracted):
+                source_name = rel.get("source")
+                target_name = rel.get("target")
+                relation_type = rel.get("relation_type", "related")
+                
+                if source_name and target_name:
+                    source_node = upsert_entity(source_name, None, None, meta={"path": rel.get("path")})
+                    target_node = upsert_entity(target_name, None, None, meta={"path": rel.get("path")})
+                    
+                    if source_node and target_node:
+                        add_edge(
+                            source_node,
+                            target_node,
+                            kind=f"semantic-{relation_type}",
+                            weight=1,
+                            meta={
+                                "relation_type": relation_type,
+                                "description": rel.get("description", ""),
+                                "page_id": page_uuid,
+                                "page_url": page_url_val,
+                                "path": rel.get("path")
+                            } if include_meta else None,
+                        )
+            
             for img in _collect_images_from_metadata(metadata):
                 img_id = f"img:{img['url']}"
                 ensure_node(
@@ -716,7 +806,9 @@ def api_entities_graph():
         filtered_links = []
         node_ids = set(nodes.keys())
         for (a, b), edge in links.items():
-            if edge.get("kind") not in edge_kind_filters:
+            edge_kind = edge.get("kind")
+            # Allow edges that are in the filter list OR start with "semantic-"
+            if edge_kind not in edge_kind_filters and not (edge_kind and edge_kind.startswith("semantic-")):
                 continue
             if a in node_ids and b in node_ids:
                 filtered_links.append(

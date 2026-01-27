@@ -232,6 +232,42 @@ class IntelligentExplorer:
             if extracted_entities:
                 entity_id_map = self.store.save_entities(extracted_entities) or {}
 
+            # Save relationships from findings
+            for finding, conf_score in verified_findings_with_scores:
+                relationships = finding.get("relationships", [])
+                if relationships and isinstance(relationships, list):
+                    for rel in relationships:
+                        if not isinstance(rel, dict):
+                            continue
+                        source_name = rel.get("source")
+                        target_name = rel.get("target")
+                        relation_type = rel.get("relation_type") or "related"
+                        description = rel.get("description", "")
+                        
+                        if source_name and target_name:
+                            # Try to find entity IDs for source and target
+                            source_id = None
+                            target_id = None
+                            
+                            # Look in entity_id_map
+                            for (ent_name, ent_kind), ent_id in entity_id_map.items():
+                                if ent_name.lower() == source_name.lower():
+                                    source_id = ent_id
+                                if ent_name.lower() == target_name.lower():
+                                    target_id = ent_id
+                            
+                            # If both entities found, save relationship
+                            if source_id and target_id:
+                                try:
+                                    self.store.save_relationship(
+                                        from_id=source_id,
+                                        to_id=target_id,
+                                        relation_type=relation_type,
+                                        meta={"description": description, "confidence": conf_score, "page_id": page_uuid}
+                                    )
+                                except Exception as e:
+                                    self.logger.debug(f"save_relationship failed: {e}")
+
             if links:
                 try:
                     self.store.save_links(url, links)
