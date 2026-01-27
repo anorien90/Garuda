@@ -257,11 +257,19 @@ class IntelligentExplorer:
                             # If both entities found, save relationship
                             if source_id and target_id:
                                 try:
+                                    # Build metadata, excluding None values
+                                    rel_meta = {
+                                        "description": description,
+                                        "confidence": conf_score,
+                                    }
+                                    if page_uuid:
+                                        rel_meta["page_id"] = page_uuid
+                                    
                                     self.store.save_relationship(
                                         from_id=source_id,
                                         to_id=target_id,
                                         relation_type=relation_type,
-                                        meta={"description": description, "confidence": conf_score, "page_id": page_uuid}
+                                        meta=rel_meta
                                     )
                                 except Exception as e:
                                     self.logger.debug(f"save_relationship failed: {e}")

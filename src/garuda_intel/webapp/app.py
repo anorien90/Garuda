@@ -279,16 +279,17 @@ def _add_semantic_relationship_edges(relationships_data, upsert_entity, add_edge
         source_name = rel.get("source")
         target_name = rel.get("target")
         relation_type = rel.get("relation_type", "related")
+        rel_path = rel.get("path")
         
         if source_name and target_name:
-            source_node = upsert_entity(source_name, None, None, meta={"path": rel.get("path")})
-            target_node = upsert_entity(target_name, None, None, meta={"path": rel.get("path")})
+            source_node = upsert_entity(source_name, None, None, meta={"path": rel_path})
+            target_node = upsert_entity(target_name, None, None, meta={"path": rel_path})
             
             if source_node and target_node:
                 edge_meta = {
                     "relation_type": relation_type,
                     "description": rel.get("description", ""),
-                    "path": rel.get("path"),
+                    "path": rel_path,
                     **context_meta
                 } if include_meta else None
                 
