@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     JSON,
     Boolean,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator, CHAR
@@ -291,6 +292,12 @@ class Fingerprint(BasicDataEntry):
     )
     hash: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
     kind: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # Semantic/structural relation details
+    selector: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    purpose: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    sample_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     page: Mapped["Page"] = relationship(
@@ -347,7 +354,7 @@ class Domain(BasicDataEntry):
 
 
 class Link(BasicDataEntry):
-    """Legacy URL-to-URL link; now backed by UUID and explicit relation_type."""
+    """URL-to-URL link with optional Page relations."""
     __tablename__ = "links"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -355,11 +362,24 @@ class Link(BasicDataEntry):
     )
     from_url: Mapped[str] = mapped_column(String, nullable=False)
     to_url: Mapped[str] = mapped_column(String, nullable=False)
+    from_page_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    to_page_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     anchor_text: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     depth: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     relation_type: Mapped[str] = mapped_column(String, default="hyperlink")
+
+    __table_args__ = (
+        UniqueConstraint("from_url", "to_url", "relation_type", name="uq_link_from_to_type"),
+    )
+
+    from_page: Mapped[Optional["Page"]] = relationship("Page", foreign_keys=[from_page_id])
+    to_page: Mapped[Optional["Page"]] = relationship("Page", foreign_keys=[to_page_id])
 
     __mapper_args__ = {
         "polymorphic_identity": "link",

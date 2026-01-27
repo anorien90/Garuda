@@ -192,6 +192,7 @@ class SQLAlchemyStore(PersistenceStore):
     ) -> Optional[str]:
         """
         Persist an intel record with optional page/entity context.
+        Also wires relationships to the entity and page when present.
         """
         entity_name = entity_name or finding.get("basic_info", {}).get("official_name") or "Unknown Entity"
         entity_type = entity_type or finding.get("basic_info", {}).get("entity_type")
@@ -207,6 +208,14 @@ class SQLAlchemyStore(PersistenceStore):
                 confidence=confidence,
             )
             s.add(intel)
+            s.flush()
+
+            # Relationships for provenance
+            if entity_id:
+                self._upsert_relationship(s, entity_id, intel.id, "has_intel")
+            if page_id:
+                self._upsert_relationship(s, page_id, intel.id, "has_intel_source")
+
             s.commit()
             return intel.id
 
@@ -248,22 +257,29 @@ class SQLAlchemyStore(PersistenceStore):
 
     # -------- Links / Relationships --------
     def save_links(self, from_url: str, links: List[Dict]):
+        """
+        Persist links with optional Page resolution, and avoid duplicates via DB constraint.
+        """
         if not links:
             return
         with self.Session() as s:
+            from_pid = self._resolve_page_id(s, from_url)
             for l in links:
-                s.add(
-                    Link(
-                        id=_uuid4(),
-                        from_url=from_url,
-                        to_url=l.get("href"),
-                        anchor_text=l.get("text", ""),
-                        score=l.get("score", 0),
-                        reason=l.get("reason", ""),
-                        depth=l.get("depth", 0),
-                        relation_type="hyperlink",
-                    )
+                to_url = l.get("href")
+                to_pid = self._resolve_page_id(s, to_url) if to_url else None
+                link = Link(
+                    id=_uuid4(),
+                    from_url=from_url,
+                    to_url=to_url,
+                    from_page_id=from_pid,
+                    to_page_id=to_pid,
+                    anchor_text=l.get("text", ""),
+                    score=l.get("score", 0),
+                    reason=l.get("reason", ""),
+                    depth=l.get("depth", 0),
+                    relation_type="hyperlink",
                 )
+                s.merge(link)
             s.commit()
 
     def save_relationship(self, from_id: str, to_id: str, relation_type: str, meta: Optional[Dict] = None) -> Optional[str]:
@@ -274,16 +290,9 @@ class SQLAlchemyStore(PersistenceStore):
         if not from_id or not to_id or not relation_type:
             return None
         with self.Session() as s:
-            rel = Relationship(
-                id=_uuid4(),
-                source_id=from_id,
-                target_id=to_id,
-                relation_type=relation_type,
-                metadata_json=meta or {},
-            )
-            s.merge(rel)
+            rel = self._upsert_relationship(s, from_id, to_id, relation_type, meta)
             s.commit()
-            return str(rel.id)
+            return str(rel.id) if rel else None
 
     # -------- Fingerprints --------
     def save_fingerprint(self, fp: PageFingerprint):
@@ -295,9 +304,12 @@ class SQLAlchemyStore(PersistenceStore):
                 Fingerprint(
                     id=_uuid4(),
                     page_id=page_id,
-                    selector=fp.selector,
-                    purpose=fp.purpose,
-                    sample_text=fp.sample_text,
+                    hash=fp.hash,
+                    kind=getattr(fp, "kind", None),
+                    selector=getattr(fp, "selector", None),
+                    purpose=getattr(fp, "purpose", None),
+                    sample_text=getattr(fp, "sample_text", None),
+                    metadata_json=getattr(fp, "meta", {}) or {},
                 )
             )
             s.commit()
@@ -341,6 +353,9 @@ class SQLAlchemyStore(PersistenceStore):
         """
         Merge/enrich entity nodes across pages. Entity identity: (name, kind).
         Returns mapping {(name, kind): id}.
+        If the entity dict carries contextual ids, persist relationships:
+          - page_id -> entity (relation_type="mentions_entity")
+          - primary_entity_id -> entity (relation_type="related_entity" or override via entity['relation_type'])
         """
         if not entities:
             return {}
@@ -348,9 +363,13 @@ class SQLAlchemyStore(PersistenceStore):
         with self.Session() as s:
             for e in entities:
                 name = e.get("name")
-                kind = e.get("kind") or "entity"
+                kind = (e.get("kind") or "entity").strip().lower()
                 data = _as_dict(e.get("data") or e.get("attrs"))
                 meta = _as_dict(e.get("meta"))
+                page_id = e.get("page_id") or e.get("source_page_id")
+                primary_entity_id = e.get("primary_entity_id") or e.get("parent_entity_id")
+                rel_type = e.get("relation_type") or "related_entity"
+
                 key = (name, kind)
                 existing = (
                     s.execute(select(Entity).where(Entity.name == name, Entity.kind == kind))
@@ -370,9 +389,17 @@ class SQLAlchemyStore(PersistenceStore):
                             kind=kind,
                             data=data,
                             metadata_json=meta,
+                            last_seen=datetime.utcnow(),
                         )
                     )
                 mapping[key] = eid
+
+                # Wire contextual relationships if context provided
+                if page_id:
+                    self._upsert_relationship(s, page_id, eid, "mentions_entity")
+                if primary_entity_id:
+                    self._upsert_relationship(s, primary_entity_id, eid, rel_type)
+
             s.commit()
         return mapping
 
@@ -392,7 +419,7 @@ class SQLAlchemyStore(PersistenceStore):
                     "kind": r.kind,
                     "data": _as_dict(r.data),
                     "meta": _as_dict(r.metadata_json),
-                    "last_seen": r.last_seen.isoformat(),
+                    "last_seen": r.last_seen.isoformat() if r.last_seen else None,
                 }
                 for r in rows
             ]
@@ -493,3 +520,22 @@ class SQLAlchemyStore(PersistenceStore):
 
             aggregated["official_names"] = list(aggregated["official_names"])
             return aggregated
+
+    # -------- Internal helpers --------
+    def _resolve_page_id(self, session, url: Optional[str]) -> Optional[str]:
+        if not url:
+            return None
+        return session.execute(select(Page.id).where(Page.url == url)).scalar_one_or_none()
+
+    def _upsert_relationship(self, session, from_id: str, to_id: str, relation_type: str, meta: Optional[Dict] = None) -> Optional[Relationship]:
+        if not from_id or not to_id or not relation_type:
+            return None
+        rel = Relationship(
+            id=_uuid4(),
+            source_id=from_id,
+            target_id=to_id,
+            relation_type=relation_type,
+            metadata_json=meta or {},
+        )
+        session.merge(rel)
+        return rel

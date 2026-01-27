@@ -335,15 +335,23 @@ def _qdrant_semantic_entity_hints(query: str, top_k: int = 200) -> set[str]:
     return hints
 
 
-def _add_relationship_edges(session, ensure_node, add_edge):
-    """Include explicit Entity->Entity relationships as edges."""
+def _add_relationship_edges(session, ensure_node, add_edge, entry_type_map: dict[str, str]):
+    """Include explicit Entity->Entity (or other Entry) relationships as edges with metadata."""
     for rel in session.query(db_models.Relationship).limit(20000).all():
         sid = str(rel.source_id)
         tid = str(rel.target_id)
         kind = rel.relation_type or "relationship"
-        ensure_node(sid, sid, "entity", meta={"entity_id": sid, "source_id": sid})
-        ensure_node(tid, tid, "entity", meta={"entity_id": tid, "source_id": tid})
-        add_edge(sid, tid, kind=kind, weight=1, meta=rel.metadata_json or {})
+        s_type = entry_type_map.get(sid, "entity")
+        t_type = entry_type_map.get(tid, "entity")
+        ensure_node(sid, sid, s_type, meta={"entity_id": sid, "source_id": sid})
+        ensure_node(tid, tid, t_type, meta={"entity_id": tid, "source_id": tid})
+        add_edge(
+            sid,
+            tid,
+            kind=kind,
+            weight=1,
+            meta={"relation_type": kind, "metadata": rel.metadata_json or {}, "source_id": sid, "target_id": tid},
+        )
 
 
 @app.get("/api/entities/graph")
@@ -355,7 +363,8 @@ def api_entities_graph():
     min_score = float(request.args.get("min_score", 0) or 0)
     limit = min(int(request.args.get("limit", 100) or 100), 500)
     depth_limit = int(request.args.get("depth", 1) or 1)
-    include_meta = (request.args.get("include_meta") or "").strip() == "1"
+    # default to include_meta to ensure all relations/snippets are visible
+    include_meta = (request.args.get("include_meta") or "1").strip() != "0"
 
     node_type_filters = _parse_list_param(
         request.args.get("node_types"),
@@ -363,7 +372,7 @@ def api_entities_graph():
     )
     edge_kind_filters = _parse_list_param(
         request.args.get("edge_kinds"),
-        default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit"},
+        default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity"},
     )
 
     emit_event(
@@ -444,7 +453,8 @@ def api_entities_graph():
                 nodes[node_id]["type"] = canonical_type[canon]
             return node_id
 
-        # preload canonical kinds/ids
+        # preload canonical kinds/ids and entry types
+        entry_type_map: dict[str, str] = {}
         with store.Session() as session:
             for ent in session.query(db_models.Entity).limit(10000).all():
                 canon = _canonical(ent.name)
@@ -452,10 +462,11 @@ def api_entities_graph():
                     if ent.kind:
                         entity_kinds[canon] = _norm_kind(ent.kind) or ent.kind.lower()
                     entity_ids[canon] = str(ent.id)
-            # page_id -> url mapping
             for p in session.query(db_models.Page).limit(10000).all():
                 if getattr(p, "id", None) and getattr(p, "url", None):
                     page_id_to_url[str(p.id)] = p.url
+            for entry in session.query(db_models.BasicDataEntry).limit(20000).all():
+                entry_type_map[str(entry.id)] = entry.entry_type
 
         semantic_allow = _qdrant_semantic_entity_hints(q, top_k=200) if q else set()
 
@@ -470,7 +481,7 @@ def api_entities_graph():
             page_rows = session.query(db_models.PageContent).limit(5000).all()
             link_rows = session.query(db_models.Link).limit(10000).all()
 
-            _add_relationship_edges(session, ensure_node, add_edge)
+            _add_relationship_edges(session, ensure_node, add_edge, entry_type_map)
 
         # Intel rows
         for row in intel_rows:
@@ -501,7 +512,13 @@ def api_entities_graph():
                 pid = str(row.page_id)
                 page_canon = page_id_to_url.get(pid, pid)
                 page_node = ensure_node(page_canon, page_canon, "page", meta={"source_id": page_canon})
-                add_edge(intel_node_id, page_node, kind="intel-primary", weight=1, meta={"page_id": page_canon} if include_meta else None)
+                add_edge(
+                    intel_node_id,
+                    page_node,
+                    kind="intel-primary",
+                    weight=1,
+                    meta={"page_id": page_canon, "intel_id": intel_id, "data": payload_preview} if include_meta else None,
+                )
 
             doc_entity_keys: list[str] = []
             for ent in _collect_entities_from_json(payload):
@@ -512,7 +529,7 @@ def api_entities_graph():
                         intel_node_id,
                         ck,
                         kind="intel-mentions",
-                        meta={"path": ent.get("path"), "entity": ent.get("name"), "intel_id": intel_id} if include_meta else None,
+                        meta={"path": ent.get("path"), "entity": ent.get("name"), "intel_id": intel_id, "payload": payload_preview} if include_meta else None,
                     )
             add_cooccurrence_edges(doc_entity_keys + ([primary] if primary else []))
 
@@ -628,10 +645,18 @@ def api_entities_graph():
                 to_id,
                 kind=l.relation_type or "link",
                 weight=int(l.score or 1),
-                meta={"anchor": l.anchor_text, "reason": l.reason, "score": l.score, "from_id": l.from_url, "to_id": l.to_url, "depth": l.depth, "relation_type": getattr(l, "relation_type", "hyperlink")} if include_meta else None,
+                meta={
+                    "anchor": l.anchor_text,
+                    "reason": l.reason,
+                    "score": l.score,
+                    "from_id": l.from_url,
+                    "to_id": l.to_url,
+                    "depth": l.depth,
+                    "relation_type": getattr(l, "relation_type", "hyperlink"),
+                } if include_meta else None,
             )
 
-        # Semantic page hits from Qdrant
+        # Semantic page hits from Qdrant (embed payload+snippet)
         if q:
             for hit in _qdrant_semantic_page_hits(q, top_k=200):
                 payload = getattr(hit, "payload", {}) or {}
@@ -651,13 +676,26 @@ def api_entities_graph():
                         "entity_type": _norm_kind(payload.get("entity_type")),
                         "kind": payload.get("kind"),
                         "vector_score": hit.score,
+                        "text_snippet": payload.get("text"),
+                        "data": payload.get("data"),
                     },
                 )
                 ent_name = payload.get("entity") or payload.get("entity_name") or payload.get("name")
                 if ent_name:
                     ent_node = upsert_entity(ent_name, _norm_kind(payload.get("entity_type")), None, meta={"source": "semantic"})
                     if ent_node:
-                        add_edge(page_node_id, ent_node, kind="semantic-hit", weight=1, meta={"score": hit.score} if include_meta else None)
+                        add_edge(
+                            page_node_id,
+                            ent_node,
+                            kind="semantic-hit",
+                            weight=1,
+                            meta={
+                                "score": hit.score,
+                                "text": payload.get("text"),
+                                "data": payload.get("data"),
+                                "page_url": url,
+                            } if include_meta else None,
+                        )
 
         # Apply type filters
         if type_filter:
