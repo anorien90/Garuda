@@ -19,10 +19,9 @@ def _hydrate_intel(store: SQLAlchemyStore, ids: List[str]) -> List[Dict]:
                 "entity_id": r.entity_id,
                 "entity_name": r.entity_name,
                 "page_id": r.page_id,
-                "url": r.url,
                 "confidence": r.confidence,
                 "data": r.data,
-                "created": r.created.isoformat() if r.created else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
             })
         return out
 
@@ -38,11 +37,9 @@ def _hydrate_entities(store: SQLAlchemyStore, ids: List[str]) -> List[Dict]:
             out.append({
                 "id": r.id,
                 "name": r.name,
-                "entity_type": r.entity_type,
-                "page_type": r.page_type,
-                "description": r.description,
-                "confidence": r.confidence,
+                "kind": r.kind,
                 "data": r.data,
-                "created": r.created.isoformat() if r.created else None,
+                "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
             })
         return out
