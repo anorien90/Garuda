@@ -1,6 +1,9 @@
 """
 LLM Intelligence Extractor - Main orchestrator.
 Composes text processing, semantic analysis, intelligence extraction, QA validation, and query generation.
+
+This module provides a simplified orchestrator that delegates to specialized modules while maintaining
+100% backward compatibility with the original monolithic implementation.
 """
 
 import logging
@@ -55,6 +58,7 @@ class LLMIntelExtractor:
         
         # Store configuration
         self.summary_chunk_chars = summary_chunk_chars
+        self.max_chunks = max_chunks
         self.summarize_timeout = summarize_timeout
         self.summarize_retries = summarize_retries
 
@@ -103,7 +107,7 @@ class LLMIntelExtractor:
             return ""
 
         summaries: List[str] = []
-        for chunk in self.text_processor.chunk_text(text, self.summary_chunk_chars, 20):
+        for chunk in self.text_processor.chunk_text(text, self.summary_chunk_chars, self.max_chunks):
             prompt = (
                 "Summarize the following text in 3-5 sentences, focusing on key facts and entities:\n\n"
                 f"{chunk}"
