@@ -73,6 +73,12 @@ class AdaptiveCrawlerService:
         Returns:
             Crawl results with statistics
         """
+        from ..search import collect_candidates_simple
+        from ..explorer.engine import IntelligentExplorer
+        from ..types.entity.profile import EntityProfile, EntityType
+        from ..browser.selenium import SeleniumBrowser
+        from urllib.parse import urlparse
+        
         self.logger.info(f"Starting intelligent crawl for '{entity_name}'")
         
         # Step 1: Generate crawl plan
@@ -80,7 +86,7 @@ class AdaptiveCrawlerService:
         
         self.logger.info(f"Crawl mode: {plan['mode']}, strategy: {plan['strategy']}")
         
-        # Step 2: Select appropriate crawl mode
+        # Step 2: Select appropriate crawl mode and entity
         if plan['mode'] == 'gap_filling':
             crawl_mode = CrawlMode.TARGETING
             entity_id = plan.get('entity_id')
@@ -96,7 +102,7 @@ class AdaptiveCrawlerService:
             successful_patterns = self.crawl_learner.get_successful_patterns(entity_type)
             self.logger.info(f"Found {len(successful_patterns)} successful patterns for {entity_type}")
         
-        # Step 4: Execute adaptive crawl
+        # Step 4: Initialize results tracking
         results = {
             "entity_name": entity_name,
             "crawl_mode": plan['mode'],
@@ -108,7 +114,9 @@ class AdaptiveCrawlerService:
             "gaps_filled": [],
             "new_gaps": [],
             "crawl_adjustments": [],
-            "learning_stats": {}
+            "learning_stats": {},
+            "seed_urls": [],
+            "official_domains": []
         }
         
         # For gap-filling mode, track which gaps we're targeting
@@ -116,11 +124,129 @@ class AdaptiveCrawlerService:
             target_gaps = plan['analysis'].get('missing_fields', [])
             results['target_gaps'] = [g['field'] for g in target_gaps]
         
-        # Execute crawl (simplified - in real implementation would call crawler)
-        # This is a placeholder for the actual crawl orchestration
-        self.logger.info(f"Executing {crawl_mode} crawl with {len(queries)} queries")
+        # Step 5: Execute intelligent crawl using IntelligentExplorer
+        try:
+            # Map entity type string to EntityType enum
+            entity_type_enum = EntityType.COMPANY  # Default
+            if entity_type:
+                type_str = entity_type.upper()
+                if hasattr(EntityType, type_str):
+                    entity_type_enum = EntityType[type_str]
+            elif plan.get('entity_type'):
+                type_str = plan['entity_type'].upper()
+                if hasattr(EntityType, type_str):
+                    entity_type_enum = EntityType[type_str]
+            
+            # Create entity profile
+            profile = EntityProfile(
+                name=entity_name,
+                entity_type=entity_type_enum,
+                location_hint=plan.get('location', ''),
+                official_domains=[]
+            )
+            
+            # Collect seed URLs from queries
+            seed_urls = []
+            official_domains = []
+            
+            if queries:
+                self.logger.info(f"Collecting seed URLs from {len(queries)} queries")
+                # Use first 3-5 queries to generate seeds
+                for query in queries[:5]:
+                    try:
+                        candidates = collect_candidates_simple([query], limit=5)
+                        for candidate in candidates:
+                            url = candidate.get('href')
+                            if url and url not in seed_urls:
+                                seed_urls.append(url)
+                                # Extract domain for official domain detection
+                                try:
+                                    domain = urlparse(url).netloc.lower().replace("www.", "")
+                                    # Avoid registry domains
+                                    registry_domains = ['google.com', 'wikipedia.org', 'linkedin.com', 
+                                                      'facebook.com', 'twitter.com', 'youtube.com']
+                                    if domain and not any(reg in domain for reg in registry_domains):
+                                        if domain not in official_domains:
+                                            official_domains.append(domain)
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        self.logger.warning(f"Failed to collect candidates for query '{query}': {e}")
+            
+            results['seed_urls'] = seed_urls[:max_pages]  # Limit seeds
+            results['official_domains'] = official_domains
+            profile.official_domains = official_domains
+            
+            if not seed_urls:
+                self.logger.warning("No seed URLs found, crawl cannot proceed")
+                return results
+            
+            # Initialize explorer with intelligent features
+            explorer = IntelligentExplorer(
+                profile=profile,
+                use_selenium=False,  # Use requests by default for speed
+                max_pages_per_domain=min(10, max_pages // max(1, len(official_domains))),
+                max_total_pages=max_pages,
+                max_depth=max_depth,
+                score_threshold=30.0,  # Moderate threshold
+                persistence=self.store,
+                vector_store=None,  # Vector store not needed for basic crawl
+                llm_extractor=self.llm,
+                enable_llm_link_rank=False  # Disable for speed
+            )
+            
+            # Execute exploration
+            self.logger.info(f"Starting exploration with {len(seed_urls)} seed URLs")
+            explored_data = explorer.explore(seed_urls[:max_pages], browser=None)
+            
+            results['pages_discovered'] = len(explored_data)
+            results['explored_data_summary'] = {
+                'total_pages': len(explored_data),
+                'domains': list(set(urlparse(url).netloc for url in explored_data.keys()))
+            }
+            
+            # Step 6: Analyze extraction results
+            intel_count = 0
+            relationships_count = 0
+            
+            with self.store.Session() as session:
+                from ..database.models import Intelligence, Relationship
+                
+                # Count newly extracted intelligence
+                if entity_id:
+                    intel_records = session.query(Intelligence).filter(
+                        Intelligence.entity_id == entity_id
+                    ).all()
+                    intel_count = len(intel_records)
+                
+                # Count relationships
+                relationships = session.query(Relationship).all()
+                relationships_count = len(relationships)
+            
+            results['intel_extracted'] = intel_count
+            results['relationships_found'] = relationships_count
+            
+            # Step 7: Post-crawl gap analysis for gap-filling mode
+            if plan['mode'] == 'gap_filling' and entity_id:
+                post_analysis = self.gap_analyzer.analyze_entity_gaps(entity_id)
+                pre_completeness = plan['analysis'].get('completeness_score', 0)
+                post_completeness = post_analysis.get('completeness_score', 0)
+                
+                results['completeness_improvement'] = post_completeness - pre_completeness
+                results['gaps_filled'] = [
+                    gap['field'] for gap in target_gaps 
+                    if gap['field'] not in [g['field'] for g in post_analysis.get('missing_fields', [])]
+                ]
+                results['new_gaps'] = post_analysis.get('missing_fields', [])
+            
+            self.logger.info(f"Crawl completed: {results['pages_discovered']} pages, "
+                           f"{results['intel_extracted']} intel records")
+            
+        except Exception as e:
+            self.logger.exception(f"Intelligent crawl execution failed: {e}")
+            results['error'] = str(e)
         
-        # Step 5: Update learning stats
+        # Step 8: Update learning stats
         results['learning_stats'] = self.crawl_learner.get_learning_stats()
         
         return results
