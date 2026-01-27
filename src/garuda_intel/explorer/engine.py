@@ -12,11 +12,14 @@ from ..browser.selenium import SeleniumBrowser
 from ..extractor.engine import ContentExtractor
 from .scorer import URLScorer
 from ..discover.frontier import Frontier
+from ..discover.crawl_learner import CrawlLearner
 from ..types.entity import EntityType, EntityProfile
 from ..database.store import PersistenceStore
 from ..database.relationship_manager import RelationshipManager
 from ..vector.engine import VectorStore
 from ..extractor.llm import LLMIntelExtractor
+from ..extractor.iterative_refiner import IterativeRefiner
+from ..extractor.strategy_selector import StrategySelector
 
 
 def _uuid5_url(url: str) -> str:
@@ -67,6 +70,19 @@ class IntelligentExplorer:
         self.relationship_manager = None
         if persistence and llm_extractor:
             self.relationship_manager = RelationshipManager(persistence, llm_extractor)
+        
+        # Crawl Learning (Phase 4)
+        self.crawl_learner = None
+        if persistence:
+            self.crawl_learner = CrawlLearner(persistence)
+        
+        # Iterative Refinement (Phase 4)
+        self.iterative_refiner = None
+        if llm_extractor and persistence:
+            self.iterative_refiner = IterativeRefiner(llm_extractor, persistence)
+        
+        # Strategy Selection (Phase 4)
+        self.strategy_selector = StrategySelector()
 
         # URL Scoring Logic
         self.url_scorer = URLScorer(profile.name, profile.entity_type, patterns=scorer_patterns, domains=scorer_domains)
@@ -168,6 +184,42 @@ class IntelligentExplorer:
                     )
                 except Exception as e:
                     self.logger.warning(f"Post-crawl relationship cleanup failed: {e}")
+            
+            # Phase 4: Record crawl results for learning
+            if self.crawl_learner and pages_explored > 0:
+                try:
+                    self.logger.info("Recording crawl results for learning...")
+                    for url, page_data in self.explored_data.items():
+                        # Record each successful crawl
+                        intel_quality = page_data.get("avg_confidence", 0.5)
+                        page_type = page_data.get("page_type", "general")
+                        extraction_success = page_data.get("has_high_confidence_intel", False)
+                        
+                        self.crawl_learner.record_crawl_result(
+                            url=url,
+                            page_type=page_type,
+                            intel_quality=intel_quality,
+                            extraction_success=extraction_success
+                        )
+                    
+                    # Update URL scorer with learned patterns
+                    if self.url_scorer:
+                        domain_key = self._get_domain_key(list(self.explored_data.keys())[0])
+                        reliability = self.crawl_learner.get_domain_reliability(domain_key)
+                        if reliability > 0:
+                            self.logger.info(f"Domain {domain_key} reliability: {reliability:.2f}")
+                except Exception as e:
+                    self.logger.warning(f"Crawl learning recording failed: {e}")
+            
+            # Phase 2: Post-crawl entity deduplication
+            if self.store and pages_explored > 0:
+                try:
+                    self.logger.info("Running entity deduplication...")
+                    merge_map = self.store.deduplicate_entities(threshold=0.85)
+                    if merge_map:
+                        self.logger.info(f"Merged {len(merge_map)} duplicate entities")
+                except Exception as e:
+                    self.logger.warning(f"Entity deduplication failed: {e}")
 
         return self.explored_data
 
