@@ -4,7 +4,7 @@ from flask import Blueprint, request, jsonify
 import logging
 from typing import Callable
 
-from ....services.media_processor import MediaProcessor
+from ...services.media_processor import MediaProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def init_media_routes(
         """Get media processing statistics."""
         try:
             with store.get_session() as session:
-                from ....database.models import MediaItem
+                from ...database.models import MediaItem
                 
                 total = session.query(MediaItem).count()
                 processed = session.query(MediaItem).filter(MediaItem.processed == True).count()
@@ -62,7 +62,7 @@ def init_media_routes(
             offset = int(request.args.get("offset", 0))
             
             with store.get_session() as session:
-                from ....database.models import MediaItem
+                from ...database.models import MediaItem
                 
                 query = session.query(MediaItem)
                 
@@ -122,7 +122,7 @@ def init_media_routes(
             
             # Create media item in database
             with store.get_session() as session:
-                from ....database.models import MediaItem, Page
+                from ...database.models import MediaItem, Page
                 import uuid
                 
                 # Find page if page_url provided
