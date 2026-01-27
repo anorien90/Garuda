@@ -14,11 +14,12 @@ from ..discover.crawl_modes import EntityAwareCrawler
 from ..discover.crawl_learner import CrawlLearner
 from ..services.entity_gap_analyzer import EntityGapAnalyzer
 from ..services.adaptive_crawler import AdaptiveCrawlerService
+from ..services.media_processor import MediaProcessor
 from .services.event_system import init_event_logging
 
 # Import route blueprints
 from .routes import static, recorder, search, crawling, entities, relationships
-from .routes import entity_gaps, entity_deduplication, entity_relations
+from .routes import entity_gaps, entity_deduplication, entity_relations, media
 
 
 settings = Settings.from_env()
@@ -58,6 +59,7 @@ entity_crawler = EntityAwareCrawler(store, llm)
 crawl_learner = CrawlLearner(store)
 gap_analyzer = EntityGapAnalyzer(store)
 adaptive_crawler = AdaptiveCrawlerService(store, llm, crawl_learner)
+media_processor = MediaProcessor(llm, enable_processing=settings.media_processing_enabled)
 
 # Initialize event logging
 init_event_logging()
@@ -119,6 +121,10 @@ app.register_blueprint(
 
 app.register_blueprint(
     relationships.init_routes(api_key_required, relationship_manager)
+)
+
+app.register_blueprint(
+    media.init_media_routes(api_key_required, store, llm, media_processor)
 )
 
 

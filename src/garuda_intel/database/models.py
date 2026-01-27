@@ -385,3 +385,45 @@ class Link(BasicDataEntry):
         "polymorphic_identity": "link",
         "inherit_condition": id == BasicDataEntry.id,
     }
+
+
+class MediaItem(BasicDataEntry):
+    """Base class for media items (images, videos, audio)."""
+    __tablename__ = "media_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    url: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    media_type: Mapped[str] = mapped_column(String, nullable=False, index=True)  # image, video, audio
+    source_page_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("entities.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    
+    # Extracted content
+    extracted_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    text_embedding: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON-encoded embedding
+    
+    # Metadata
+    file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    mime_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # for video/audio
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    
+    # Processing status
+    processed: Mapped[bool] = mapped_column(Boolean, default=False)
+    processing_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    source_page: Mapped[Optional["Page"]] = relationship("Page", foreign_keys=[source_page_id])
+    entity: Mapped[Optional["Entity"]] = relationship("Entity", foreign_keys=[entity_id])
+
+    __mapper_args__ = {
+        "polymorphic_identity": "media_item",
+        "inherit_condition": id == BasicDataEntry.id,
+    }

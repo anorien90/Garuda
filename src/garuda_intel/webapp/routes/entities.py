@@ -2,6 +2,7 @@
 
 import logging
 import itertools
+import uuid as uuid_module
 from collections import Counter
 from flask import Blueprint, jsonify, request
 from sqlalchemy.orm import joinedload
@@ -48,11 +49,11 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
         node_type_filters = _parse_list_param(
             request.args.get("node_types"),
-            default={"entity", "person", "org", "organization", "corporation", "location", "product", "page", "intel", "image"},
+            default={"entity", "person", "org", "organization", "corporation", "location", "product", "page", "intel", "image", "media"},
         )
         edge_kind_filters = _parse_list_param(
             request.args.get("edge_kinds"),
-            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity"},
+            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media"},
         )
 
         emit_event(
@@ -135,6 +136,12 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
             entry_type_map: dict[str, str] = {}
             with store.Session() as session:
+                # UNIQUENESS GUARANTEE: The graph ensures only unique entities through:
+                # 1. Canonical name normalization (_canonical function)
+                # 2. UUID-based deduplication (entity_ids dict maps canonical -> UUID)
+                # 3. Variant tracking (multiple spellings map to same canonical entity)
+                # This guarantees the graph displays only unique entities with full relations.
+                
                 # Note: Loading entities in bulk (limit 20000) maintains original behavior.
                 # TODO: For very large datasets (>20K entities), implement pagination:
                 #       - Process entities in batches of 1000-5000
@@ -235,6 +242,29 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                             add_edge(page_id, link_id, kind="link", weight=1)
 
                 _add_relationship_edges(session, ensure_node, add_edge, entry_type_map)
+                
+                # Add media items to the graph (if MediaItem model exists)
+                if hasattr(db_models, 'MediaItem'):
+                    for media_row in session.query(db_models.MediaItem).limit(1000).all():
+                        media_id = str(media_row.id)
+                        media_label = media_row.url.split('/')[-1][:50] if media_row.url else "media"
+                        media_meta = {
+                            "url": media_row.url,
+                            "media_type": media_row.media_type,
+                            "processed": media_row.processed,
+                            "source_id": media_id
+                        }
+                        ensure_node(media_id, media_label, "media", meta=media_meta)
+                        
+                        # Link to source page
+                        if media_row.source_page_id:
+                            page_id = str(media_row.source_page_id)
+                            add_edge(page_id, media_id, kind="page-media", weight=1)
+                        
+                        # Link to associated entity
+                        if media_row.entity_id:
+                            entity_id = str(media_row.entity_id)
+                            add_edge(entity_id, media_id, kind="entity-media", weight=1)
 
                 for r in _qdrant_semantic_page_hits(q, vector_store, llm):
                     p = r.payload or {}
@@ -319,58 +349,81 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
         node_type = "unknown"
         label = node_id
 
+        # Handle special node types first
+        if node_id.startswith("link:"):
+            url = node_id[5:]
+            return jsonify({"id": node_id, "type": "link", "meta": {"url": url, "source_id": node_id}})
+
+        if node_id.startswith("img:"):
+            img_url = node_id[4:]
+            return jsonify({"id": node_id, "type": "image", "meta": {"source_url": img_url, "source_id": img_url}})
+
+        # Check if node_id is a valid UUID before querying database
+        is_valid_uuid = False
         try:
-            with store.Session() as session:
-                entity = session.query(db_models.Entity).filter_by(id=node_id).first()
-                if entity:
-                    node_type = "entity"
-                    label = entity.name
-                    meta = {
-                        "entity_id": str(entity.id),
-                        "name": entity.name,
-                        "kind": entity.kind,
-                        "source_id": str(entity.id),
-                    }
+            uuid_module.UUID(node_id)
+            is_valid_uuid = True
+        except (ValueError, AttributeError):
+            # Not a valid UUID, might be a canonical name or other identifier
+            pass
 
-                intel = session.query(db_models.Intelligence).filter_by(id=node_id).first()
-                if intel:
-                    node_type = "intel"
-                    label = f"Intel: {intel.entity_type or 'data'}"
-                    meta = {
-                        "intel_id": str(intel.id),
-                        "entity_name": intel.entity_name,
-                        "entity_type": intel.entity_type,
-                        "data": intel.data,
-                        "confidence": intel.confidence,
-                        "source_id": str(intel.id),
-                    }
+        try:
+            if is_valid_uuid:
+                # Only query by ID if it's a valid UUID
+                with store.Session() as session:
+                    entity = session.query(db_models.Entity).filter_by(id=node_id).first()
+                    if entity:
+                        node_type = "entity"
+                        label = entity.name
+                        meta = {
+                            "entity_id": str(entity.id),
+                            "name": entity.name,
+                            "kind": entity.kind,
+                            "source_id": str(entity.id),
+                        }
+                        return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
 
-                page = session.query(db_models.Page).filter_by(id=node_id).first()
-                if page:
-                    node_type = "page"
-                    label = page.title or page.url
-                    meta = {
-                        "page_id": str(page.id),
-                        "url": page.url,
-                        "title": page.title,
-                        "page_type": page.page_type,
-                        "intel_score": page.score,
-                        "source_id": str(page.id),
-                    }
+                    intel = session.query(db_models.Intelligence).filter_by(id=node_id).first()
+                    if intel:
+                        node_type = "intel"
+                        label = f"Intel: {intel.entity_type or 'data'}"
+                        meta = {
+                            "intel_id": str(intel.id),
+                            "entity_name": intel.entity_name,
+                            "entity_type": intel.entity_type,
+                            "data": intel.data,
+                            "confidence": intel.confidence,
+                            "source_id": str(intel.id),
+                        }
+                        return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
 
-            if node_id.startswith("link:"):
-                url = node_id[5:]
-                return jsonify({"id": node_id, "type": "link", "meta": {"url": url, "source_id": node_id}})
-
-            if node_id.startswith("img:"):
-                img_url = node_id[4:]
-                return jsonify({"id": node_id, "type": "image", "meta": {"source_url": img_url, "source_id": img_url}})
+                    page = session.query(db_models.Page).filter_by(id=node_id).first()
+                    if page:
+                        node_type = "page"
+                        label = page.title or page.url
+                        meta = {
+                            "page_id": str(page.id),
+                            "url": page.url,
+                            "title": page.title,
+                            "page_type": page.page_type,
+                            "intel_score": page.score,
+                            "source_id": str(page.id),
+                        }
+                        return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
+            
+            # If not a valid UUID or not found in database, treat as canonical name or other node type
+            # Return a generic entity node
+            node_type = "entity"
+            meta = {
+                "canonical": node_id,
+                "source_id": node_id,
+            }
+            return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
 
         except Exception as e:
             logger.exception(f"Node lookup failed for {node_id}")
-
-        img_url = node_id[4:] if node_id.startswith("img:") else node_id
-        return jsonify({"id": node_id, "type": "image", "meta": {"source_url": img_url, "source_id": img_url}})
+            # Return a generic node on error
+            return jsonify({"id": node_id, "type": "entity", "label": node_id, "meta": {"source_id": node_id, "error": str(e)}})
 
     @bp.post("/crawl")
     @api_key_required

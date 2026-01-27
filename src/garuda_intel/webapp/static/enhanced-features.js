@@ -4,6 +4,7 @@
  */
 
 import { API_BASE } from './config.js';
+import { getApiKey } from './storage.js';
 import { showModal } from './modals.js';
 import { pill } from './ui.js';
 
@@ -12,7 +13,7 @@ import { pill } from './ui.js';
 export async function analyzeEntityGaps(entityId) {
   try {
     const response = await fetch(`${API_BASE}/api/entities/${entityId}/gaps`, {
-      headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+      headers: { 'X-API-Key': getApiKey() || '' }
     });
     
     if (!response.ok) {
@@ -102,7 +103,7 @@ export async function executeEntityCrawl(entityName, options = {}) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': localStorage.getItem('apiKey') || ''
+        'X-API-Key': getApiKey() || ''
       },
       body: JSON.stringify({
         entity_name: entityName,
@@ -149,7 +150,7 @@ export async function deduplicateEntities(threshold = 0.85) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': localStorage.getItem('apiKey') || ''
+        'X-API-Key': getApiKey() || ''
       },
       body: JSON.stringify({ threshold })
     });
@@ -172,7 +173,7 @@ export async function findSimilarEntities(entityId, threshold = 0.75) {
     const response = await fetch(
       `${API_BASE}/api/entities/${entityId}/similar?threshold=${threshold}`,
       {
-        headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+        headers: { 'X-API-Key': getApiKey() || '' }
       }
     );
     
@@ -236,7 +237,7 @@ export async function mergeEntities(sourceId, targetId) {
       `${API_BASE}/api/entities/${sourceId}/merge/${targetId}`,
       {
         method: 'POST',
-        headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+        headers: { 'X-API-Key': getApiKey() || '' }
       }
     );
     
@@ -260,7 +261,7 @@ export async function inferRelationships(entityIds, context = null) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': localStorage.getItem('apiKey') || ''
+        'X-API-Key': getApiKey() || ''
       },
       body: JSON.stringify({
         entity_ids: entityIds,
@@ -287,7 +288,7 @@ export async function validateRelationships(fixInvalid = true) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': localStorage.getItem('apiKey') || ''
+        'X-API-Key': getApiKey() || ''
       },
       body: JSON.stringify({ fix_invalid: fixInvalid })
     });
@@ -352,7 +353,7 @@ export async function deduplicateRelationships() {
   try {
     const response = await fetch(`${API_BASE}/api/relationships/deduplicate`, {
       method: 'POST',
-      headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+      headers: { 'X-API-Key': getApiKey() || '' }
     });
     
     if (!response.ok) {
@@ -376,7 +377,7 @@ export async function getCrawlLearningStats(domains = []) {
     const response = await fetch(
       `${API_BASE}/api/crawl/learning/stats${domainParam}`,
       {
-        headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+        headers: { 'X-API-Key': getApiKey() || '' }
       }
     );
     
