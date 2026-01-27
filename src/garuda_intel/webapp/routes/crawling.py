@@ -4,6 +4,7 @@ import logging
 from flask import Blueprint, jsonify, request
 from ..services.event_system import emit_event
 from ...search import run_crawl_api
+from ...database.models import Entity
 
 
 bp = Blueprint('crawling', __name__, url_prefix='/api/crawl')
@@ -136,7 +137,6 @@ def init_routes(api_key_required, settings, store, llm, entity_crawler, crawl_le
         
         if not use_intelligent:
             with store.Session() as session:
-                from ...database.models import Entity
                 existing = session.query(Entity).filter(
                     Entity.name.ilike(f"%{entity_name}%")
                 ).first()

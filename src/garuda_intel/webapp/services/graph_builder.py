@@ -155,7 +155,12 @@ def _qdrant_semantic_entity_hints(query: str, vector_store, llm, top_k: int = 20
 
 
 def _add_relationship_edges(session, ensure_node, add_edge, entry_type_map: dict[str, str]):
-    """Include explicit Entity->Entity (or other Entry) relationships as edges with metadata."""
+    """
+    Include explicit Entity->Entity (or other Entry) relationships as edges with metadata.
+    
+    Note: Loads relationships in bulk (limit 20000) to maintain original behavior.
+    Consider pagination for very large datasets in future iterations.
+    """
     for rel in session.query(db_models.Relationship).limit(20000).all():
         sid = str(rel.source_id)
         tid = str(rel.target_id)

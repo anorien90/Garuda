@@ -134,6 +134,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
             entry_type_map: dict[str, str] = {}
             with store.Session() as session:
+                # Note: Loading entities in bulk (limit 20000) maintains original behavior.
+                # For very large datasets, consider pagination or streaming in future iterations.
                 for row in session.query(db_models.Entity).limit(20000).all():
                     canon = _canonical(row.name)
                     ent_uuid = str(row.id)
