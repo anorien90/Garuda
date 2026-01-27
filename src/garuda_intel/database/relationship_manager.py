@@ -496,22 +496,28 @@ Only include relationships where confidence >= {min_confidence}.
             Number of fields inferred and filled
             
         Example:
+            >>> # Infer missing fields from relationships
             >>> inferred = manager.infer_missing_fields()
-            >>> print(f"Inferred {inferred} missing fields")
+            >>> if inferred > 0:
+            ...     print(f"Successfully inferred {inferred} missing fields")
         """
         inferences_made = 0
         
         try:
+            from sqlalchemy.orm.attributes import flag_modified
+            
             with self.store.Session() as session:
                 # Get all entities and relationships
                 entities = session.execute(select(Entity)).scalars().all()
                 relationships = session.execute(select(Relationship)).scalars().all()
                 
                 # Build a map of entity_id -> entity for quick lookup
+                # Ensure consistent string type for IDs
                 entity_map = {str(e.id): e for e in entities}
                 
                 # For each relationship, try to infer missing fields
                 for rel in relationships:
+                    # Ensure IDs are strings for consistent lookup
                     source_id = str(rel.source_id)
                     target_id = str(rel.target_id)
                     
@@ -521,10 +527,13 @@ Only include relationships where confidence >= {min_confidence}.
                     source = entity_map[source_id]
                     target = entity_map[target_id]
                     
+                    # Track if source.data was modified
+                    source_modified = False
+                    
                     # Infer based on relationship type
                     if rel.relation_type in ["works_at", "employed_by", "employee_of"]:
                         # If person works at company, they might share location
-                        if target.entity_type in ["organization", "company"] and hasattr(target, 'data'):
+                        if target.entity_type in ["organization", "company"]:
                             target_data = target.data or {}
                             source_data = source.data or {}
                             
@@ -534,6 +543,7 @@ Only include relationships where confidence >= {min_confidence}.
                                     source.data = {}
                                 source.data["location"] = target_data["location"]
                                 inferences_made += 1
+                                source_modified = True
                             
                             # Propagate industry
                             if "industry" in target_data and "industry" not in source_data:
@@ -541,10 +551,11 @@ Only include relationships where confidence >= {min_confidence}.
                                     source.data = {}
                                 source.data["industry"] = target_data["industry"]
                                 inferences_made += 1
+                                source_modified = True
                     
                     elif rel.relation_type in ["ceo_of", "founder_of", "president_of"]:
                         # If person is CEO/founder of company, they might share location
-                        if target.entity_type in ["organization", "company"] and hasattr(target, 'data'):
+                        if target.entity_type in ["organization", "company"]:
                             target_data = target.data or {}
                             source_data = source.data or {}
                             
@@ -553,30 +564,35 @@ Only include relationships where confidence >= {min_confidence}.
                                     source.data = {}
                                 source.data["location"] = target_data["location"]
                                 inferences_made += 1
+                                source_modified = True
                     
                     elif rel.relation_type in ["subsidiary_of", "part_of", "owned_by"]:
                         # Subsidiary might share parent's industry/location
-                        if hasattr(target, 'data') and hasattr(source, 'data'):
-                            target_data = target.data or {}
-                            source_data = source.data or {}
-                            
-                            if "industry" in target_data and "industry" not in source_data:
-                                if source.data is None:
-                                    source.data = {}
-                                source.data["industry"] = target_data["industry"]
-                                inferences_made += 1
+                        target_data = target.data or {}
+                        source_data = source.data or {}
+                        
+                        if "industry" in target_data and "industry" not in source_data:
+                            if source.data is None:
+                                source.data = {}
+                            source.data["industry"] = target_data["industry"]
+                            inferences_made += 1
+                            source_modified = True
                     
                     elif rel.relation_type in ["located_in", "based_in", "headquarters_in"]:
                         # Propagate country/region info
-                        if hasattr(target, 'data') and hasattr(source, 'data'):
-                            target_data = target.data or {}
-                            source_data = source.data or {}
-                            
-                            if "country" in target_data and "country" not in source_data:
-                                if source.data is None:
-                                    source.data = {}
-                                source.data["country"] = target_data["country"]
-                                inferences_made += 1
+                        target_data = target.data or {}
+                        source_data = source.data or {}
+                        
+                        if "country" in target_data and "country" not in source_data:
+                            if source.data is None:
+                                source.data = {}
+                            source.data["country"] = target_data["country"]
+                            inferences_made += 1
+                            source_modified = True
+                    
+                    # Mark data as modified so SQLAlchemy tracks the change
+                    if source_modified:
+                        flag_modified(source, 'data')
                 
                 if inferences_made > 0:
                     session.commit()

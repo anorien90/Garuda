@@ -119,12 +119,14 @@ class PostCrawlProcessor:
         }
         
         try:
-            # Get all entities
             from ..database.models import Entity
+            from sqlalchemy import func
             
+            # Get entity count without loading all entities
             with self.store.Session() as session:
-                all_entities = session.execute(select(Entity)).scalars().all()
-                stats["entities_before"] = len(all_entities)
+                stats["entities_before"] = session.execute(
+                    select(func.count()).select_from(Entity)
+                ).scalar()
                 
                 if stats["entities_before"] == 0:
                     self.logger.info("  No entities to deduplicate")
@@ -136,8 +138,9 @@ class PostCrawlProcessor:
             
             # Recount after deduplication
             with self.store.Session() as session:
-                all_entities_after = session.execute(select(Entity)).scalars().all()
-                stats["entities_after"] = len(all_entities_after)
+                stats["entities_after"] = session.execute(
+                    select(func.count()).select_from(Entity)
+                ).scalar()
             
             self.logger.info(f"  Entities: {stats['entities_before']} -> {stats['entities_after']} "
                            f"(merged {stats['entities_merged']})")
@@ -164,10 +167,13 @@ class PostCrawlProcessor:
             
         try:
             from ..database.models import Relationship
+            from sqlalchemy import func
             
+            # Get relationship count without loading all relationships
             with self.store.Session() as session:
-                all_rels = session.execute(select(Relationship)).scalars().all()
-                stats["relationships_before"] = len(all_rels)
+                stats["relationships_before"] = session.execute(
+                    select(func.count()).select_from(Relationship)
+                ).scalar()
                 
                 if stats["relationships_before"] == 0:
                     self.logger.info("  No relationships to process")
@@ -181,8 +187,9 @@ class PostCrawlProcessor:
             
             # Recount after processing
             with self.store.Session() as session:
-                all_rels_after = session.execute(select(Relationship)).scalars().all()
-                stats["relationships_after"] = len(all_rels_after)
+                stats["relationships_after"] = session.execute(
+                    select(func.count()).select_from(Relationship)
+                ).scalar()
             stats["relationships_removed"] = stats["relationships_before"] - stats["relationships_after"]
             
             self.logger.info(f"  Relationships: {stats['relationships_before']} -> {stats['relationships_after']}")
@@ -207,6 +214,7 @@ class PostCrawlProcessor:
         
         try:
             from ..database.models import Intelligence, Entity
+            from sqlalchemy.orm.attributes import flag_modified
             
             with self.store.Session() as session:
                 # Group intelligence by entity
@@ -244,6 +252,7 @@ class PostCrawlProcessor:
                             
                             # Merge data from lower confidence items into the best one
                             best = group_sorted[0]
+                            data_modified = False
                             for other in group_sorted[1:]:
                                 if other.data and best.data:
                                     # Merge unique values
@@ -251,6 +260,11 @@ class PostCrawlProcessor:
                                         if k not in best.data and v:
                                             best.data[k] = v
                                             stats["intel_items_aggregated"] += 1
+                                            data_modified = True
+                            
+                            # Mark data as modified so SQLAlchemy tracks the change
+                            if data_modified:
+                                flag_modified(best, 'data')
                 
                 session.commit()
                 self.logger.info(f"  Aggregated {stats['intel_items_aggregated']} intelligence data items")
