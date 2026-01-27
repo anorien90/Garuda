@@ -221,7 +221,7 @@ class AdaptiveCrawlerService:
             "confidence_scores": {}
         }
         
-        with self.store.session() as session:
+        with self.store.Session() as session:
             from ..database.models import Entity, Relationship
             
             # Get target entity
