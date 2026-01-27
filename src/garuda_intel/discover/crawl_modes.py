@@ -49,8 +49,8 @@ class EntityAwareCrawler:
             - completeness: Percentage of expected fields filled (0-1)
             - priority_gaps: Fields that should be filled first
         """
-        # Get entity intelligence data
-        intel_records = self.store.get_intelligence(entity_id=entity_id, min_confidence=0.0)
+        # Get entity intelligence data (use min confidence to filter low-quality data)
+        intel_records = self.store.get_intelligence(entity_id=entity_id, min_confidence=0.5)
         
         if not intel_records:
             return {
@@ -109,12 +109,13 @@ class EntityAwareCrawler:
                     priority_gaps.append(field)
         
         # Calculate completeness
-        total_categories = 9  # basic_info + 8 list categories
+        list_categories = ["persons", "jobs", "metrics", "locations", "financials", "products", "events", "relationships"]
+        total_categories = 1 + len(list_categories)  # basic_info + list categories
         filled_categories = 0
         
         if basic_info and any(basic_info.values()):
             filled_categories += 1
-        for key in ["persons", "jobs", "metrics", "locations", "financials", "products", "events", "relationships"]:
+        for key in list_categories:
             if aggregated.get(key):
                 filled_categories += 1
         

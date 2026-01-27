@@ -574,7 +574,9 @@ class SQLAlchemyStore(PersistenceStore):
             
             if not embedder or not candidates:
                 # Return exact/fuzzy matches if no embedder or no candidates
-                return [c for c in candidates if self._name_similarity(name, c.name) >= threshold]
+                # Use lower threshold (0.6) for string-based matching
+                string_threshold = max(0.6, threshold - 0.2)
+                return [c for c in candidates if self._name_similarity(name, c.name) >= string_threshold]
             
             # Use embedding similarity for better matching
             try:
@@ -618,10 +620,23 @@ class SQLAlchemyStore(PersistenceStore):
                     self.logger.error(f"Entity not found: source={source_id}, target={target_id}")
                     return False
                 
-                # Merge data fields
+                # Merge data fields - preserve non-empty values from both entities
                 source_data = _as_dict(source.data)
                 target_data = _as_dict(target.data)
-                merged_data = {**source_data, **target_data}
+                merged_data = {}
+                
+                # Field-level merging: keep non-empty values from both
+                all_keys = set(source_data.keys()) | set(target_data.keys())
+                for key in all_keys:
+                    source_val = source_data.get(key)
+                    target_val = target_data.get(key)
+                    
+                    # Keep non-empty value, prefer target if both non-empty
+                    if target_val:
+                        merged_data[key] = target_val
+                    elif source_val:
+                        merged_data[key] = source_val
+                
                 target.data = merged_data
                 
                 # Merge metadata
@@ -636,12 +651,7 @@ class SQLAlchemyStore(PersistenceStore):
                 elif source.last_seen:
                     target.last_seen = source.last_seen
                 
-                # Redirect all relationships pointing to source -> target
                 # Update incoming relationships (where source is target)
-                s.execute(
-                    select(Relationship)
-                    .where(Relationship.target_id == source_id)
-                ).scalars().all()
                 for rel in s.execute(select(Relationship).where(Relationship.target_id == source_id)).scalars().all():
                     # Avoid creating duplicate relationships
                     existing = s.execute(
@@ -808,6 +818,10 @@ class SQLAlchemyStore(PersistenceStore):
     def deduplicate_entities(self, threshold: float = 0.85, embedder=None) -> Dict[str, str]:
         """
         Automatically find and merge duplicate entities.
+        
+        Note: This implementation has O(n²) complexity within each entity kind.
+        For large datasets (>1000 entities per kind), consider implementing
+        clustering-based deduplication using embeddings.
         
         Args:
             threshold: Similarity threshold for considering duplicates (0-1)
