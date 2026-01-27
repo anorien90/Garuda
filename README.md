@@ -155,23 +155,42 @@ python -m src.search run --sqlite-path crawler.db --qdrant-url http://localhost:
 ```
 
 **3. Try the NEW Intelligent Crawl:**
+
+Garuda now features three crawl modes for maximum flexibility:
+
+**a) 🧠 Intelligent Crawl (Recommended for most use cases)**
 - Open the Web UI at `http://localhost:5000`
 - Go to the "Crawler" tab
-- Find the "🧠 Intelligent Crawl" section (blue box)
+- Find the "🧠 Intelligent Crawl" section (blue box at top)
 - Enter an entity name like "Bill Gates" or "Microsoft"
+- Optionally select entity type (or leave as auto-detect)
 - Click "🚀 Start Intelligent Crawl"
 - The system will automatically:
-  - Check if the entity exists
-  - Analyze existing data and identify gaps
-  - Generate targeted queries
-  - Create an adaptive crawl plan
-  - Show you completeness scores and recommendations
+  - Check if the entity exists in database
+  - Analyze existing data and identify gaps (gap-filling mode)
+  - OR generate comprehensive discovery queries (discovery mode)
+  - Execute targeted crawl with adaptive strategy
+  - Show completeness scores, gaps filled, and learning stats
+
+**b) 🎯 Smart Crawl (Auto-Detection)**
+- Scroll to "Advanced Crawl Options" section
+- Enter entity name in the "Entity" field
+- Configure crawl parameters if desired (or use defaults)
+- Click "🎯 Smart Crawl (Auto-detect)" button
+- System automatically selects intelligent mode if entity exists, standard mode if new
+- Best for: "I don't know if this entity exists yet"
+
+**c) 🔧 Advanced Crawl (Full Control)**
+- Use the standard "Advanced Crawl" button for complete parameter control
+- Supports seed URLs, Selenium, active browsing mode, etc.
+- Best for: Specific domains, debugging, specialized research
 
 **4. Analyze Entity Gaps:**
 - Go to the "Entity Tools" tab
 - Click "📊 Analyze All (Top 20)" to see entities with the most data gaps
 - Or enter a specific entity UUID and click "🔍 Analyze Gaps"
 - View completeness scores, missing fields, and suggested sources
+- Click "Fill Gaps with Targeted Crawl" to immediately launch gap-filling
 
 **5. Query intel via Web UI, CLI, or Extension.**
 
@@ -180,7 +199,7 @@ python -m src.search run --sqlite-path crawler.db --qdrant-url http://localhost:
 - Go to the extension, set your API endpoint and key in "Settings".
 - Use "Record", "Search", and "View" tabs to interact!
 
-For detailed information about the new intelligent crawling features, see [FEATURES.md](FEATURES.md).
+**For detailed information about intelligent crawling features, workflows, and API reference, see [FEATURES.md](FEATURES.md).**
 
 ---
 
