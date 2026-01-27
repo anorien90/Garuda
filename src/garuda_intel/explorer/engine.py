@@ -233,6 +233,11 @@ class IntelligentExplorer:
                 entity_id_map = self.store.save_entities(extracted_entities) or {}
 
             # Save relationships from findings
+            # Build lowercase name lookup for efficient entity matching
+            entity_name_to_id = {}
+            for (ent_name, ent_kind), ent_id in entity_id_map.items():
+                entity_name_to_id[ent_name.lower()] = ent_id
+            
             for finding, conf_score in verified_findings_with_scores:
                 relationships = finding.get("relationships", [])
                 if relationships and isinstance(relationships, list):
@@ -245,16 +250,9 @@ class IntelligentExplorer:
                         description = rel.get("description", "")
                         
                         if source_name and target_name:
-                            # Try to find entity IDs for source and target
-                            source_id = None
-                            target_id = None
-                            
-                            # Look in entity_id_map
-                            for (ent_name, ent_kind), ent_id in entity_id_map.items():
-                                if ent_name.lower() == source_name.lower():
-                                    source_id = ent_id
-                                if ent_name.lower() == target_name.lower():
-                                    target_id = ent_id
+                            # Look up entity IDs using lowercase name lookup
+                            source_id = entity_name_to_id.get(source_name.lower())
+                            target_id = entity_name_to_id.get(target_name.lower())
                             
                             # If both entities found, save relationship
                             if source_id and target_id:
