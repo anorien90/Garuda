@@ -208,15 +208,15 @@ class LLMIntelExtractor:
 
         # If LLM gave nothing useful, fall back to deterministic extraction
         if not any([
-            aggregate.get("basic_info"),
-            aggregate["persons"],
-            aggregate["jobs"],
-            aggregate["metrics"],
-            aggregate["locations"],
-            aggregate["financials"],
-            aggregate["products"],
-            aggregate["events"],
-            aggregate["relationships"],
+            bool(aggregate.get("basic_info")),
+            bool(aggregate["persons"]),
+            bool(aggregate["jobs"]),
+            bool(aggregate["metrics"]),
+            bool(aggregate["locations"]),
+            bool(aggregate["financials"]),
+            bool(aggregate["products"]),
+            bool(aggregate["events"]),
+            bool(aggregate["relationships"]),
         ]):
             return self._rule_based_intel(profile, cleaned_text, url, page_type)
 

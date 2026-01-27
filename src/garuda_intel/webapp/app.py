@@ -263,6 +263,44 @@ def _as_list(val):
     return [val]
 
 
+def _add_semantic_relationship_edges(relationships_data, upsert_entity, add_edge, include_meta, context_meta=None):
+    """
+    Extract and add semantic relationship edges from JSON data.
+    
+    Args:
+        relationships_data: JSON object to extract relationships from
+        upsert_entity: Function to create/get entity nodes
+        add_edge: Function to add edges to the graph
+        include_meta: Whether to include metadata in edges
+        context_meta: Additional metadata to include (e.g., page_id, intel_id)
+    """
+    context_meta = context_meta or {}
+    for rel in _collect_relationships_from_json(relationships_data):
+        source_name = rel.get("source")
+        target_name = rel.get("target")
+        relation_type = rel.get("relation_type", "related")
+        
+        if source_name and target_name:
+            source_node = upsert_entity(source_name, None, None, meta={"path": rel.get("path")})
+            target_node = upsert_entity(target_name, None, None, meta={"path": rel.get("path")})
+            
+            if source_node and target_node:
+                edge_meta = {
+                    "relation_type": relation_type,
+                    "description": rel.get("description", ""),
+                    "path": rel.get("path"),
+                    **context_meta
+                } if include_meta else None
+                
+                add_edge(
+                    source_node,
+                    target_node,
+                    kind=f"semantic-{relation_type}",
+                    weight=1,
+                    meta=edge_meta,
+                )
+
+
 def _collect_images_from_metadata(meta: dict):
     if not isinstance(meta, dict):
         return []
@@ -571,29 +609,13 @@ def api_entities_graph():
                     )
             
             # Extract and add semantic relationships from intelligence payload
-            for rel in _collect_relationships_from_json(payload):
-                source_name = rel.get("source")
-                target_name = rel.get("target")
-                relation_type = rel.get("relation_type", "related")
-                
-                if source_name and target_name:
-                    # Create or get entity nodes for source and target
-                    source_node = upsert_entity(source_name, None, None, meta={"path": rel.get("path")})
-                    target_node = upsert_entity(target_name, None, None, meta={"path": rel.get("path")})
-                    
-                    if source_node and target_node:
-                        add_edge(
-                            source_node,
-                            target_node,
-                            kind=f"semantic-{relation_type}",
-                            weight=1,
-                            meta={
-                                "relation_type": relation_type,
-                                "description": rel.get("description", ""),
-                                "intel_id": intel_id,
-                                "path": rel.get("path")
-                            } if include_meta else None,
-                        )
+            _add_semantic_relationship_edges(
+                payload, 
+                upsert_entity, 
+                add_edge, 
+                include_meta,
+                context_meta={"intel_id": intel_id}
+            )
             
             add_cooccurrence_edges(doc_entity_keys + ([primary] if primary else []))
 
@@ -684,29 +706,13 @@ def api_entities_graph():
                     add_edge(page_node_id, ck, kind="page-mentions", meta={"path": ent.get("path"), "source": "metadata", "page_id": page_uuid, "page_url": page_url_val} if include_meta else None)
             
             # Extract and add semantic relationships from page extracted data
-            for rel in _collect_relationships_from_json(extracted):
-                source_name = rel.get("source")
-                target_name = rel.get("target")
-                relation_type = rel.get("relation_type", "related")
-                
-                if source_name and target_name:
-                    source_node = upsert_entity(source_name, None, None, meta={"path": rel.get("path")})
-                    target_node = upsert_entity(target_name, None, None, meta={"path": rel.get("path")})
-                    
-                    if source_node and target_node:
-                        add_edge(
-                            source_node,
-                            target_node,
-                            kind=f"semantic-{relation_type}",
-                            weight=1,
-                            meta={
-                                "relation_type": relation_type,
-                                "description": rel.get("description", ""),
-                                "page_id": page_uuid,
-                                "page_url": page_url_val,
-                                "path": rel.get("path")
-                            } if include_meta else None,
-                        )
+            _add_semantic_relationship_edges(
+                extracted,
+                upsert_entity,
+                add_edge,
+                include_meta,
+                context_meta={"page_id": page_uuid, "page_url": page_url_val}
+            )
             
             for img in _collect_images_from_metadata(metadata):
                 img_id = f"img:{img['url']}"
