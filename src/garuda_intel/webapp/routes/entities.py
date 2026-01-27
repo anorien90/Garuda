@@ -4,6 +4,7 @@ import logging
 import itertools
 from collections import Counter
 from flask import Blueprint, jsonify, request
+from sqlalchemy.orm import joinedload
 from ..services.event_system import emit_event
 from ..services.graph_builder import (
     _collect_entities_from_json,
@@ -183,7 +184,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                             if other_id:
                                 add_edge(intel_id_str, other_id, kind="intel-mentions", weight=1)
 
-                for row in session.query(db_models.Page).limit(3000).all():
+                for row in session.query(db_models.Page).options(joinedload(db_models.Page.content)).limit(3000).all():
                     page_id = _page_id_from_row(row)
                     page_id_to_url[page_id] = row.url
                     page_ents: list[str] = []
