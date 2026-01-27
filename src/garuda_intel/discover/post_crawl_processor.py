@@ -14,6 +14,8 @@ from typing import Dict, List, Set, Tuple, Optional, Any
 from collections import defaultdict
 from datetime import datetime
 
+from sqlalchemy import select
+
 from ..database.store import PersistenceStore
 from ..database.relationship_manager import RelationshipManager
 from ..extractor.llm import LLMIntelExtractor
@@ -118,23 +120,24 @@ class PostCrawlProcessor:
         
         try:
             # Get all entities
-            session = self.store.get_session()
             from ..database.models import Entity
             
-            all_entities = session.query(Entity).all()
-            stats["entities_before"] = len(all_entities)
-            
-            if stats["entities_before"] == 0:
-                self.logger.info("  No entities to deduplicate")
-                return stats
+            with self.store.Session() as session:
+                all_entities = session.execute(select(Entity)).scalars().all()
+                stats["entities_before"] = len(all_entities)
+                
+                if stats["entities_before"] == 0:
+                    self.logger.info("  No entities to deduplicate")
+                    return stats
             
             # Use store's deduplication method
             merge_map = self.store.deduplicate_entities(threshold=0.85)
             stats["entities_merged"] = len(merge_map)
             
             # Recount after deduplication
-            all_entities_after = session.query(Entity).all()
-            stats["entities_after"] = len(all_entities_after)
+            with self.store.Session() as session:
+                all_entities_after = session.execute(select(Entity)).scalars().all()
+                stats["entities_after"] = len(all_entities_after)
             
             self.logger.info(f"  Entities: {stats['entities_before']} -> {stats['entities_after']} "
                            f"(merged {stats['entities_merged']})")
@@ -160,15 +163,15 @@ class PostCrawlProcessor:
             return stats
             
         try:
-            session = self.store.get_session()
             from ..database.models import Relationship
             
-            all_rels = session.query(Relationship).all()
-            stats["relationships_before"] = len(all_rels)
-            
-            if stats["relationships_before"] == 0:
-                self.logger.info("  No relationships to process")
-                return stats
+            with self.store.Session() as session:
+                all_rels = session.execute(select(Relationship)).scalars().all()
+                stats["relationships_before"] = len(all_rels)
+                
+                if stats["relationships_before"] == 0:
+                    self.logger.info("  No relationships to process")
+                    return stats
             
             # Deduplicate relationships
             duplicates_removed = self.relationship_manager.deduplicate_relationships()
@@ -177,8 +180,9 @@ class PostCrawlProcessor:
             validation_report = self.relationship_manager.validate_relationships(fix_invalid=True)
             
             # Recount after processing
-            all_rels_after = session.query(Relationship).all()
-            stats["relationships_after"] = len(all_rels_after)
+            with self.store.Session() as session:
+                all_rels_after = session.execute(select(Relationship)).scalars().all()
+                stats["relationships_after"] = len(all_rels_after)
             stats["relationships_removed"] = stats["relationships_before"] - stats["relationships_after"]
             
             self.logger.info(f"  Relationships: {stats['relationships_before']} -> {stats['relationships_after']}")
@@ -202,54 +206,54 @@ class PostCrawlProcessor:
         }
         
         try:
-            session = self.store.get_session()
             from ..database.models import Intelligence, Entity
             
-            # Group intelligence by entity
-            entity_intel_map = defaultdict(list)
-            
-            all_intel = session.query(Intelligence).all()
-            for intel in all_intel:
-                if intel.entity_id:
-                    entity_intel_map[intel.entity_id].append(intel)
-            
-            # For each entity, aggregate similar intel items
-            for entity_id, intel_list in entity_intel_map.items():
-                if len(intel_list) <= 1:
-                    continue
-                    
-                # Group by data keys
-                data_key_groups = defaultdict(list)
-                for intel in intel_list:
-                    if intel.data:
-                        for key in intel.data.keys():
-                            data_key_groups[key].append(intel)
+            with self.store.Session() as session:
+                # Group intelligence by entity
+                entity_intel_map = defaultdict(list)
                 
-                # Merge intelligence with the same keys
-                for key, group in data_key_groups.items():
-                    if len(group) > 1:
-                        # Keep the one with highest confidence or most recent
-                        group_sorted = sorted(
-                            group,
-                            key=lambda x: (
-                                x.confidence or 0.0,
-                                x.created_at or datetime.min
-                            ),
-                            reverse=True
-                        )
+                all_intel = session.execute(select(Intelligence)).scalars().all()
+                for intel in all_intel:
+                    if intel.entity_id:
+                        entity_intel_map[intel.entity_id].append(intel)
+                
+                # For each entity, aggregate similar intel items
+                for entity_id, intel_list in entity_intel_map.items():
+                    if len(intel_list) <= 1:
+                        continue
                         
-                        # Merge data from lower confidence items into the best one
-                        best = group_sorted[0]
-                        for other in group_sorted[1:]:
-                            if other.data and best.data:
-                                # Merge unique values
-                                for k, v in other.data.items():
-                                    if k not in best.data and v:
-                                        best.data[k] = v
-                                        stats["intel_items_aggregated"] += 1
-            
-            session.commit()
-            self.logger.info(f"  Aggregated {stats['intel_items_aggregated']} intelligence data items")
+                    # Group by data keys
+                    data_key_groups = defaultdict(list)
+                    for intel in intel_list:
+                        if intel.data:
+                            for key in intel.data.keys():
+                                data_key_groups[key].append(intel)
+                    
+                    # Merge intelligence with the same keys
+                    for key, group in data_key_groups.items():
+                        if len(group) > 1:
+                            # Keep the one with highest confidence or most recent
+                            group_sorted = sorted(
+                                group,
+                                key=lambda x: (
+                                    x.confidence or 0.0,
+                                    x.created_at or datetime.min
+                                ),
+                                reverse=True
+                            )
+                            
+                            # Merge data from lower confidence items into the best one
+                            best = group_sorted[0]
+                            for other in group_sorted[1:]:
+                                if other.data and best.data:
+                                    # Merge unique values
+                                    for k, v in other.data.items():
+                                        if k not in best.data and v:
+                                            best.data[k] = v
+                                            stats["intel_items_aggregated"] += 1
+                
+                session.commit()
+                self.logger.info(f"  Aggregated {stats['intel_items_aggregated']} intelligence data items")
             
         except Exception as e:
             self.logger.error(f"  Intelligence aggregation failed: {e}")
@@ -295,47 +299,48 @@ class PostCrawlProcessor:
         }
         
         try:
-            session = self.store.get_session()
             from ..database.models import Intelligence, Entity
             
-            # 1. Remove intelligence entries with no meaningful data
-            empty_intel = session.query(Intelligence).filter(
-                (Intelligence.data.is_(None)) | (Intelligence.data == {})
-            ).all()
-            
-            for intel in empty_intel:
-                session.delete(intel)
-                stats["data_quality_improvements"] += 1
-            
-            # 2. Normalize entity types
-            all_entities = session.query(Entity).all()
-            type_mapping = {
-                "organisation": "organization",
-                "org": "organization",
-                "company": "organization",
-                "corporation": "organization",
-                "corp": "organization",
-            }
-            
-            for entity in all_entities:
-                if entity.entity_type and entity.entity_type.lower() in type_mapping:
-                    old_type = entity.entity_type
-                    entity.entity_type = type_mapping[entity.entity_type.lower()]
-                    if old_type != entity.entity_type:
-                        stats["data_quality_improvements"] += 1
-            
-            # 3. Ensure all entities have normalized names
-            for entity in all_entities:
-                if entity.name:
-                    # Check if entity has normalized_name attribute
-                    if hasattr(entity, 'normalized_name'):
-                        expected_normalized = entity.name.lower().strip()
-                        if entity.normalized_name != expected_normalized:
-                            entity.normalized_name = expected_normalized
+            with self.store.Session() as session:
+                # 1. Remove intelligence entries with no meaningful data
+                stmt = select(Intelligence).where(
+                    (Intelligence.data.is_(None)) | (Intelligence.data == {})
+                )
+                empty_intel = session.execute(stmt).scalars().all()
+                
+                for intel in empty_intel:
+                    session.delete(intel)
+                    stats["data_quality_improvements"] += 1
+                
+                # 2. Normalize entity types
+                all_entities = session.execute(select(Entity)).scalars().all()
+                type_mapping = {
+                    "organisation": "organization",
+                    "org": "organization",
+                    "company": "organization",
+                    "corporation": "organization",
+                    "corp": "organization",
+                }
+                
+                for entity in all_entities:
+                    if entity.entity_type and entity.entity_type.lower() in type_mapping:
+                        old_type = entity.entity_type
+                        entity.entity_type = type_mapping[entity.entity_type.lower()]
+                        if old_type != entity.entity_type:
                             stats["data_quality_improvements"] += 1
-            
-            session.commit()
-            self.logger.info(f"  Applied {stats['data_quality_improvements']} data quality improvements")
+                
+                # 3. Ensure all entities have normalized names
+                for entity in all_entities:
+                    if entity.name:
+                        # Check if entity has normalized_name attribute
+                        if hasattr(entity, 'normalized_name'):
+                            expected_normalized = entity.name.lower().strip()
+                            if entity.normalized_name != expected_normalized:
+                                entity.normalized_name = expected_normalized
+                                stats["data_quality_improvements"] += 1
+                
+                session.commit()
+                self.logger.info(f"  Applied {stats['data_quality_improvements']} data quality improvements")
             
         except Exception as e:
             self.logger.error(f"  Data quality improvements failed: {e}")

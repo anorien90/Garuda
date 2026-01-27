@@ -54,6 +54,18 @@ class SQLAlchemyStore(PersistenceStore):
         self.PageContent = PageContent
         self.Page = Page
 
+    def get_session(self):
+        """
+        Create and return a new database session.
+        
+        Note: Caller is responsible for closing the session.
+        Consider using 'with self.Session() as session:' context manager instead.
+        
+        Returns:
+            SQLAlchemy session object
+        """
+        return self.Session()
+
     # -------- Seeds --------
     def save_seed(self, query: str, entity_type: str, source: str) -> str:
         with self.Session() as s:
