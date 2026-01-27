@@ -36,20 +36,30 @@ class EntityGapAnalyzer:
             'important': ['title', 'organization', 'location'],
             'supplementary': ['bio', 'education', 'email', 'social_media']
         },
-        EntityType.PRODUCT: {
+        'product': {  # Not in EntityType enum, use string
             'critical': ['name', 'manufacturer'],
             'important': ['description', 'category', 'launch_date'],
             'supplementary': ['price', 'specifications', 'reviews']
         },
-        EntityType.ORGANIZATION: {
+        'organization': {  # Not in EntityType enum, use string
             'critical': ['name', 'type'],
             'important': ['description', 'location', 'founded'],
             'supplementary': ['mission', 'leadership', 'size']
         },
-        EntityType.LOCATION: {
+        'location': {  # Not in EntityType enum, use string
             'critical': ['name', 'country'],
             'important': ['coordinates', 'type'],
             'supplementary': ['population', 'area', 'timezone']
+        },
+        EntityType.TOPIC: {
+            'critical': ['name', 'description'],
+            'important': ['category', 'keywords'],
+            'supplementary': ['related_topics', 'references']
+        },
+        EntityType.NEWS: {
+            'critical': ['title', 'date'],
+            'important': ['source', 'summary'],
+            'supplementary': ['authors', 'categories', 'entities_mentioned']
         }
     }
     
@@ -481,7 +491,7 @@ class EntityGapAnalyzer:
     def _normalize_entity_type(self, kind: Optional[str]) -> str:
         """Normalize entity type to standard values."""
         if not kind:
-            return EntityType.ENTITY
+            return 'entity'
         
         kind_lower = kind.lower()
         
@@ -490,13 +500,17 @@ class EntityGapAnalyzer:
         elif any(x in kind_lower for x in ['person', 'individual', 'people']):
             return EntityType.PERSON
         elif any(x in kind_lower for x in ['product', 'service']):
-            return EntityType.PRODUCT
+            return 'product'
         elif any(x in kind_lower for x in ['organization', 'org', 'ngo']):
-            return EntityType.ORGANIZATION
+            return 'organization'
         elif any(x in kind_lower for x in ['location', 'place', 'city', 'country']):
-            return EntityType.LOCATION
+            return 'location'
+        elif any(x in kind_lower for x in ['news', 'event', 'article']):
+            return EntityType.NEWS
+        elif any(x in kind_lower for x in ['topic', 'subject', 'theme']):
+            return EntityType.TOPIC
         else:
-            return EntityType.ENTITY
+            return 'entity'
     
     def _infer_entity_type(self, entity_name: str) -> str:
         """Infer entity type from name patterns."""
@@ -513,4 +527,4 @@ class EntityGapAnalyzer:
             return EntityType.PERSON
         
         # Default
-        return EntityType.ENTITY
+        return 'entity'
