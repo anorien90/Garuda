@@ -39,6 +39,9 @@ Garuda is a modular, entity-focused intelligence crawler leveraging LLMs, heuris
 - **Conversational & Semantic Search**: RAG-style CLI & web chat across database and vectors.
 - **Modular & Extensible**: Python modules organized for easy development and customization.
 - **Strong Security**: API-key protected endpoints, CORS restrictors, and local LLM/vector options.
+- **🧠 NEW: Intelligent Gap-Aware Crawling**: Automatically analyzes entity data, identifies missing fields, and generates targeted crawl strategies.
+- **🎯 NEW: Entity Gap Analysis**: Identifies missing data fields with completeness scoring and prioritized recommendations.
+- **📊 NEW: Adaptive Learning System**: Learns from crawl results to improve future discovery strategies.
 
 ---
 
@@ -50,6 +53,7 @@ Garuda is a modular, entity-focused intelligence crawler leveraging LLMs, heuris
 - 🦾 **Cleaner repo structure**: All modules isolated under `src/`, for browser, extractor, vector, database, etc.
 - ⚡ **Enhanced extensibility**: Add new storage, LLM/vector backends, and UI components with ease.
 - ✨ **UI improvements**: Extension features tabbed nav (Record, Search, View, Settings).
+- 🧠 **Dynamic Intelligence Gathering**: Gap-aware crawling, cross-entity inference, and adaptive strategies (see [FEATURES.md](FEATURES.md)).
 
 ---
 
@@ -150,12 +154,33 @@ Web UI available at `http://localhost:5000` (default).
 python -m src.search run --sqlite-path crawler.db --qdrant-url http://localhost:6333 --model granite3.1-dense:8b --verbose
 ```
 
-**3. Query intel via Web UI, CLI, or Extension.**
+**3. Try the NEW Intelligent Crawl:**
+- Open the Web UI at `http://localhost:5000`
+- Go to the "Crawler" tab
+- Find the "🧠 Intelligent Crawl" section (blue box)
+- Enter an entity name like "Bill Gates" or "Microsoft"
+- Click "🚀 Start Intelligent Crawl"
+- The system will automatically:
+  - Check if the entity exists
+  - Analyze existing data and identify gaps
+  - Generate targeted queries
+  - Create an adaptive crawl plan
+  - Show you completeness scores and recommendations
 
-**4. Use the Chrome Extension:**
+**4. Analyze Entity Gaps:**
+- Go to the "Entity Tools" tab
+- Click "📊 Analyze All (Top 20)" to see entities with the most data gaps
+- Or enter a specific entity UUID and click "🔍 Analyze Gaps"
+- View completeness scores, missing fields, and suggested sources
+
+**5. Query intel via Web UI, CLI, or Extension.**
+
+**6. Use the Chrome Extension:**
 - Load `plugin/chrome/` as an unpacked extension in Chrome.
 - Go to the extension, set your API endpoint and key in "Settings".
 - Use "Record", "Search", and "View" tabs to interact!
+
+For detailed information about the new intelligent crawling features, see [FEATURES.md](FEATURES.md).
 
 ---
 
