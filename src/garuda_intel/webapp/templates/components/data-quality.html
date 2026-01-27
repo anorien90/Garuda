@@ -1,0 +1,146 @@
+<div class="space-y-6">
+  <!-- Entity Gap Analysis (Consolidated - NO DUPLICATES) -->
+  <div class="card p-6 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-2 border-blue-200 dark:border-blue-800">
+    <h2 class="text-xl font-bold mb-2 text-blue-900 dark:text-blue-100">🎯 Entity Gap Analysis</h2>
+    <p class="text-sm text-blue-700 dark:text-blue-300 mb-4">
+      Analyze entities to identify missing data fields and get intelligent recommendations for filling gaps.
+    </p>
+    
+    <div class="space-y-3">
+      <div>
+        <label class="block text-sm font-medium mb-1 text-blue-900 dark:text-blue-100">Entity ID (UUID)</label>
+        <input type="text" id="gap-entity-id" 
+               class="w-full px-3 py-2 border border-blue-200 dark:border-blue-700 rounded-lg bg-white dark:bg-slate-900"
+               placeholder="Enter entity UUID">
+      </div>
+      
+      <div class="flex gap-2">
+        <button id="btn-analyze-gaps" type="button" class="btn-primary bg-blue-600 hover:bg-blue-500 flex-1">
+          🔍 Analyze Gaps
+        </button>
+        <button id="btn-analyze-all-gaps" type="button" class="btn-secondary border-blue-300 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/30">
+          📊 Analyze All (Top 20)
+        </button>
+      </div>
+    </div>
+    
+    <div id="gap-analysis-results" class="mt-4"></div>
+  </div>
+  
+  <!-- Entity Deduplication -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">🔗 Entity Deduplication</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
+      Find and merge duplicate entities to maintain data quality and uniqueness.
+    </p>
+    
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Deduplication -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Deduplicate Entities</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Find and merge duplicate entities based on similarity.
+        </p>
+        <div class="flex items-center gap-2 mb-3">
+          <label class="text-sm">Threshold:</label>
+          <input type="range" id="dedup-threshold" min="0.5" max="1.0" step="0.05" value="0.85" 
+                 class="flex-1">
+          <span id="dedup-threshold-value" class="text-sm font-mono">0.85</span>
+        </div>
+        <button onclick="deduplicateEntities(parseFloat(document.getElementById('dedup-threshold').value))" 
+                class="btn-secondary w-full">
+          Deduplicate
+        </button>
+      </div>
+      
+      <!-- Find Similar -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Find Similar Entities</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Search for entities similar to a given entity ID.
+        </p>
+        <div class="space-y-2">
+          <input type="text" id="similar-entity-id" 
+                 class="w-full px-3 py-2 border rounded-lg text-sm"
+                 placeholder="Enter Entity ID">
+          <button onclick="findSimilarEntities(document.getElementById('similar-entity-id').value)" 
+                  class="btn-secondary w-full">
+            Find Similar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Relationship Management -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">🔄 Relationship Management</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
+      Manage entity relationships, validate integrity, and discover new connections.
+    </p>
+    
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <!-- Validate -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Validate Relationships</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Check relationship integrity and fix issues.
+        </p>
+        <button onclick="validateRelationships(true)" class="btn-secondary w-full">
+          Validate & Fix
+        </button>
+      </div>
+      
+      <!-- Deduplicate -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Deduplicate Relationships</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Remove duplicate relationship entries.
+        </p>
+        <button onclick="deduplicateRelationships()" class="btn-secondary w-full">
+          Deduplicate
+        </button>
+      </div>
+      
+      <!-- Infer -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Infer Relationships</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Use AI to discover implicit relationships.
+        </p>
+        <input type="text" id="infer-entity-ids" 
+               class="w-full px-3 py-2 border rounded-lg text-sm mb-2"
+               placeholder="Entity IDs (comma-separated)">
+        <button onclick="inferRelationships(document.getElementById('infer-entity-ids').value.split(',').filter(x=>x.trim()))" 
+                class="btn-secondary w-full">
+          Infer
+        </button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Crawl Learning Stats -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">📊 Crawl Learning Statistics</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
+      View adaptive learning metrics and domain reliability scores.
+    </p>
+    
+    <div class="space-y-3">
+      <div>
+        <label class="block text-sm font-medium mb-1">Domains to Check (Optional, comma-separated)</label>
+        <input type="text" id="learning-domains" 
+               class="w-full px-3 py-2 border rounded-lg"
+               placeholder="e.g., wikipedia.org, linkedin.com">
+      </div>
+      
+      <button onclick="getCrawlLearningStats(document.getElementById('learning-domains').value.split(',').filter(x=>x.trim()))" 
+              class="btn-primary">
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+        View Learning Stats
+      </button>
+    </div>
+  </div>
+</div>

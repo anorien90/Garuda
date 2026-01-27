@@ -1,0 +1,212 @@
+<div class="space-y-6">
+  <!-- Media Processing Overview -->
+  <div class="card p-6 bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border-2 border-purple-200 dark:border-purple-800">
+    <h2 class="text-xl font-bold mb-2 text-purple-900 dark:text-purple-100">🎬 Media Processing</h2>
+    <p class="text-sm text-purple-700 dark:text-purple-300 mb-4">
+      Extract text from images, videos, and audio files. Convert media into embeddings and integrate into the knowledge graph.
+    </p>
+    
+    <div class="grid grid-cols-3 gap-4 mt-4">
+      <div class="text-center p-3 bg-white/60 dark:bg-slate-900/40 rounded-lg border border-purple-200 dark:border-purple-800">
+        <div class="text-2xl mb-1">🖼️</div>
+        <div class="text-xs font-semibold text-purple-900 dark:text-purple-100">Images (OCR)</div>
+      </div>
+      <div class="text-center p-3 bg-white/60 dark:bg-slate-900/40 rounded-lg border border-purple-200 dark:border-purple-800">
+        <div class="text-2xl mb-1">🎥</div>
+        <div class="text-xs font-semibold text-purple-900 dark:text-purple-100">Video (Speech)</div>
+      </div>
+      <div class="text-center p-3 bg-white/60 dark:bg-slate-900/40 rounded-lg border border-purple-200 dark:border-purple-800">
+        <div class="text-2xl mb-1">🎵</div>
+        <div class="text-xs font-semibold text-purple-900 dark:text-purple-100">Audio (STT)</div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Media Processing Settings -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">⚙️ Media Processing Settings</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
+      Configure media crawling and processing options.
+    </p>
+    
+    <div class="space-y-4">
+      <div class="flex items-center justify-between p-3 border rounded-lg">
+        <div>
+          <h3 class="font-semibold">Enable Media Crawling</h3>
+          <p class="text-sm text-slate-600 dark:text-slate-400">Automatically extract media from crawled pages</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" id="enable-media-crawling" class="sr-only peer" checked>
+          <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-300 dark:peer-focus:ring-brand-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-brand-600"></div>
+        </label>
+      </div>
+      
+      <div class="flex items-center justify-between p-3 border rounded-lg">
+        <div>
+          <h3 class="font-semibold">Auto-Process Media</h3>
+          <p class="text-sm text-slate-600 dark:text-slate-400">Automatically extract text from media items</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" id="enable-media-processing" class="sr-only peer" checked>
+          <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-300 dark:peer-focus:ring-brand-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-brand-600"></div>
+        </label>
+      </div>
+      
+      <div class="flex items-center justify-between p-3 border rounded-lg">
+        <div>
+          <h3 class="font-semibold">Generate Embeddings</h3>
+          <p class="text-sm text-slate-600 dark:text-slate-400">Create vector embeddings from extracted text</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" id="enable-media-embeddings" class="sr-only peer" checked>
+          <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-300 dark:peer-focus:ring-brand-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-brand-600"></div>
+        </label>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Browse Media Items -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">📂 Browse Media Items</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
+      View and manage extracted media items from crawled pages.
+    </p>
+    
+    <div class="mb-4 flex gap-2">
+      <select id="media-type-filter" class="px-3 py-2 border rounded-lg text-sm">
+        <option value="">All Media Types</option>
+        <option value="image">Images</option>
+        <option value="video">Videos</option>
+        <option value="audio">Audio</option>
+      </select>
+      
+      <select id="media-processed-filter" class="px-3 py-2 border rounded-lg text-sm">
+        <option value="">All Status</option>
+        <option value="processed">Processed</option>
+        <option value="unprocessed">Unprocessed</option>
+        <option value="error">Errors</option>
+      </select>
+      
+      <button onclick="loadMediaItems()" class="btn-primary">
+        Refresh
+      </button>
+    </div>
+    
+    <div id="media-items-container" class="space-y-3">
+      <p class="text-sm text-slate-500 italic">Click "Refresh" to load media items...</p>
+    </div>
+  </div>
+  
+  <!-- Process Media Manually -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">🔄 Process Media Manually</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
+      Manually trigger media processing for specific items or URLs.
+    </p>
+    
+    <form id="manual-media-process-form" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Media URL</label>
+        <input type="url" id="media-url" 
+               class="w-full px-3 py-2 border rounded-lg"
+               placeholder="https://example.com/image.jpg" required>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium mb-1">Media Type</label>
+        <select id="media-type" class="w-full px-3 py-2 border rounded-lg">
+          <option value="image">Image</option>
+          <option value="video">Video</option>
+          <option value="audio">Audio</option>
+        </select>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium mb-1">Associated Page URL (Optional)</label>
+        <input type="url" id="media-page-url" 
+               class="w-full px-3 py-2 border rounded-lg"
+               placeholder="https://example.com/page">
+      </div>
+      
+      <button type="submit" class="btn-primary">
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        Process Media
+      </button>
+    </form>
+    
+    <div id="media-process-result" class="mt-4"></div>
+  </div>
+  
+  <!-- Media Statistics -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">📊 Media Statistics</h2>
+    <div id="media-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="p-4 border rounded-lg text-center">
+        <div class="text-2xl font-bold text-brand-600" id="stat-total-media">-</div>
+        <div class="text-xs text-slate-600 dark:text-slate-400">Total Media</div>
+      </div>
+      <div class="p-4 border rounded-lg text-center">
+        <div class="text-2xl font-bold text-green-600" id="stat-processed-media">-</div>
+        <div class="text-xs text-slate-600 dark:text-slate-400">Processed</div>
+      </div>
+      <div class="p-4 border rounded-lg text-center">
+        <div class="text-2xl font-bold text-yellow-600" id="stat-pending-media">-</div>
+        <div class="text-xs text-slate-600 dark:text-slate-400">Pending</div>
+      </div>
+      <div class="p-4 border rounded-lg text-center">
+        <div class="text-2xl font-bold text-red-600" id="stat-error-media">-</div>
+        <div class="text-xs text-slate-600 dark:text-slate-400">Errors</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Media processing functions
+async function loadMediaItems() {
+  const container = document.getElementById('media-items-container');
+  container.innerHTML = '<p class="text-sm text-slate-500 italic">Loading media items...</p>';
+  
+  try {
+    const typeFilter = document.getElementById('media-type-filter').value;
+    const statusFilter = document.getElementById('media-processed-filter').value;
+    
+    // Placeholder - would call actual API
+    container.innerHTML = '<p class="text-sm text-slate-500 italic">Media processing API not yet implemented. Coming soon!</p>';
+    
+  } catch (error) {
+    container.innerHTML = `<p class="text-sm text-red-500">Error: ${error.message}</p>`;
+  }
+}
+
+// Manual media processing form
+document.getElementById('manual-media-process-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const resultDiv = document.getElementById('media-process-result');
+  resultDiv.innerHTML = '<p class="text-sm text-slate-500 italic">Processing media...</p>';
+  
+  try {
+    const url = document.getElementById('media-url').value;
+    const type = document.getElementById('media-type').value;
+    
+    // Placeholder - would call actual API
+    resultDiv.innerHTML = `<div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg text-sm">
+      Media processing feature is under development. Would process ${type} from ${url}
+    </div>`;
+    
+  } catch (error) {
+    resultDiv.innerHTML = `<p class="text-sm text-red-500">Error: ${error.message}</p>`;
+  }
+});
+
+// Load stats on page load
+document.addEventListener('DOMContentLoaded', () => {
+  // Placeholder stats
+  document.getElementById('stat-total-media').textContent = '0';
+  document.getElementById('stat-processed-media').textContent = '0';
+  document.getElementById('stat-pending-media').textContent = '0';
+  document.getElementById('stat-error-media').textContent = '0';
+});
+</script>

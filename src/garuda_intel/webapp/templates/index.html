@@ -2,34 +2,50 @@
 {% block main %}
   <nav class="flex flex-wrap gap-2 p-1 bg-slate-200/50 dark:bg-slate-900/50 rounded-xl w-fit">
     <button data-tab-btn="overview" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition active bg-brand-600 text-white">Overview</button>
-    <button data-tab-btn="intel" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Intel Search</button>
-    <button data-tab-btn="semantic" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Semantic</button>
-    <button data-tab-btn="crawl" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Crawler</button>
-    <button data-tab-btn="recorder" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Recorder</button>
-    <button data-tab-btn="pages" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Pages</button>
-    <button data-tab-btn="entities-graph" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Entities Graph</button>
-    <button data-tab-btn="entity-tools" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Entity Tools</button>
-    <button data-tab-btn="settings" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">Settings</button>
+    <button data-tab-btn="search" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">🔍 Search</button>
+    <button data-tab-btn="crawl" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">🌐 Crawler</button>
+    <button data-tab-btn="data" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">📄 Data</button>
+    <button data-tab-btn="entities-graph" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">🕸️ Graph</button>
+    <button data-tab-btn="data-quality" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">✨ Quality</button>
+    <button data-tab-btn="media" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">🎬 Media</button>
+    <button data-tab-btn="recorder" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">📡 Recorder</button>
+    <button data-tab-btn="settings" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">⚙️ Settings</button>
   </nav>
 
   <div class="mt-6">
     <section data-tab-panel="overview" class="grid gap-6">
         {% include "components/status.html" %}
         <div class="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
-          <p class="text-sm text-slate-600 dark:text-slate-300">Use the tabs above to search intel (SQL), semantic vector search (Qdrant), trigger crawls, manage recorder health, and browse captured pages. Connection status is shown above.</p>
+          <h3 class="text-lg font-bold mb-2 text-slate-800 dark:text-slate-200">Welcome to Garuda Intelligence</h3>
+          <p class="text-sm text-slate-600 dark:text-slate-300 mb-3">
+            <strong>🔍 Search:</strong> Unified intel search (SQL + semantic vector search)<br>
+            <strong>🌐 Crawler:</strong> Intelligent web crawling with entity-awareness<br>
+            <strong>📄 Data:</strong> Browse pages and recorded content<br>
+            <strong>🕸️ Graph:</strong> Interactive entity relationship visualization<br>
+            <strong>✨ Quality:</strong> Entity gap analysis, deduplication, and data quality tools<br>
+            <strong>🎬 Media:</strong> Media processing (images, video, audio to text)<br>
+            <strong>📡 Recorder:</strong> Page capture health monitoring<br>
+            <strong>⚙️ Settings:</strong> Application configuration
+          </p>
         </div>
     </section>
     
-    <section data-tab-panel="intel" class="hidden">{% include "components/intel.html" %}</section>
-    <section data-tab-panel="semantic" class="hidden">{% include "components/semantic.html" %}</section>
+    <section data-tab-panel="search" class="hidden">{% include "components/search-unified.html" %}</section>
     <section data-tab-panel="crawl" class="hidden">{% include "components/crawl.html" %}</section>
-    <section data-tab-panel="recorder" class="hidden space-y-6">
+    <section data-tab-panel="data" class="hidden space-y-6">
+        {% include "components/pages.html" %}
         {% include "components/recorder-search.html" %}
-        {% include "components/recorder-admin.html" %}
     </section>
-    <section data-tab-panel="pages" class="hidden">{% include "components/pages.html" %}</section>
     <section data-tab-panel="entities-graph" class="hidden">{% include "components/entities-graph.html" %}</section>
-    <section data-tab-panel="entity-tools" class="hidden">{% include "components/entity-tools.html" %}</section>
+    <section data-tab-panel="data-quality" class="hidden">{% include "components/data-quality.html" %}</section>
+    <section data-tab-panel="media" class="hidden">{% include "components/media.html" %}</section>
+    <section data-tab-panel="recorder" class="hidden">{% include "components/recorder-admin.html" %}</section>
     <section data-tab-panel="settings" class="hidden">{% include "components/settings.html" %}</section>
+    
+    <!-- Legacy tab support for backward compatibility -->
+    <section data-tab-panel="intel" class="hidden">{% include "components/search-unified.html" %}</section>
+    <section data-tab-panel="semantic" class="hidden">{% include "components/search-unified.html" %}</section>
+    <section data-tab-panel="pages" class="hidden">{% include "components/pages.html" %}</section>
+    <section data-tab-panel="entity-tools" class="hidden">{% include "components/data-quality.html" %}</section>
   </div>
 {% endblock %}
