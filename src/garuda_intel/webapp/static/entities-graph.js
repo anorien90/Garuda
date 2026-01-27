@@ -1,18 +1,169 @@
 import { els, val } from './config.js';
+import { pill, collapsible, renderKeyValTable } from './ui.js';
+import { showModal } from './modals.js';
 
-// Expected backend response: { nodes:[{id,label,type,score,count}], links:[{source,target,weight}] }
+// Color maps for node/edge kinds
 const COLORS = {
   person: '#0ea5e9',
   org: '#22c55e',
   location: '#a855f7',
   product: '#f97316',
+  entity: '#14b8a6',
+  page: '#4366f1',
+  intel: '#f43f5e',
+  image: '#facc15',
   unknown: '#94a3b8',
+};
+
+const EDGE_COLORS = {
+  cooccurrence: 'rgba(148,163,184,0.22)',
+  'page-mentions': 'rgba(34,197,94,0.28)',
+  'intel-mentions': 'rgba(244,63,94,0.32)',
+  'intel-primary': 'rgba(244,63,94,0.38)',
+  'page-image': 'rgba(250,204,21,0.30)',
+  link: 'rgba(99,102,241,0.28)',
+  default: 'rgba(148,163,184,0.18)',
+};
+
+const PARTICLE_SPEED = 0.0002;
+const PARTICLE_WIDTH_BASE = 0.45;
+const PARTICLE_PROB = 0.28;
+const HOVER_MODAL_DELAY = 3500;
+
+let use3D = false;
+let graphInstance = null;
+let currentNodes = [];
+let currentLinks = [];
+let filteredNodes = [];
+let filteredLinks = [];
+let selectedNodeId = null;
+let hoverTimer = null;
+let activeModalNodeId = null;
+
+// Local selectors for filters
+const filterEls = {
+  nodeFilters: () => Array.from(document.querySelectorAll('.entities-node-filter')),
+  edgeFilters: () => Array.from(document.querySelectorAll('.entities-edge-filter')),
+  depth: () => document.getElementById('entities-graph-depth'),
+  toggle3d: () => document.getElementById('entities-graph-toggle3d'),
 };
 
 function setStatus(msg, isError = false) {
   if (!els.entitiesGraphStatus) return;
   els.entitiesGraphStatus.textContent = msg || '';
   els.entitiesGraphStatus.classList.toggle('text-rose-500', isError);
+}
+
+function renderLegend() {
+  if (!els.entitiesGraphLegend) return;
+  els.entitiesGraphLegend.innerHTML = `
+    <div class="flex flex-wrap gap-3 items-start">
+      ${Object.entries(COLORS)
+        .map(
+          ([k, v]) => `
+        <div class="flex items-center gap-2">
+          <span class="inline-block w-3 h-3 rounded-full" style="background:${v}"></span>
+          <span>${k}</span>
+        </div>
+      `
+        )
+        .join('')}
+      <span class="text-slate-400">•</span>
+      <div class="flex flex-wrap gap-2 text-[11px]">
+        ${Object.entries(EDGE_COLORS)
+          .filter(([k]) => k !== 'default')
+          .map(([k, v]) => `<span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-0.5" style="background:${v}"></span>${k}</span>`)
+          .join('')}
+      </div>
+    </div>
+  `;
+}
+
+function fmt(val) {
+  if (val === null || val === undefined) return '—';
+  if (typeof val === 'number') return Number.isFinite(val) ? val.toString() : '—';
+  return String(val);
+}
+
+function metaTableWithLinks(meta) {
+  if (!meta || typeof meta !== 'object' || !Object.keys(meta).length) {
+    return '<div class="text-xs text-slate-500">No metadata</div>';
+  }
+  return renderKeyValTable(
+    Object.fromEntries(
+      Object.entries(meta).map(([k, v]) => [
+        k,
+        typeof v === 'string' && v.startsWith('http')
+          ? `<a class="text-blue-600 underline" href="${v}" target="_blank" rel="noreferrer">${v}</a>`
+          : v,
+      ])
+    )
+  );
+}
+
+function renderDetailBody(node) {
+  const meta = node.meta || {};
+
+  const pagePreview =
+    node.type === 'page'
+      ? `
+    <div class="space-y-2">
+      <div class="text-xs uppercase text-slate-500">Page</div>
+      <div class="text-xs">${pill(meta.page_type || 'page')} ${meta.entity_type ? pill(meta.entity_type) : ''} ${meta.score ? pill(`score ${meta.score}`) : ''}</div>
+      ${meta.last_status ? `<div class="text-xs text-slate-500">Last status: ${meta.last_status}</div>` : ''}
+      ${meta.last_fetch_at ? `<div class="text-xs text-slate-500">Fetched: ${meta.last_fetch_at}</div>` : ''}
+      ${meta.text_length ? `<div class="text-xs text-slate-500">Text length: ${meta.text_length}</div>` : ''}
+      <div class="text-xs"><a class="text-blue-600 underline" href="${meta.source_url || node.id}" target="_blank" rel="noreferrer">Open page</a></div>
+    </div>`
+      : '';
+
+  const imagePreview =
+    node.type === 'image'
+      ? `
+    <div class="space-y-2">
+      <div class="text-xs uppercase text-slate-500">Image</div>
+      <div class="rounded border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-900">
+        <img src="${node.label}" alt="${meta.alt || node.label}" class="max-h-56 w-full object-contain">
+      </div>
+      <div class="text-[11px] text-slate-500">${meta.alt || ''}</div>
+      <div class="text-[11px] text-slate-500">Source: ${meta.source || 'unknown'}</div>
+      <div class="text-xs"><a class="text-blue-600 underline" href="${meta.source_url || node.label}" target="_blank" rel="noreferrer">Open image</a></div>
+    </div>`
+      : '';
+
+  const intelPreview =
+    node.type === 'intel'
+      ? `
+    <div class="space-y-2">
+      <div class="text-xs uppercase text-slate-500">Intel</div>
+      ${meta.entity ? `<div class="text-xs">Entity: <b>${meta.entity}</b></div>` : ''}
+      ${meta.created_at ? `<div class="text-xs text-slate-500">Created: ${meta.created_at}</div>` : ''}
+      <details class="text-xs"><summary class="cursor-pointer font-semibold">Raw meta</summary><pre class="mt-1 p-2 bg-slate-900 text-slate-100 rounded text-xs whitespace-pre-wrap">${JSON.stringify(meta, null, 2)}</pre></details>
+    </div>`
+      : '';
+
+  const entityBadge =
+    node.type === 'entity' || node.meta?.entity_kind
+      ? `<div class="text-xs uppercase text-slate-500">Entity</div>
+         <div class="flex flex-wrap gap-1 text-xs">
+           ${pill(node.meta?.entity_kind || node.type || 'entity')}
+           ${node.score ? pill(`score ${node.score}`) : ''}
+           ${node.count ? pill(`count ${node.count}`) : ''}
+         </div>`
+      : '';
+
+  return `
+    <div class="space-y-3">
+      ${entityBadge}
+      ${pagePreview}
+      ${imagePreview}
+      ${intelPreview}
+      <div class="space-y-1">
+        <div class="text-xs uppercase text-slate-500">Meta</div>
+        ${metaTableWithLinks(meta)}
+      </div>
+    </div>
+  `;
 }
 
 function renderDetails(node, links) {
@@ -26,10 +177,10 @@ function renderDetails(node, links) {
   }
 
   const connections = links
-    .filter(l => l.source?.id === node.id || l.target?.id === node.id)
-    .map(l => {
-      const other = l.source?.id === node.id ? l.target : l.source;
-      return other ? { node: other, weight: l.weight } : null;
+    .filter((l) => l.source?.id === node.id || l.target?.id === node.id || l.source === node.id || l.target === node.id)
+    .map((l) => {
+      const other = l.source?.id === node.id || l.source === node.id ? l.target : l.source;
+      return other ? { node: other.id || other, weight: l.weight, kind: l.kind, meta: l.meta || {} } : null;
     })
     .filter(Boolean);
 
@@ -37,30 +188,47 @@ function renderDetails(node, links) {
     <div class="flex items-center justify-between">
       <div>
         <div class="text-xs uppercase tracking-wide text-slate-500">Details</div>
-        <div class="text-sm font-semibold">${node.label || node.id}</div>
+        <div class="text-sm font-semibold break-all">${node.label || node.id}</div>
         <div class="text-xs text-slate-500">
-          ${node.type || 'unknown'} • score ${node.score ?? '—'} • count ${node.count ?? '—'}
+          ${node.type || 'unknown'} • score ${fmt(node.score)} • count ${fmt(node.count)}
         </div>
       </div>
-      <button
-        type="button"
-        data-action="expand-node"
-        data-node-id="${node.id}"
-        data-node-label="${node.label || node.id}"
-        data-node-type="${node.type || 'unknown'}"
-        class="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-100 hover:border-brand-400 dark:hover:border-brand-500"
-      >
-        Expand
-      </button>
+      <div class="flex items-center gap-2">
+        ${node.type === 'page' || node.type === 'image'
+          ? `<a class="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs font-semibold text-blue-600 dark:text-blue-200" href="${node.meta?.source_url || node.label || node.id}" target="_blank" rel="noreferrer">Open</a>`
+          : ''
+        }
+        <button
+          type="button"
+          data-action="expand-node"
+          data-node-id="${node.id}"
+          data-node-label="${node.label || node.id}"
+          data-node-type="${node.type || 'unknown'}"
+          class="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-100 hover:border-brand-400 dark:hover:border-brand-500"
+        >
+          Expand
+        </button>
+      </div>
     </div>
-    <div class="mt-2 text-xs text-slate-400">Connected (${connections.length}):</div>
-    <ul class="list-disc list-inside text-xs text-slate-600 dark:text-slate-200 space-y-0.5 max-h-56 overflow-auto">
+
+    ${renderDetailBody(node)}
+
+    <div class="mt-3 text-xs uppercase text-slate-400">Connected (${connections.length}):</div>
+    <ul class="list-disc list-inside text-xs text-slate-600 dark:text-slate-200 space-y-1 max-h-56 overflow-auto">
       ${
         connections.length
           ? connections
               .map(
-                ({ node: n, weight }) =>
-                  `<li><span>${n.label || n.id}</span>${weight ? `<span class="text-slate-400"> (w:${weight})</span>` : ''}</li>`
+                ({ node: nid, weight, kind, meta }) =>
+                  `<li><span class="font-semibold">${nid}</span> <span class="text-slate-500">[${kind || 'link'}]</span>${
+                    weight ? `<span class="text-slate-400"> w:${weight}</span>` : ''
+                  }${
+                    meta && Object.keys(meta).length
+                      ? `<div class="text-slate-500">${Object.entries(meta)
+                          .map(([k, v]) => `${k}: ${fmt(v)}`)
+                          .join(' • ')}</div>`
+                      : ''
+                  }</li>`
               )
               .join('')
           : '<li>None</li>'
@@ -69,29 +237,191 @@ function renderDetails(node, links) {
   `;
 }
 
-function renderLegend() {
-  if (!els.entitiesGraphLegend) return;
-  els.entitiesGraphLegend.innerHTML = `
-    <div class="flex flex-wrap gap-3">
-      ${Object.entries(COLORS)
+async function fetchNodeDetail(node) {
+  try {
+    const base = val('base-url') || '';
+    const url = `${base}/api/entities/graph/node?id=${encodeURIComponent(node.id)}`;
+    const res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+    });
+    if (!res.ok) throw new Error(`Detail fetch failed (${res.status})`);
+    return await res.json();
+  } catch (e) {
+    console.warn(e);
+    return null;
+  }
+}
+
+function renderNodeModalContent(node, links, detail) {
+  const meta = detail?.meta || node.meta || {};
+  const connections = links
+    .filter((l) => l.source?.id === node.id || l.target?.id === node.id || l.source === node.id || l.target === node.id)
+    .map((l) => {
+      const other = l.source?.id === node.id || l.source === node.id ? l.target : l.source;
+      return other ? { id: other.id || other, kind: l.kind, weight: l.weight, meta: l.meta || {} } : null;
+    })
+    .filter(Boolean);
+
+  const metaTable = metaTableWithLinks(meta);
+  const connList = connections.length
+    ? `<ul class="text-xs space-y-1">${connections
         .map(
-          ([k, v]) => `
-        <div class="flex items-center gap-2">
-          <span class="inline-block w-3 h-3 rounded-full" style="background:${v}"></span>
-          <span>${k}</span>
-        </div>
-      `
+          (c) =>
+            `<li><b>${c.id}</b> <span class="text-slate-500">[${c.kind || 'link'}]</span>${c.weight ? ` w:${c.weight}` : ''}${
+              c.meta && Object.keys(c.meta).length
+                ? `<div class="text-slate-500">${Object.entries(c.meta)
+                    .map(([k, v]) => `${k}: ${fmt(v)}`)
+                    .join(' • ')}</div>`
+                : ''
+            }</li>`
         )
-        .join('')}
+        .join('')}</ul>`
+    : `<div class="text-xs text-slate-500">No connections</div>`;
+
+  if (node.type === 'page' || detail?.type === 'page') {
+    const content = detail?.content || {};
+    const metaMerged = { ...meta, ...(detail?.page || {}) };
+    const sd = metaMerged.structured_data
+      ? collapsible(
+          'Structured data',
+          `<pre class="p-2 bg-slate-900 text-white rounded text-xs whitespace-pre-wrap">${JSON.stringify(metaMerged.structured_data, null, 2)}</pre>`
+        )
+      : '';
+    const previewText = content.text || metaMerged.content_preview || '';
+    const preview = previewText
+      ? `<div class="bg-slate-50 dark:bg-slate-900 p-2 rounded text-xs font-mono max-h-64 overflow-y-auto whitespace-pre-wrap">${previewText.slice(0, 5000)}${previewText.length > 5000 ? '…' : ''}</div>`
+      : '';
+    return `
+      <div class="space-y-3">
+        <div class="text-xs uppercase text-slate-500">Page</div>
+        <div class="text-sm font-semibold break-all">${node.label || node.id}</div>
+        <div class="text-xs text-slate-500">${pill(metaMerged.page_type || 'page')} ${metaMerged.entity_type ? pill(metaMerged.entity_type) : ''} ${metaMerged.score ? pill('score ' + metaMerged.score) : ''}</div>
+        ${metaMerged.last_fetch_at ? `<div class="text-xs text-slate-500">Fetched: ${metaMerged.last_fetch_at}</div>` : ''}
+        ${metaMerged.text_length ? `<div class="text-xs text-slate-500">Text length: ${metaMerged.text_length}</div>` : ''}
+        <div class="text-xs"><a class="text-blue-600 underline" href="${metaMerged.source_url || node.label || node.id}" target="_blank" rel="noreferrer">Open page</a></div>
+        ${preview}
+        ${sd}
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
+          ${metaTableWithLinks(metaMerged)}
+        </div>
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Connections (${connections.length})</div>
+          ${connList}
+        </div>
+      </div>
+    `;
+  }
+
+  if (node.type === 'image' || detail?.type === 'image') {
+    return `
+      <div class="space-y-3">
+        <div class="text-xs uppercase text-slate-500">Image</div>
+        <img src="${node.label}" alt="${meta.alt || node.label}" class="w-full max-h-72 object-contain rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+        <div class="text-xs text-slate-500">${meta.alt || ''}</div>
+        <div class="text-xs text-slate-500">Source: ${meta.source || 'unknown'}</div>
+        ${meta.page ? `<div class="text-xs">Found on: <a class="text-blue-600 underline" href="${meta.page}" target="_blank" rel="noreferrer">${meta.page}</a></div>` : ''}
+        <div class="text-xs"><a class="text-blue-600 underline" href="${meta.source_url || node.label}" target="_blank" rel="noreferrer">Open image</a></div>
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
+          ${metaTable}
+        </div>
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Connections (${connections.length})</div>
+          ${connList}
+        </div>
+      </div>
+    `;
+  }
+
+  if (node.type === 'intel' || detail?.type === 'intel') {
+    const payload = detail?.payload || meta.payload_preview;
+    const payloadBlock = payload
+      ? `<pre class="p-2 bg-slate-900 text-white rounded text-xs whitespace-pre-wrap max-h-64 overflow-y-auto">${JSON.stringify(payload, null, 2)}</pre>`
+      : '<div class="text-xs text-slate-500">No payload available</div>';
+    return `
+      <div class="space-y-3">
+        <div class="text-xs uppercase text-slate-500">Intel</div>
+        <div class="text-sm font-semibold">${node.label || node.id}</div>
+        ${meta.entity ? `<div class="text-xs">Entity: <b>${meta.entity}</b></div>` : ''}
+        ${meta.created_at ? `<div class="text-xs text-slate-500">Created: ${meta.created_at}</div>` : ''}
+        ${meta.source_url ? `<div class="text-xs"><a class="text-blue-600 underline" href="${meta.source_url}" target="_blank" rel="noreferrer">Source</a></div>` : ''}
+        ${payloadBlock}
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
+          ${metaTable}
+        </div>
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Connections (${connections.length})</div>
+          ${connList}
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="space-y-3">
+      <div class="text-xs uppercase text-slate-500">Entity</div>
+      <div class="text-sm font-semibold break-all">${node.label || node.id}</div>
+      <div class="text-xs text-slate-500">Type: ${node.type || 'unknown'} • score ${fmt(node.score)} • count ${fmt(node.count)}</div>
+      <div>
+        <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
+        ${metaTable}
+      </div>
+      <div>
+        <div class="text-xs uppercase text-slate-500 mb-1">Connections (${connections.length})</div>
+        ${connList}
+      </div>
     </div>
   `;
 }
 
+function openNodeModal(node) {
+  if (!node) return;
+  activeModalNodeId = node.id;
+  showModal({
+    title: node.label || node.id || 'Node detail',
+    size: 'lg',
+    content: `<div class="text-xs text-slate-500">Loading…</div>`,
+  });
+  fetchNodeDetail(node).then((detail) => {
+    if (activeModalNodeId !== node.id) return; // stale
+    const content = renderNodeModalContent(node, filteredLinks, detail || {});
+    showModal({
+      title: node.label || node.id || 'Node detail',
+      size: 'lg',
+      content,
+    });
+  });
+}
+
+function wireHoverModal(graph) {
+  graph.onNodeHover((n) => {
+    if (hoverTimer) {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+    }
+    if (!n) return;
+    hoverTimer = setTimeout(() => openNodeModal(n), HOVER_MODAL_DELAY);
+  });
+  if (els.entitiesGraphCanvas) {
+    els.entitiesGraphCanvas.addEventListener('mouseleave', () => {
+      if (hoverTimer) clearTimeout(hoverTimer);
+      hoverTimer = null;
+    });
+  }
+}
+
 // Prefer local copy; fall back to CDNs if needed
-const FORCE_GRAPH_SOURCES = [
-  '/static/vendor/force-graph.min.js', // local v1.50.1
+const FORCE_GRAPH_2D_SOURCES = [
+  '/static/vendor/force-graph.min.js',
   'https://cdn.jsdelivr.net/npm/force-graph@1.50.1/dist/force-graph.min.js',
   'https://unpkg.com/force-graph@1.50.1/dist/force-graph.min.js',
+];
+const FORCE_GRAPH_3D_SOURCES = [
+  '/static/vendor/3d-force-graph.min.js',
+  'https://cdn.jsdelivr.net/npm/3d-force-graph@1.72.6/dist/3d-force-graph.min.js',
+  'https://unpkg.com/3d-force-graph@1.72.6/dist/3d-force-graph.min.js',
 ];
 
 function loadScript(src) {
@@ -112,18 +442,32 @@ function loadScript(src) {
   });
 }
 
-async function loadForceGraphLib() {
-  if (window.ForceGraph) return window.ForceGraph;
-  let lastErr;
-  for (const src of FORCE_GRAPH_SOURCES) {
-    try {
-      await loadScript(src);
-      if (window.ForceGraph) return window.ForceGraph;
-    } catch (e) {
-      lastErr = e;
+async function loadForceGraphLib(is3D) {
+  if (is3D) {
+    if (window.ForceGraph3D) return window.ForceGraph3D;
+    let lastErr;
+    for (const src of FORCE_GRAPH_3D_SOURCES) {
+      try {
+        await loadScript(src);
+        if (window.ForceGraph3D) return window.ForceGraph3D;
+      } catch (e) {
+        lastErr = e;
+      }
     }
+    throw lastErr || new Error('Failed to load 3d-force-graph library');
+  } else {
+    if (window.ForceGraph) return window.ForceGraph;
+    let lastErr;
+    for (const src of FORCE_GRAPH_2D_SOURCES) {
+      try {
+        await loadScript(src);
+        if (window.ForceGraph) return window.ForceGraph;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('Failed to load force-graph (2D) library');
   }
-  throw lastErr || new Error('Failed to load force-graph library');
 }
 
 async function fetchGraph() {
@@ -141,78 +485,243 @@ async function fetchGraph() {
   return res.json();
 }
 
+function clearGraphCanvas() {
+  if (!els.entitiesGraphCanvas) return;
+  while (els.entitiesGraphCanvas.firstChild) {
+    els.entitiesGraphCanvas.removeChild(els.entitiesGraphCanvas.firstChild);
+  }
+}
+
+function resizeGraph() {
+  if (!graphInstance || !els.entitiesGraphCanvas) return;
+  const rect = els.entitiesGraphCanvas.getBoundingClientRect();
+  const w = Math.max(320, rect.width || els.entitiesGraphCanvas.clientWidth || 800);
+  const h = Math.max(320, rect.height || els.entitiesGraphCanvas.clientHeight || 540);
+  if (use3D) {
+    setTimeout(() => graphInstance && graphInstance.width(w).height(h), 10);
+  } else {
+    graphInstance.width(w).height(h);
+  }
+}
+
+function tuneForces(instance) {
+  const charge = instance.d3Force && instance.d3Force('charge');
+  if (charge) charge.strength(-180).distanceMax(500);
+  const linkForce = instance.d3Force && instance.d3Force('link');
+  if (linkForce) {
+    linkForce
+      .distance((l) => 60 + (l.weight || 1) * 12)
+      .strength((l) => 0.6 + Math.min(1, (l.weight || 1) * 0.15));
+  }
+}
+
+function pseudoRandomFromKey(key) {
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i);
+    hash *= 16777619;
+  }
+  return (hash >>> 0) / 0xffffffff;
+}
+
+// Filtering helpers
+function getNodeTypeFilters() {
+  return filterEls.nodeFilters()
+    .filter((c) => c.checked)
+    .map((c) => c.value);
+}
+
+function getEdgeKindFilters() {
+  return filterEls.edgeFilters()
+    .filter((c) => c.checked)
+    .map((c) => c.value);
+}
+
+function getDepthLimit() {
+  const v = parseInt(filterEls.depth()?.value || '1', 10);
+  return Number.isFinite(v) ? v : 1;
+}
+
+function seedsFromQuery(nodes, query) {
+  if (!query) return nodes.map((n) => n.id);
+  const q = query.toLowerCase();
+  const seeds = nodes
+    .filter((n) => (n.label || '').toLowerCase().includes(q) || (n.id || '').toLowerCase().includes(q))
+    .map((n) => n.id);
+  return seeds.length ? seeds : nodes.map((n) => n.id);
+}
+
+function filterByDepth(nodes, links, depthLimit, seeds) {
+  if (!Number.isFinite(depthLimit) || depthLimit >= 99) return { nodes, links };
+  const adj = new Map();
+  links.forEach((l) => {
+    const a = l.source?.id || l.source;
+    const b = l.target?.id || l.target;
+    if (!a || !b) return;
+    if (!adj.has(a)) adj.set(a, new Set());
+    if (!adj.has(b)) adj.set(b, new Set());
+    adj.get(a).add(b);
+    adj.get(b).add(a);
+  });
+
+  const keep = new Set();
+  const queue = [];
+  seeds.forEach((s) => {
+    keep.add(s);
+    queue.push({ id: s, d: 0 });
+  });
+
+  while (queue.length) {
+    const { id, d } = queue.shift();
+    if (d >= depthLimit) continue;
+    const next = adj.get(id) || [];
+    next.forEach((n) => {
+      if (!keep.has(n)) {
+        keep.add(n);
+        queue.push({ id: n, d: d + 1 });
+      }
+    });
+  }
+
+  const filteredN = nodes.filter((n) => keep.has(n.id));
+  const filteredL = links.filter((l) => keep.has(l.source?.id || l.source) && keep.has(l.target?.id || l.target));
+  return { nodes: filteredN, links: filteredL };
+}
+
+function applyFilters(rawNodes, rawLinks) {
+  const nodeTypes = new Set(getNodeTypeFilters());
+  const edgeKinds = new Set(getEdgeKindFilters());
+  const depthLimit = getDepthLimit();
+  const q = (els.entitiesGraphQuery?.value || '').trim().toLowerCase();
+
+  let nodes = rawNodes.filter((n) => {
+    const t = (n.type || 'unknown').toLowerCase();
+    return nodeTypes.has(t) || nodeTypes.has(n.meta?.entity_kind) || (nodeTypes.has('entity') && t === 'unknown');
+  });
+
+  let links = rawLinks.filter((l) => edgeKinds.has(l.kind || 'cooccurrence'));
+
+  const nodeSet = new Set(nodes.map((n) => n.id));
+  links = links.filter((l) => nodeSet.has(l.source) && nodeSet.has(l.target));
+
+  const seeds = seedsFromQuery(nodes, q);
+  const depthFiltered = filterByDepth(nodes, links, depthLimit, seeds);
+  nodes = depthFiltered.nodes;
+  links = depthFiltered.links;
+
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  links = links.map((l) => ({
+    ...l,
+    source: nodeMap.get(l.source) || l.source,
+    target: nodeMap.get(l.target) || l.target,
+  }));
+
+  filteredNodes = nodes;
+  filteredLinks = links;
+}
+
+function updateToggleButton() {
+  const btn = filterEls.toggle3d();
+  if (!btn) return;
+  btn.textContent = use3D ? 'Switch to 2D' : 'Switch to 3D';
+  btn.setAttribute('aria-pressed', use3D ? 'true' : 'false');
+  btn.classList.toggle('border-blue-500', use3D);
+  btn.classList.toggle('bg-blue-50', use3D);
+}
+
+function linkWidthFromWeight(weight) {
+  const w = Number(weight) || 1;
+  return Math.max(0.6, Math.log1p(w) * 1.8);
+}
+
+function shouldAnimateLink(l) {
+  const key = `${l.source?.id || l.source}-${l.target?.id || l.target}-${l.kind || ''}`;
+  return pseudoRandomFromKey(key) < PARTICLE_PROB;
+}
+
+async function renderGraph() {
+  if (!els.entitiesGraphCanvas) return;
+  clearGraphCanvas();
+
+  const ForceLib = await loadForceGraphLib(use3D);
+  const createGraph = use3D
+    ? ForceLib({ rendererConfig: { antialias: true, useLegacyLights: false } })
+    : ForceLib();
+
+  graphInstance = createGraph(els.entitiesGraphCanvas)
+    .nodeRelSize(4)
+    .nodeLabel((n) => `${n.label || n.id} (${n.type || 'unknown'})`)
+    .nodeColor((n) => COLORS[n.type] || COLORS[n.meta?.entity_kind] || COLORS.unknown)
+    .nodeVal((n) => Math.max(2, (n.count || 1) * 0.4 + (n.score || 0) * 2))
+    .linkColor((l) => EDGE_COLORS[l.kind] || EDGE_COLORS.default)
+    .linkWidth((l) => linkWidthFromWeight(l.weight))
+    .linkDirectionalParticles((l) => (shouldAnimateLink(l) ? 1 : 0))
+    .linkDirectionalParticleWidth((l) => Math.max(PARTICLE_WIDTH_BASE, (l.weight || 1) * 0.6))
+    .linkDirectionalParticleSpeed(() => PARTICLE_SPEED)
+    .linkLabel((l) => `${l.kind || 'link'}${l.weight ? ` (w:${l.weight})` : ''}${l.meta && Object.keys(l.meta).length ? `\n${Object.entries(l.meta).map(([k,v])=>`${k}: ${fmt(v)}`).join('\n')}` : ''}`)
+    .onNodeClick((n) => {
+      selectedNodeId = n.id;
+      renderDetails(n, filteredLinks);
+      openNodeModal(n);
+    });
+
+  tuneForces(graphInstance);
+  graphInstance.graphData({ nodes: filteredNodes, links: filteredLinks });
+  wireHoverModal(graphInstance);
+  resizeGraph();
+  renderDetails(null, []);
+  setStatus(`Loaded ${filteredNodes.length} nodes / ${filteredLinks.length} links (${use3D ? '3D' : '2D'})`);
+}
+
+async function loadAndRender(ev) {
+  ev?.preventDefault();
+  try {
+    const data = await fetchGraph();
+    currentNodes = data.nodes || [];
+    currentLinks = data.links || [];
+    applyFilters(currentNodes, currentLinks);
+    await renderGraph();
+  } catch (e) {
+    console.error(e);
+    setStatus(e.message || 'Failed to load graph', true);
+  }
+}
+
 export async function initEntitiesGraph() {
   if (!els.entitiesGraphForm || !els.entitiesGraphCanvas) return;
   renderLegend();
   renderDetails(null, []);
-  let graphInstance = null;
-  let currentLinks = [];
-  let currentNodes = [];
+  updateToggleButton();
 
-  function resizeGraph() {
-    if (!graphInstance || !els.entitiesGraphCanvas) return;
-    const rect = els.entitiesGraphCanvas.getBoundingClientRect();
-    const w = Math.max(320, rect.width || els.entitiesGraphCanvas.clientWidth || 800);
-    const h = Math.max(320, rect.height || els.entitiesGraphCanvas.clientHeight || 540);
-    graphInstance.width(w).height(h);
-  }
-
-  // When the tab is activated, resize to non-zero dimensions
   document.querySelectorAll('[data-tab-btn]').forEach((btn) => {
     btn.addEventListener('click', () => {
       if (btn.dataset.tabBtn === 'entities-graph') {
-        // allow layout to update before measuring
         setTimeout(resizeGraph, 50);
       }
     });
   });
 
-  function tuneForces(instance) {
-    // Smaller nodes and stronger repulsion to spread out
-    const charge = instance.d3Force('charge');
-    if (charge) charge.strength(-180).distanceMax(500);
-    const linkForce = instance.d3Force('link');
-    if (linkForce) {
-      linkForce
-        .distance((l) => 60 + (l.weight || 1) * 12)
-        .strength((l) => 0.6 + Math.min(1, (l.weight || 1) * 0.15));
-    }
+  els.entitiesGraphForm.onsubmit = loadAndRender;
+  if (els.entitiesGraphLoad) els.entitiesGraphLoad.onclick = loadAndRender;
+  if (filterEls.toggle3d()) {
+    filterEls.toggle3d().onclick = async () => {
+      use3D = !use3D;
+      updateToggleButton();
+      await renderGraph();
+    };
   }
 
-  async function loadAndRender(ev) {
-    ev?.preventDefault();
-    try {
-      // Fetch data first
-      const data = await fetchGraph();
-      currentNodes = data.nodes || [];
-      currentLinks = (data.links || []).map((l) => ({ ...l }));
+  [...filterEls.nodeFilters(), ...filterEls.edgeFilters()].forEach((c) =>
+    c.addEventListener('change', async () => {
+      applyFilters(currentNodes, currentLinks);
+      await renderGraph();
+    })
+  );
+  filterEls.depth()?.addEventListener('change', async () => {
+    applyFilters(currentNodes, currentLinks);
+    await renderGraph();
+  });
 
-      // Then load the graph lib and render
-      const ForceGraph = await loadForceGraphLib();
-      if (!graphInstance) {
-        const createGraph = ForceGraph(); // factory → instance
-        graphInstance = createGraph(els.entitiesGraphCanvas)
-          .nodeRelSize(3) // base size multiplier
-          .nodeLabel((n) => `${n.label || n.id} (${n.type || 'unknown'})`)
-          .nodeColor((n) => COLORS[n.type] || COLORS.unknown)
-          .nodeVal((n) => Math.max(1.5, (n.count || 1) * 0.4 + (n.score || 0) * 2))
-          .linkColor(() => 'rgba(148, 163, 184, 0.35)')
-          .linkDirectionalParticles(1)
-          .linkDirectionalParticleWidth((l) => Math.max(0.6, (l.weight || 1) * 1.2))
-          .onNodeClick((n) => renderDetails(n, currentLinks));
-        tuneForces(graphInstance);
-      }
-      graphInstance.graphData({ nodes: currentNodes, links: currentLinks });
-      resizeGraph(); // ensure visible size after data load
-      renderDetails(null, []);
-      setStatus(`Loaded ${currentNodes.length} nodes / ${currentLinks.length} links`);
-    } catch (e) {
-      console.error(e);
-      setStatus(e.message || 'Failed to load graph', true);
-    }
-  }
-
-  // Allow expanding from the selected node
   if (els.entitiesGraphDetails) {
     els.entitiesGraphDetails.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-action="expand-node"]');
@@ -227,6 +736,5 @@ export async function initEntitiesGraph() {
     });
   }
 
-  els.entitiesGraphForm.onsubmit = loadAndRender;
-  if (els.entitiesGraphLoad) els.entitiesGraphLoad.onclick = loadAndRender;
+  await loadAndRender();
 }

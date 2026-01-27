@@ -4,11 +4,12 @@ import requests
 import numpy as np
 import re
 import uuid
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
+from bs4 import BeautifulSoup
+
 from ..types.entity import EntityProfile, EntityType
 from .filter import SemanticFilter
 from sentence_transformers import SentenceTransformer
-
 
 
 class LLMIntelExtractor:
@@ -27,6 +28,21 @@ class LLMIntelExtractor:
         ollama_url: str = "http://localhost:11434/api/generate",
         model: str = "granite3.1-dense:8b",
         embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+        # Chunking / embedding controls
+        summary_chunk_chars: int = 4000,
+        extraction_chunk_chars: int = 4000,
+        max_chunks: int = 20,
+        sentence_window_size: int = 5,
+        sentence_window_stride: int = 2,
+        max_sentence_embeddings: int = 400,
+        max_window_embeddings: int = 200,
+        max_total_embeddings: int = 1200,
+        min_text_length_for_embedding: int = 10,
+        # Timeouts / retries
+        summarize_timeout: int = 60,
+        summarize_retries: int = 2,
+        extract_timeout: int = 120,
+        reflect_timeout: int = 30,
     ):
         self.ollama_url = ollama_url
         self.model = model
@@ -34,6 +50,23 @@ class LLMIntelExtractor:
         self.relevance_filter = SemanticFilter(ollama_url, model)
         self.embedding_model_name = embedding_model
         self._embedder = None
+
+        # Chunking / embedding controls
+        self.summary_chunk_chars = summary_chunk_chars
+        self.extraction_chunk_chars = extraction_chunk_chars
+        self.max_chunks = max_chunks
+        self.sentence_window_size = sentence_window_size
+        self.sentence_window_stride = sentence_window_stride
+        self.max_sentence_embeddings = max_sentence_embeddings
+        self.max_window_embeddings = max_window_embeddings
+        self.max_total_embeddings = max_total_embeddings
+        self.min_text_length_for_embedding = min_text_length_for_embedding
+
+        # Timeouts / retries
+        self.summarize_timeout = summarize_timeout
+        self.summarize_retries = summarize_retries
+        self.extract_timeout = extract_timeout
+        self.reflect_timeout = reflect_timeout
 
         if SentenceTransformer:
             try:
@@ -44,20 +77,38 @@ class LLMIntelExtractor:
         else:
             self.logger.warning("sentence-transformers not installed; semantic features disabled.")
 
+    # --------- Summaries & embeddings ---------
     def summarize_page(self, text: str) -> str:
+        """
+        Summarize the full text by processing it in chunks to avoid truncation.
+        """
         if not text:
             return ""
-        prompt = f"Summarize the following text in 3-5 sentences, focusing on key facts and entities:\n\n{text[:8000]}"
-        try:
-            payload = {"model": self.model, "prompt": prompt, "stream": False}
-            resp = requests.post(self.ollama_url, json=payload, timeout=60)
-            return resp.json().get("response", "").strip()
-        except Exception as e:
-            self.logger.warning(f"Summarization failed: {e}")
-            return ""
+
+        summaries: List[str] = []
+        for chunk in self._chunk_text(text, self.summary_chunk_chars, self.max_chunks):
+            prompt = (
+                "Summarize the following text in 3-5 sentences, focusing on key facts and entities:\n\n"
+                f"{chunk}"
+            )
+            for attempt in range(self.summarize_retries):
+                try:
+                    payload = {"model": self.model, "prompt": prompt, "stream": False}
+                    resp = requests.post(self.ollama_url, json=payload, timeout=self.summarize_timeout)
+                    part = resp.json().get("response", "").strip()
+                    if part:
+                        summaries.append(part)
+                    break
+                except Exception as e:
+                    if attempt == self.summarize_retries - 1:
+                        self.logger.warning(f"Summarization failed after retries: {e}")
+                    else:
+                        self.logger.debug(f"Summarization retry {attempt+1} due to {e}")
+
+        return "\n".join(summaries).strip()
 
     def embed_text(self, text: str) -> List[float]:
-        if not self._embedder or not text:
+        if not self._embedder or not text or len(text) < self.min_text_length_for_embedding:
             return []
         try:
             return self._embedder.encode(text, normalize_embeddings=True).tolist()
@@ -80,6 +131,7 @@ class LLMIntelExtractor:
             self.logger.warning(f"Similarity calculation error: {e}")
             return 0.0
 
+    # --------- Reflection / verification ---------
     def reflect_and_verify(self, profile: EntityProfile, finding: Dict[str, Any]) -> Tuple[bool, float]:
         prompt = f"""
         You are a strict QA auditor. Validate the following intelligence extracted for the entity "{profile.name}" (Type: {profile.entity_type}).
@@ -101,7 +153,7 @@ class LLMIntelExtractor:
         """
         try:
             payload = {"model": self.model, "prompt": prompt, "stream": False, "format": "json"}
-            resp = requests.post(self.ollama_url, json=payload, timeout=30)
+            resp = requests.post(self.ollama_url, json=payload, timeout=self.reflect_timeout)
             result = json.loads(resp.json().get("response", "{}"))
 
             is_verified = result.get("is_verified", False)
@@ -115,7 +167,49 @@ class LLMIntelExtractor:
             self.logger.warning(f"Reflection failed: {e}")
             return False, 0.0
 
-    def extract_intelligence(self, profile: EntityProfile, text: str, page_type: str, url: str, existing_intel: Any) -> dict:
+    # --------- Intelligence extraction ---------
+    def extract_intelligence(
+        self,
+        profile: EntityProfile,
+        text: str,
+        page_type: str,
+        url: str,
+        existing_intel: Any,
+    ) -> dict:
+        """
+        Process the full text by chunking so large pages are fully analyzed.
+        Merges chunk-level findings into a single aggregated result.
+        """
+        cleaned_text = self._clean_text(text)
+        chunks = self._chunk_text(cleaned_text, self.extraction_chunk_chars, self.max_chunks)
+        if not chunks:
+            return {}
+
+        aggregate: Dict[str, Any] = {
+            "basic_info": {},
+            "persons": [],
+            "jobs": [],
+            "metrics": [],
+            "locations": [],
+            "financials": [],
+            "products": [],
+            "events": [],
+        }
+
+        for chunk in chunks:
+            result = self._extract_chunk_intel(profile, chunk, page_type, url, existing_intel)
+            aggregate = self._merge_intel(aggregate, result)
+
+        return aggregate
+
+    def _extract_chunk_intel(
+        self,
+        profile: EntityProfile,
+        text_chunk: str,
+        page_type: str,
+        url: str,
+        existing_intel: Any,
+    ) -> dict:
         existing_context = self._build_existing_context(existing_intel)
 
         caution_instruction = ""
@@ -137,8 +231,8 @@ class LLMIntelExtractor:
         === EXISTING KNOWLEDGE (Do not duplicate) ===
         {existing_context}
 
-        === TEXT TO ANALYZE (Truncated) ===
-        {text[:12000]}
+        === TEXT TO ANALYZE ===
+        {text_chunk}
 
         Return ONLY JSON with the following schema (omit empty fields):
         {{
@@ -157,7 +251,7 @@ class LLMIntelExtractor:
         for attempt in range(max_retries):
             try:
                 payload = {"model": self.model, "prompt": prompt, "stream": False, "format": "json"}
-                response = requests.post(self.ollama_url, json=payload, timeout=120)
+                response = requests.post(self.ollama_url, json=payload, timeout=self.extract_timeout)
                 result = response.json().get("response", "{}")
                 return json.loads(result)
             except (json.JSONDecodeError, Exception) as e:
@@ -168,6 +262,7 @@ class LLMIntelExtractor:
                     self.logger.error(f"Failed to extract intelligence after {max_retries} attempts.")
                     return {}
 
+    # --------- Ranking helpers ---------
     def rank_links(self, profile: EntityProfile, page_url: str, page_text: str, links: List[Dict]) -> List[Dict]:
         if not links:
             return []
@@ -256,7 +351,7 @@ class LLMIntelExtractor:
             self.logger.warning(f"Result ranking failed: {e}")
             return search_results
 
-    # ---------- New entity helpers ----------
+    # ---------- Entity helpers ----------
     def extract_entities_from_finding(self, finding: Dict[str, Any]) -> List[Dict[str, Any]]:
         entities: List[Dict[str, Any]] = []
         if not isinstance(finding, dict):
@@ -271,8 +366,7 @@ class LLMIntelExtractor:
                     "attrs": basic_info,
                 }
             )
-        
-            
+
         for p in finding.get("persons") or []:
             if not isinstance(p, dict):
                 try:
@@ -316,7 +410,7 @@ class LLMIntelExtractor:
 
         return entities
 
-    # ---------- New embedding helpers ----------
+    # ---------- Embedding helpers ----------
     def build_embeddings_for_page(
         self,
         url: str,
@@ -330,11 +424,19 @@ class LLMIntelExtractor:
         max_sentences: int = 40,
     ) -> List[Dict[str, Any]]:
         """
-        Produce multiple semantic views (title/description/summary/url/sentences + findings).
-        Each entry: {"id", "vector", "payload"} ready for vector_store.upsert.
-        Findings carry sql_intel_id when available.
+        Produce multiple semantic views:
+          - page-level (title/description/summary/url)
+          - sentence-level for full text (capped)
+          - overlapping sentence windows (to preserve continuity)
+          - findings with ids
         """
-        entries = []
+        entries: List[Dict[str, Any]] = []
+        total_embeddings = 0
+
+        # Clean text before splitting/embedding
+        cleaned_text = self._clean_text(text_content)
+
+        # Page-level views
         views = [
             ("title", metadata.get("title", "")),
             ("description", metadata.get("description", "") or metadata.get("og_title", "")),
@@ -343,6 +445,8 @@ class LLMIntelExtractor:
         ]
 
         for name, text in views:
+            if total_embeddings >= self.max_total_embeddings:
+                break
             if not text:
                 continue
             vec = self.embed_text(text)
@@ -360,9 +464,17 @@ class LLMIntelExtractor:
                         text=text,
                     )
                 )
+                total_embeddings += 1
 
-        sentences = self._split_sentences(text_content)[:max_sentences]
-        for idx, sent in enumerate(sentences):
+        # Sentence-level embeddings for the whole page
+        sentences = self._split_sentences(cleaned_text)
+        if max_sentences:
+            sentences = sentences[:max_sentences]
+
+        sentence_limit = min(self.max_sentence_embeddings, len(sentences))
+        for idx, sent in enumerate(sentences[:sentence_limit]):
+            if total_embeddings >= self.max_total_embeddings:
+                break
             vec = self.embed_text(sent)
             if vec:
                 entries.append(
@@ -378,8 +490,39 @@ class LLMIntelExtractor:
                         text=sent,
                     )
                 )
+                total_embeddings += 1
 
+        # Overlapping windows of sentences
+        windows = self._window_sentences(
+            sentences=sentences,
+            window_size=self.sentence_window_size,
+            stride=self.sentence_window_stride,
+            max_windows=self.max_window_embeddings,
+        )
+        for idx, win_text in enumerate(windows):
+            if total_embeddings >= self.max_total_embeddings:
+                break
+            vec = self.embed_text(win_text)
+            if vec:
+                entries.append(
+                    self._make_entry(
+                        base_id=url,
+                        suffix=f"window-{idx}",
+                        vector=vec,
+                        kind="page_window",
+                        url=url,
+                        page_type=page_type,
+                        entity_name=entity_name,
+                        entity_type=entity_type,
+                        text=win_text,
+                    )
+                )
+                total_embeddings += 1
+
+        # Findings
         for idx, (finding, sql_id) in enumerate(findings_with_ids or []):
+            if total_embeddings >= self.max_total_embeddings:
+                break
             text = self._format_finding(finding)
             vec = self.embed_text(text)
             if vec:
@@ -398,7 +541,11 @@ class LLMIntelExtractor:
                         sql_id=sql_id,
                     )
                 )
+                total_embeddings += 1
 
+        self.logger.debug(
+            f"Embedding stats for {url}: total={total_embeddings}, sentences={len(sentences)}, windows={len(windows)}, findings={len(findings_with_ids or [])}"
+        )
         return entries
 
     def build_embeddings_for_entities(
@@ -470,11 +617,58 @@ class LLMIntelExtractor:
             "payload": payload,
         }
 
+    # ---------- Text helpers ----------
+    def _clean_text(self, html_or_text: str) -> str:
+        """
+        Basic HTML boilerplate cleanup: strips scripts/styles/nav/footer and normalizes whitespace.
+        If already text, just normalize whitespace.
+        """
+        if not html_or_text:
+            return ""
+        # Heuristic: if it contains HTML tags, parse; otherwise treat as text.
+        if "<" in html_or_text and ">" in html_or_text:
+            try:
+                soup = BeautifulSoup(html_or_text, "html.parser")
+                for tag in soup(["script", "style", "noscript"]):
+                    tag.extract()
+                # Drop common boilerplate containers
+                for sel in ["nav", "footer", "header", "form"]:
+                    for tag in soup.select(sel):
+                        tag.extract()
+                text = soup.get_text(separator=" ")
+            except Exception:
+                text = html_or_text
+        else:
+            text = html_or_text
+
+        # Collapse whitespace
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
     def _split_sentences(self, text: str) -> List[str]:
         if not text:
             return []
         sentences = re.split(r"(?<=[.!?])\s+", text)
         return [s.strip() for s in sentences if s.strip()]
+
+    def _window_sentences(
+        self,
+        sentences: List[str],
+        window_size: int,
+        stride: int,
+        max_windows: int,
+    ) -> List[str]:
+        if window_size <= 1 or not sentences:
+            return []
+        windows: List[str] = []
+        for start in range(0, len(sentences), stride):
+            window = sentences[start : start + window_size]
+            if len(window) < 2:  # skip tiny windows
+                continue
+            windows.append(" ".join(window))
+            if len(windows) >= max_windows:
+                break
+        return windows
 
     def _format_finding(self, finding: Dict[str, Any]) -> str:
         try:
@@ -510,7 +704,8 @@ class LLMIntelExtractor:
                 parts.append(f"Known People: {', '.join(names[:10])}")
 
         return "\n".join(parts) if parts else "No existing knowledge."
-    
+
+    # ---------- Query helpers ----------
     def generate_seed_queries(self, user_question: str, entity_name: str) -> List[str]:
         """Generates 3-4 specific search strings to find new data online."""
         prompt = f"""
@@ -526,28 +721,27 @@ class LLMIntelExtractor:
             return data if isinstance(data, list) else [f"{entity_name} {user_question}"]
 
         except Exception:
-            return [f"{entity_name} {user_question}"]  
+            return [f"{entity_name} {user_question}"]
 
     def synthesize_answer(self, question: str, context_hits: List[Dict]) -> str:
         if not context_hits:
             return "INSUFFICIENT_DATA"
-   
-        context_str = "\n---\n".join([
-            f"Source: {h.get('url', 'Unknown')}\nSnippet: {h.get('snippet', '')}" 
-            for h in context_hits
-        ])
-        
+
+        context_str = "\n---\n".join(
+            [f"Source: {h.get('url', 'Unknown')}\nSnippet: {h.get('snippet', '')}" for h in context_hits]
+        )
+
         prompt = f"""
-        Answer the question using ONLY the context below. 
+        Answer the question using ONLY the context below.
         If the context is empty or irrelevant, say "INSUFFICIENT_DATA".
-   
+
         Question: {question}
         Context:
         {context_str}
         """
-        
+
         payload = {"model": self.model, "prompt": prompt, "stream": False}
-        
+
         try:
             resp = requests.post(self.ollama_url, json=payload, timeout=120)
             resp.raise_for_status()
@@ -555,21 +749,54 @@ class LLMIntelExtractor:
             return ans if ans else "INSUFFICIENT_DATA"
         except Exception as e:
             self.logger.error(f"Synthesis error: {e}")
-            return f"Error: {e}"   
-    
-    def build_embeddings_for_page(self, **kwargs) -> List[Dict]:
-        """Helper for explorer persistence."""
-        text = kwargs.get("text_content", "")
-        vector = self.embed_text(text[:2000])
-        return [{
-            "id": kwargs.get("url"),
-            "vector": vector,
-            "payload": {"url": kwargs.get("url"), "text": text[:1000], "kind": "page"}
-        }]
-
-    def build_embeddings_for_entities(self, **kwargs) -> List[Dict]:
-        return [] # Simplified for integration
+            return f"Error: {e}"
 
     def evaluate_sufficiency(self, answer: str) -> bool:
         """Checks if the LLM flagged the data as missing."""
         return "INSUFFICIENT_DATA" not in answer and len(answer) > 20
+
+    # ---------- Internal helpers ----------
+    def _chunk_text(self, text: str, size: int, max_chunks: int) -> List[str]:
+        if not text or size <= 0:
+            return []
+        chunks = []
+        for i in range(0, len(text), size):
+            chunks.append(text[i : i + size])
+            if len(chunks) >= max_chunks:
+                break
+        return chunks
+
+    def _merge_intel(self, base: Dict[str, Any], new: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not new:
+            return base
+
+        merged = base or {
+            "basic_info": {},
+            "persons": [],
+            "jobs": [],
+            "metrics": [],
+            "locations": [],
+            "financials": [],
+            "products": [],
+            "events": [],
+        }
+
+        # Merge basic_info: fill missing fields only
+        for k, v in (new.get("basic_info") or {}).items():
+            if v and not merged["basic_info"].get(k):
+                merged["basic_info"][k] = v
+
+        def _dedup_extend(key: str):
+            existing = merged.get(key, [])
+            seen = {json.dumps(item, sort_keys=True, ensure_ascii=False) for item in existing}
+            for item in new.get(key) or []:
+                serialized = json.dumps(item, sort_keys=True, ensure_ascii=False)
+                if serialized not in seen:
+                    existing.append(item)
+                    seen.add(serialized)
+            merged[key] = existing
+
+        for list_key in ["persons", "jobs", "metrics", "locations", "financials", "products", "events"]:
+            _dedup_extend(list_key)
+
+        return merged

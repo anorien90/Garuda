@@ -27,7 +27,7 @@ class Settings:
     qdrant_collection: str = "pages"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     ollama_url: str = "http://localhost:11434/api/generate"
-    ollama_model: str = "granite3.1-dense:8b"
+    ollama_model: str = "phi3:3.8b"
     api_key: Optional[str] = None
     cors_origins: List[str] = None
     debug: bool = False
