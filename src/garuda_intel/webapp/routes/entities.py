@@ -150,9 +150,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
                 semantic_entity_hints = _qdrant_semantic_entity_hints(q, vector_store, llm) if q else set()
 
-                for row in session.query(db_models.IntelligenceData).limit(5000).all():
-                    ents_from_json = _collect_entities_from_json(row.data_json or {})
-                    rels_from_json = _collect_relationships_from_json(row.data_json or {})
+                for row in session.query(db_models.Intelligence).limit(5000).all():
+                    ents_from_json = _collect_entities_from_json(row.data or {})
+                    rels_from_json = _collect_relationships_from_json(row.data or {})
                     
                     if ents_from_json and row.entity_name:
                         primary = upsert_entity(row.entity_name, row.entity_type, row.confidence)
@@ -173,7 +173,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                                 add_edge(primary, other_id, kind="intel-mentions", weight=1)
 
                         intel_id_str = str(row.id)
-                        ensure_node(intel_id_str, f"Intel: {row.source_type or 'data'}", "intel", score=row.confidence,
+                        ensure_node(intel_id_str, f"Intel: {row.entity_type or 'data'}", "intel", score=row.confidence,
                                     meta={"intel_id": intel_id_str, "source_id": intel_id_str})
                         entry_type_map[intel_id_str] = "intel"
                         if primary:
@@ -188,8 +188,16 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                     page_id_to_url[page_id] = row.url
                     page_ents: list[str] = []
 
-                    if row.entities:
-                        for e_json in row.entities:
+                    # Access extracted data from PageContent if available
+                    extracted_data = {}
+                    metadata = {}
+                    if row.content:
+                        extracted_data = row.content.extracted_json or {}
+                        metadata = row.content.metadata_json or {}
+                    
+                    entities_list = extracted_data.get("entities", [])
+                    if entities_list:
+                        for e_json in entities_list:
                             if isinstance(e_json, dict):
                                 e_name = e_json.get("name") or e_json.get("entity")
                                 e_kind = e_json.get("type") or e_json.get("entity_type")
@@ -200,21 +208,22 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
                     add_cooccurrence_edges(page_ents)
 
-                    ensure_node(page_id, row.title or row.url, "page", score=row.intel_score,
+                    ensure_node(page_id, row.title or row.url, "page", score=row.score,
                                 meta={"url": row.url, "page_type": row.page_type, "source_id": page_id, "page_id": page_id})
                     entry_type_map[page_id] = "page"
 
                     for eid in page_ents:
                         add_edge(page_id, eid, kind="page-mentions", weight=1)
 
-                    for img in _collect_images_from_metadata(row.metadata_json or {}):
+                    for img in _collect_images_from_metadata(metadata):
                         img_url = img["url"]
                         img_id = f"img:{img_url}"
                         ensure_node(img_id, img.get("alt") or img_url, "image",
                                     meta={"source_url": img_url, "source_id": img_id})
                         add_edge(page_id, img_id, kind="page-image", weight=1)
 
-                    for link in row.outlinks or []:
+                    outlinks_list = extracted_data.get("outlinks", [])
+                    for link in outlinks_list:
                         if isinstance(link, str):
                             link_id = f"link:{link}"
                             ensure_node(link_id, link, "link", meta={"url": link, "source_id": link_id})
@@ -318,15 +327,15 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                         "source_id": str(entity.id),
                     }
 
-                intel = session.query(db_models.IntelligenceData).filter_by(id=node_id).first()
+                intel = session.query(db_models.Intelligence).filter_by(id=node_id).first()
                 if intel:
                     node_type = "intel"
-                    label = f"Intel: {intel.source_type or 'data'}"
+                    label = f"Intel: {intel.entity_type or 'data'}"
                     meta = {
                         "intel_id": str(intel.id),
                         "entity_name": intel.entity_name,
                         "entity_type": intel.entity_type,
-                        "data": intel.data_json,
+                        "data": intel.data,
                         "confidence": intel.confidence,
                         "source_id": str(intel.id),
                     }
@@ -340,7 +349,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                         "url": page.url,
                         "title": page.title,
                         "page_type": page.page_type,
-                        "intel_score": page.intel_score,
+                        "intel_score": page.score,
                         "source_id": str(page.id),
                     }
 
