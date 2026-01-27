@@ -193,7 +193,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                     extracted_data = {}
                     metadata = {}
                     if row.content:
-                        # Handle both dict and list cases for extracted_json
+                        # Defensive check: ensure extracted_json is a dict to prevent AttributeError
                         raw_extracted = row.content.extracted_json or {}
                         extracted_data = raw_extracted if isinstance(raw_extracted, dict) else {}
                         
