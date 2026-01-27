@@ -2,6 +2,18 @@ import { els, val, getEl } from '../config.js';
 import { fetchWithAuth } from '../api.js';
 import { renderCrawlResult } from '../ui.js';
 
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function renderErrorMessage(message) {
+  return `<div class="p-4 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm">
+    <strong>Error:</strong> ${escapeHtml(message)}
+  </div>`;
+}
+
 export async function runIntelligentCrawl(e) {
   if (e) e.preventDefault();
   
@@ -36,9 +48,51 @@ export async function runIntelligentCrawl(e) {
     }
   } catch (err) {
     if (outputPanel) {
-      outputPanel.innerHTML = `<div class="p-4 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm">
-        <strong>Error:</strong> ${err.message}
-      </div>`;
+      outputPanel.innerHTML = renderErrorMessage(err.message);
+    }
+  }
+}
+
+export async function runUnifiedCrawl(e) {
+  if (e) e.preventDefault();
+  
+  const entityName = val('crawl-entity');
+  if (!entityName || !entityName.trim()) {
+    alert('Please enter an entity name');
+    return;
+  }
+  
+  const outputPanel = getEl('crawl-output-panel');
+  if (outputPanel) {
+    outputPanel.innerHTML = '<div class="p-4 animate-pulse text-xs text-violet-600 dark:text-violet-400">🎯 Auto-detecting crawl mode and starting smart crawl...</div>';
+  }
+  
+  try {
+    const body = {
+      entity: entityName.trim(),
+      type: val('crawl-type') || 'company',
+      max_pages: Number(val('crawl-total-pages') || 50),
+      max_depth: Number(val('crawl-max-depth') || 2),
+      use_intelligent: false  // Let backend auto-detect
+    };
+
+    const res = await fetchWithAuth('/api/crawl/unified', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (outputPanel) {
+      if (data.mode === 'intelligent') {
+        outputPanel.innerHTML = renderIntelligentCrawlResult(data);
+      } else {
+        outputPanel.innerHTML = renderCrawlResult(data.results);
+      }
+    }
+  } catch (err) {
+    if (outputPanel) {
+      outputPanel.innerHTML = renderErrorMessage(err.message);
     }
   }
 }
@@ -95,6 +149,59 @@ function renderIntelligentCrawlResult(data) {
           ${plan.queries.slice(0, 5).map(q => `<div class="text-green-700 dark:text-green-300">• ${q}</div>`).join('')}
           ${plan.queries.length > 5 ? `<div class="text-green-600 dark:text-green-400 italic">+ ${plan.queries.length - 5} more...</div>` : ''}
         </div>
+      </div>
+    `;
+  }
+  
+  // Crawl Results Section (NEW)
+  if (results.pages_discovered !== undefined) {
+    const hasError = results.error;
+    html += `
+      <div class="p-4 rounded-lg ${hasError ? 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800' : 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'}">
+        <h4 class="text-sm font-semibold ${hasError ? 'text-rose-900 dark:text-rose-100' : 'text-emerald-900 dark:text-emerald-100'} mb-2">
+          ${hasError ? '❌ Crawl Error' : '✅ Crawl Results'}
+        </h4>
+        ${hasError ? `
+          <div class="text-xs text-rose-700 dark:text-rose-300">${results.error}</div>
+        ` : `
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <div><span class="font-medium">Pages Discovered:</span> <span class="font-bold">${results.pages_discovered || 0}</span></div>
+            <div><span class="font-medium">Intel Extracted:</span> <span class="font-bold">${results.intel_extracted || 0}</span></div>
+            <div><span class="font-medium">Relationships:</span> <span class="font-bold">${results.relationships_found || 0}</span></div>
+            <div><span class="font-medium">Seed URLs Used:</span> ${(results.seed_urls || []).length}</div>
+          </div>
+          ${results.official_domains && results.official_domains.length > 0 ? `
+            <div class="mt-2 pt-2 border-t border-emerald-200 dark:border-emerald-700">
+              <div class="text-xs font-medium text-emerald-900 dark:text-emerald-100 mb-1">Official Domains (${results.official_domains.length}):</div>
+              <div class="flex flex-wrap gap-1">
+                ${results.official_domains.slice(0, 5).map(domain => 
+                  `<span class="px-2 py-0.5 rounded text-xs bg-emerald-100 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200">${domain}</span>`
+                ).join('')}
+                ${results.official_domains.length > 5 ? `<span class="text-xs text-emerald-600 dark:text-emerald-400">+${results.official_domains.length - 5} more</span>` : ''}
+              </div>
+            </div>
+          ` : ''}
+          ${results.completeness_improvement !== undefined && results.completeness_improvement !== 0 ? `
+            <div class="mt-2 pt-2 border-t border-emerald-200 dark:border-emerald-700">
+              <div class="text-xs">
+                <span class="font-medium">Completeness Improvement:</span> 
+                <span class="font-bold ${results.completeness_improvement > 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-600 dark:text-slate-400'}">
+                  ${results.completeness_improvement > 0 ? '+' : ''}${results.completeness_improvement.toFixed(1)}%
+                </span>
+              </div>
+            </div>
+          ` : ''}
+          ${results.gaps_filled && results.gaps_filled.length > 0 ? `
+            <div class="mt-2 pt-2 border-t border-emerald-200 dark:border-emerald-700">
+              <div class="text-xs font-medium text-emerald-900 dark:text-emerald-100 mb-1">Gaps Filled (${results.gaps_filled.length}):</div>
+              <div class="flex flex-wrap gap-1">
+                ${results.gaps_filled.map(field => 
+                  `<span class="px-2 py-0.5 rounded text-xs bg-emerald-100 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200">✓ ${field}</span>`
+                ).join('')}
+              </div>
+            </div>
+          ` : ''}
+        `}
       </div>
     `;
   }

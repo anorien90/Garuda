@@ -1830,6 +1830,99 @@ def api_adaptive_crawl_status():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/crawl/unified", methods=["POST"])
+@api_key_required
+def api_unified_crawl():
+    """
+    Unified crawl endpoint that automatically selects between standard and intelligent crawl.
+    
+    If 'use_intelligent' is true or entity exists in database, uses intelligent gap-aware crawl.
+    Otherwise, uses standard crawl workflow.
+    
+    Request body:
+        {
+            "entity": "Microsoft",
+            "type": "company",
+            "use_intelligent": true,  // optional, auto-detected if false
+            "max_pages": 50,
+            "max_depth": 2,
+            ... other crawl parameters
+        }
+    
+    Returns:
+        Crawl results with plan and statistics
+    """
+    data = request.get_json() or {}
+    
+    entity_name = data.get("entity", "").strip()
+    if not entity_name:
+        return jsonify({"error": "entity is required"}), 400
+    
+    entity_type = data.get("type")
+    use_intelligent = data.get("use_intelligent", False)
+    
+    # Auto-detect: Check if entity exists in database
+    if not use_intelligent:
+        with store.Session() as session:
+            from ..database.models import Entity
+            existing = session.query(Entity).filter(
+                Entity.name.ilike(f"%{entity_name}%")
+            ).first()
+            if existing:
+                use_intelligent = True
+                logger.info(f"Entity '{entity_name}' found in database, using intelligent crawl")
+    
+    emit_event(
+        "unified_crawl",
+        f"Starting {'intelligent' if use_intelligent else 'standard'} crawl for '{entity_name}'",
+        payload={"entity": entity_name, "mode": "intelligent" if use_intelligent else "standard"}
+    )
+    
+    try:
+        if use_intelligent:
+            # Use intelligent gap-aware crawl
+            plan = gap_analyzer.generate_crawl_plan(entity_name, entity_type)
+            
+            results = adaptive_crawler.intelligent_crawl(
+                entity_name=entity_name,
+                entity_type=entity_type,
+                max_pages=data.get("max_pages", 50),
+                max_depth=data.get("max_depth", 2)
+            )
+            
+            emit_event(
+                "unified_crawl",
+                "Intelligent crawl completed",
+                level="info",
+                payload=results
+            )
+            
+            return jsonify({
+                "mode": "intelligent",
+                "plan": plan,
+                "results": results
+            })
+        else:
+            # Use standard crawl workflow
+            result = run_crawl_api(data)
+            
+            emit_event(
+                "unified_crawl",
+                "Standard crawl completed",
+                level="info"
+            )
+            
+            return jsonify({
+                "mode": "standard",
+                "results": result
+            })
+            
+    except Exception as e:
+        logger.exception(f"Unified crawl failed for '{entity_name}'")
+        emit_event("unified_crawl", f"Error: {str(e)}", level="error")
+        return jsonify({"error": str(e)}), 500
+
+
 def main():
     app.run(host="0.0.0.0", port=8080, debug=settings.debug)
 
