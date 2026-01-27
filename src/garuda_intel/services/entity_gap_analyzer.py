@@ -83,7 +83,7 @@ class EntityGapAnalyzer:
         Returns:
             Dictionary with gap analysis including missing fields, suggestions, queries
         """
-        with self.store.session() as session:
+        with self.store.Session() as session:
             from ..database.models import Entity, Intelligence
             
             # Get entity
@@ -137,7 +137,7 @@ class EntityGapAnalyzer:
         Returns:
             List of entities with gap analysis, sorted by gap priority
         """
-        with self.store.session() as session:
+        with self.store.Session() as session:
             from ..database.models import Entity
             
             # Get recent or high-priority entities
@@ -170,7 +170,7 @@ class EntityGapAnalyzer:
             Crawl plan with queries, sources, and strategy
         """
         # First, try to find existing entity
-        with self.store.session() as session:
+        with self.store.Session() as session:
             from ..database.models import Entity
             
             entity = session.query(Entity).filter(
