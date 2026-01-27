@@ -1,9 +1,40 @@
 <article class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
   <div>
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Crawler</p>
-    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Launch / Inspect Crawl</h3>
-    <p class="text-sm text-slate-600 dark:text-slate-300">Run crawler/refresh/list/fetch actions from the backend CLI via API shim.</p>
+    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Intelligent & Adaptive Crawling</h3>
+    <p class="text-sm text-slate-600 dark:text-slate-300">Run intelligent, gap-aware crawls that adapt based on existing data and learned patterns.</p>
   </div>
+  
+  <!-- NEW: Intelligent Crawl Mode -->
+  <div class="p-4 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+    <h4 class="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-2">🧠 Intelligent Crawl</h4>
+    <p class="text-xs text-blue-700 dark:text-blue-300 mb-3">Automatically analyzes existing entity data and crawls to fill missing information gaps.</p>
+    <div class="space-y-2">
+      <div class="grid gap-2 sm:grid-cols-2">
+        <label class="space-y-1 text-xs font-medium text-slate-800 dark:text-slate-100">
+          Entity Name *
+          <input id="intelligent-entity-name" type="text" placeholder="Bill Gates" class="mt-1 w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm px-2 py-1"/>
+        </label>
+        <label class="space-y-1 text-xs font-medium text-slate-800 dark:text-slate-100">
+          Type (optional)
+          <select id="intelligent-entity-type" class="mt-1 w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm px-2 py-1">
+            <option value="">Auto-detect</option>
+            <option value="company">Company</option>
+            <option value="person">Person</option>
+            <option value="organization">Organization</option>
+            <option value="product">Product</option>
+          </select>
+        </label>
+      </div>
+      <button id="btn-intelligent-crawl" type="button" class="inline-flex items-center justify-center rounded bg-blue-600 text-white px-3 py-1.5 text-xs font-medium shadow-sm hover:bg-blue-500">
+        🚀 Start Intelligent Crawl
+      </button>
+    </div>
+  </div>
+  
+  <!-- Standard Crawl Section -->
+  <div class="border-t border-slate-200 dark:border-slate-700 pt-4">
+    <h4 class="text-sm font-semibold text-slate-900 dark:text-white mb-3">Standard Crawl Options</h4>
   <form id="crawl-form" class="space-y-3">
     <div class="grid gap-3 sm:grid-cols-2">
       <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">

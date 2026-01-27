@@ -8,7 +8,8 @@ import { semanticSearch } from './actions/semantic.js';
 import { chatAsk } from './actions/chat.js';
 import { loadPages } from './actions/pages.js';
 import { recorderSearch, recorderRefreshHealth, recorderMark } from './actions/recorder.js';
-import { runCrawl } from './actions/crawl.js';
+import { runCrawl, runIntelligentCrawl } from './actions/crawl.js';
+import { analyzeEntityGaps, analyzeAllGaps } from './actions/gaps.js';
 import { bindDelegatedEvents } from './events.js';
 import { initEntitiesGraph } from './entities-graph.js';
 
@@ -40,6 +41,17 @@ export function init() {
   if (els.recorderHealthRefresh) els.recorderHealthRefresh.onclick = recorderRefreshHealth;
   if (els.recorderMarkForm) els.recorderMarkForm.onsubmit = recorderMark;
   if (els.crawlForm) els.crawlForm.onsubmit = runCrawl;
+  
+  // NEW: Intelligent crawl button
+  const btnIntelligentCrawl = document.getElementById('btn-intelligent-crawl');
+  if (btnIntelligentCrawl) btnIntelligentCrawl.onclick = runIntelligentCrawl;
+  
+  // NEW: Gap analysis buttons
+  const btnAnalyzeGaps = document.getElementById('btn-analyze-gaps');
+  if (btnAnalyzeGaps) btnAnalyzeGaps.onclick = analyzeEntityGaps;
+  
+  const btnAnalyzeAllGaps = document.getElementById('btn-analyze-all-gaps');
+  if (btnAnalyzeAllGaps) btnAnalyzeAllGaps.onclick = analyzeAllGaps;
 
   initEntitiesGraph();
 

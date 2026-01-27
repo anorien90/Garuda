@@ -30,6 +30,8 @@ from ..search import (
 from ..browser.selenium import SeleniumBrowser
 from ..discover.crawl_modes import EntityAwareCrawler, CrawlMode
 from ..discover.crawl_learner import CrawlLearner
+from ..services.entity_gap_analyzer import EntityGapAnalyzer
+from ..services.adaptive_crawler import AdaptiveCrawlerService
 
 settings = Settings.from_env()
 
@@ -65,6 +67,8 @@ if settings.vector_enabled:
 relationship_manager = RelationshipManager(store, llm)
 entity_crawler = EntityAwareCrawler(store, llm)
 crawl_learner = CrawlLearner(store)
+gap_analyzer = EntityGapAnalyzer(store)
+adaptive_crawler = AdaptiveCrawlerService(store, llm, crawl_learner)
 
 _EVENT_BUFFER_LIMIT = 1000
 _event_buffer = deque(maxlen=_EVENT_BUFFER_LIMIT)
@@ -1631,6 +1635,198 @@ def api_entity_relations(entity_id):
         return jsonify(relations)
     except Exception as e:
         logger.exception("Entity relations lookup failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/entities/<entity_id>/analyze_gaps", methods=["GET"])
+@api_key_required
+def api_entity_analyze_gaps(entity_id):
+    """
+    Analyze an entity to identify missing data fields.
+    
+    Returns:
+        JSON with gap analysis, suggested queries, and prioritized gaps
+    """
+    emit_event("entity_gaps_analysis", f"Analyzing gaps for entity {entity_id}")
+    
+    try:
+        analysis = gap_analyzer.analyze_entity_gaps(entity_id)
+        
+        emit_event(
+            "entity_gaps_analysis",
+            f"Analysis complete - {len(analysis.get('missing_fields', []))} gaps found",
+            level="info",
+            payload={"entity_id": entity_id, "completeness": analysis.get("completeness_score")}
+        )
+        
+        return jsonify(analysis)
+    except Exception as e:
+        logger.exception(f"Gap analysis failed for entity {entity_id}")
+        emit_event("entity_gaps_analysis", f"Error: {str(e)}", level="error")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/entities/analyze_all_gaps", methods=["GET"])
+@api_key_required
+def api_entities_analyze_all_gaps():
+    """
+    Analyze all entities to find those with critical data gaps.
+    
+    Query params:
+        limit: Maximum number of entities to analyze (default: 50)
+    
+    Returns:
+        JSON list of entities sorted by gap criticality
+    """
+    limit = min(int(request.args.get("limit", 50) or 50), 200)
+    
+    emit_event("bulk_gap_analysis", f"Analyzing gaps for up to {limit} entities")
+    
+    try:
+        results = gap_analyzer.analyze_all_entities(limit=limit)
+        
+        emit_event(
+            "bulk_gap_analysis",
+            f"Analyzed {len(results)} entities",
+            level="info",
+            payload={"count": len(results)}
+        )
+        
+        return jsonify({
+            "count": len(results),
+            "entities": results
+        })
+    except Exception as e:
+        logger.exception("Bulk gap analysis failed")
+        emit_event("bulk_gap_analysis", f"Error: {str(e)}", level="error")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/crawl/intelligent", methods=["POST"])
+@api_key_required
+def api_intelligent_crawl():
+    """
+    Start an intelligent, gap-aware crawl for an entity.
+    
+    This endpoint analyzes existing entity data, identifies gaps,
+    and executes a targeted crawl to fill those gaps.
+    
+    Request body:
+        {
+            "entity_name": "Bill Gates",
+            "entity_type": "person",  // optional
+            "max_pages": 50,          // optional
+            "max_depth": 2            // optional
+        }
+    
+    Returns:
+        Crawl plan and results
+    """
+    data = request.get_json() or {}
+    
+    entity_name = data.get("entity_name", "").strip()
+    if not entity_name:
+        return jsonify({"error": "entity_name is required"}), 400
+    
+    entity_type = data.get("entity_type")
+    max_pages = data.get("max_pages", 50)
+    max_depth = data.get("max_depth", 2)
+    
+    emit_event(
+        "intelligent_crawl",
+        f"Starting intelligent crawl for '{entity_name}'",
+        payload={"entity_name": entity_name, "entity_type": entity_type}
+    )
+    
+    try:
+        # Generate crawl plan
+        plan = gap_analyzer.generate_crawl_plan(entity_name, entity_type)
+        
+        emit_event(
+            "intelligent_crawl",
+            f"Crawl mode: {plan['mode']}, strategy: {plan['strategy']}",
+            payload=plan
+        )
+        
+        # Execute intelligent crawl
+        results = adaptive_crawler.intelligent_crawl(
+            entity_name=entity_name,
+            entity_type=entity_type,
+            max_pages=max_pages,
+            max_depth=max_depth
+        )
+        
+        emit_event(
+            "intelligent_crawl",
+            "Crawl completed",
+            level="info",
+            payload=results
+        )
+        
+        return jsonify({
+            "plan": plan,
+            "results": results
+        })
+    except Exception as e:
+        logger.exception(f"Intelligent crawl failed for '{entity_name}'")
+        emit_event("intelligent_crawl", f"Error: {str(e)}", level="error")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/entities/<entity_id>/infer_from_relationships", methods=["POST"])
+@api_key_required
+def api_entity_infer_from_relationships(entity_id):
+    """
+    Use related entities to infer missing data for target entity.
+    
+    Query params:
+        hops: Number of relationship hops to explore (default: 1)
+    
+    Returns:
+        Inferred field suggestions with confidence scores
+    """
+    hops = int(request.args.get("hops", 1) or 1)
+    
+    emit_event(
+        "cross_entity_inference",
+        f"Inferring data for entity {entity_id} via relationships",
+        payload={"entity_id": entity_id, "hops": hops}
+    )
+    
+    try:
+        inferences = adaptive_crawler.cross_entity_inference(
+            entity_id=entity_id,
+            relationship_hops=hops
+        )
+        
+        emit_event(
+            "cross_entity_inference",
+            f"Found {len(inferences.get('inferred_fields', []))} possible inferences",
+            level="info",
+            payload=inferences
+        )
+        
+        return jsonify(inferences)
+    except Exception as e:
+        logger.exception(f"Cross-entity inference failed for {entity_id}")
+        emit_event("cross_entity_inference", f"Error: {str(e)}", level="error")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/crawl/adaptive/status", methods=["GET"])
+@api_key_required
+def api_adaptive_crawl_status():
+    """
+    Get status and capabilities of adaptive crawling system.
+    
+    Returns:
+        Summary of features, learning stats, and capabilities
+    """
+    try:
+        status = adaptive_crawler.get_adaptive_strategy_summary()
+        return jsonify(status)
+    except Exception as e:
+        logger.exception("Failed to get adaptive crawl status")
         return jsonify({"error": str(e)}), 500
 
 
