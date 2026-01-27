@@ -15,6 +15,7 @@ from uuid import uuid5, NAMESPACE_URL
 
 from ..database import models as db_models
 from ..database.engine import SQLAlchemyStore
+from ..database.relationship_manager import RelationshipManager
 from ..vector.engine import QdrantVectorStore
 from ..extractor.llm import LLMIntelExtractor
 from ..config import Settings
@@ -27,6 +28,8 @@ from ..search import (
     EntityType,
 )
 from ..browser.selenium import SeleniumBrowser
+from ..discover.crawl_modes import EntityAwareCrawler, CrawlMode
+from ..discover.crawl_learner import CrawlLearner
 
 settings = Settings.from_env()
 
@@ -57,6 +60,11 @@ if settings.vector_enabled:
     except Exception as e:
         logger.warning(f"Qdrant unavailable: {e}")
         vector_store = None
+
+# Initialize new components for enhanced features
+relationship_manager = RelationshipManager(store, llm)
+entity_crawler = EntityAwareCrawler(store, llm)
+crawl_learner = CrawlLearner(store)
 
 _EVENT_BUFFER_LIMIT = 1000
 _event_buffer = deque(maxlen=_EVENT_BUFFER_LIMIT)
@@ -1315,6 +1323,315 @@ def api_crawl():
         emit_event("crawl", f"failed: {e}", level="error")
         logger.exception("Crawl failed")
         return jsonify({"error": f"crawl failed: {e}"}), 500
+
+
+# ========== NEW ENHANCED ENDPOINTS ==========
+
+@app.get("/api/entities/<entity_id>/gaps")
+@api_key_required
+def api_entity_gaps(entity_id):
+    """Analyze data gaps for a specific entity."""
+    emit_event("entity_gaps", f"analyzing entity {entity_id}")
+    try:
+        gaps = entity_crawler.analyze_entity_gaps(entity_id)
+        return jsonify(gaps)
+    except Exception as e:
+        emit_event("entity_gaps", f"failed: {e}", level="error")
+        logger.exception("Entity gap analysis failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/entities/crawl")
+@api_key_required
+def api_entity_crawl():
+    """Execute entity-aware crawl to fill data gaps."""
+    body = request.get_json(silent=True) or {}
+    entity_name = body.get("entity_name")
+    entity_type_str = body.get("entity_type", "PERSON")
+    mode_str = body.get("mode", "TARGETING")
+    location_hint = body.get("location_hint", "")
+    aliases = body.get("aliases", [])
+    official_domains = body.get("official_domains", [])
+    
+    if not entity_name:
+        return jsonify({"error": "entity_name required"}), 400
+    
+    emit_event("entity_crawl", f"starting entity-aware crawl for {entity_name}")
+    
+    try:
+        # Parse entity type
+        try:
+            entity_type = EntityType[entity_type_str.upper()]
+        except KeyError:
+            entity_type = EntityType.PERSON
+        
+        # Parse crawl mode
+        try:
+            mode = CrawlMode[mode_str.upper()]
+        except KeyError:
+            mode = CrawlMode.TARGETING
+        
+        # Create entity profile
+        profile = EntityProfile(
+            name=entity_name,
+            entity_type=entity_type,
+            location_hint=location_hint,
+            aliases=aliases,
+            official_domains=official_domains
+        )
+        
+        # Execute crawl
+        result = entity_crawler.crawl_for_entity(profile, mode=mode)
+        
+        emit_event("entity_crawl", f"completed crawl for {entity_name}", payload=result)
+        return jsonify(result)
+    except Exception as e:
+        emit_event("entity_crawl", f"failed: {e}", level="error")
+        logger.exception("Entity crawl failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/entities/deduplicate")
+@api_key_required
+def api_deduplicate_entities():
+    """Deduplicate entities based on similarity."""
+    body = request.get_json(silent=True) or {}
+    threshold = float(body.get("threshold", 0.85))
+    
+    emit_event("deduplication", f"deduplicating entities with threshold {threshold}")
+    
+    try:
+        merge_map = store.deduplicate_entities(threshold=threshold)
+        count = len(merge_map)
+        emit_event("deduplication", f"merged {count} duplicate entities")
+        return jsonify({
+            "merged_count": count,
+            "merge_map": {str(k): str(v) for k, v in merge_map.items()}
+        })
+    except Exception as e:
+        emit_event("deduplication", f"failed: {e}", level="error")
+        logger.exception("Entity deduplication failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/entities/<source_id>/merge/<target_id>")
+@api_key_required
+def api_merge_entities(source_id, target_id):
+    """Manually merge two entities."""
+    emit_event("merge_entities", f"merging {source_id} into {target_id}")
+    
+    try:
+        success = store.merge_entities(source_id, target_id)
+        if success:
+            emit_event("merge_entities", "merge successful")
+            return jsonify({"status": "ok", "message": "Entities merged successfully"})
+        else:
+            return jsonify({"error": "Merge failed"}), 500
+    except Exception as e:
+        emit_event("merge_entities", f"failed: {e}", level="error")
+        logger.exception("Entity merge failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/entities/<entity_id>/similar")
+@api_key_required
+def api_similar_entities(entity_id):
+    """Find similar entities."""
+    threshold = float(request.args.get("threshold", 0.75))
+    
+    try:
+        # Get entity name first
+        with store.Session() as session:
+            entity = session.query(db_models.Entity).filter_by(id=entity_id).first()
+            if not entity:
+                return jsonify({"error": "Entity not found"}), 404
+            
+            entity_name = entity.name
+        
+        # Find similar entities
+        similar = store.find_similar_entities(entity_name, threshold=threshold)
+        
+        return jsonify({
+            "entity_name": entity_name,
+            "similar_entities": [
+                {
+                    "id": str(e.id),
+                    "name": e.name,
+                    "kind": e.kind,
+                    "last_seen": e.last_seen.isoformat() if e.last_seen else None
+                }
+                for e in similar
+            ]
+        })
+    except Exception as e:
+        logger.exception("Similar entities lookup failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/relationships/graph")
+@api_key_required
+def api_relationship_graph():
+    """Get relationship graph for entities."""
+    entity_ids_raw = request.args.get("entity_ids", "")
+    min_confidence = float(request.args.get("min_confidence", 0.0))
+    
+    entity_ids = [eid.strip() for eid in entity_ids_raw.split(",") if eid.strip()]
+    
+    if not entity_ids:
+        return jsonify({"error": "entity_ids parameter required"}), 400
+    
+    try:
+        graph_data = relationship_manager.get_relationship_graph(
+            entity_ids=entity_ids,
+            min_confidence=min_confidence
+        )
+        return jsonify(graph_data)
+    except Exception as e:
+        logger.exception("Relationship graph generation failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/relationships/infer")
+@api_key_required
+def api_infer_relationships():
+    """Infer relationships between entities."""
+    body = request.get_json(silent=True) or {}
+    entity_ids = body.get("entity_ids", [])
+    context = body.get("context")
+    
+    if not entity_ids:
+        return jsonify({"error": "entity_ids required"}), 400
+    
+    emit_event("infer_relationships", f"inferring relationships for {len(entity_ids)} entities")
+    
+    try:
+        inferred = relationship_manager.infer_relationships(entity_ids, context=context)
+        emit_event("infer_relationships", f"inferred {len(inferred)} relationships")
+        
+        return jsonify({
+            "inferred_count": len(inferred),
+            "relationships": [
+                {
+                    "source_id": str(r[0]),
+                    "target_id": str(r[1]),
+                    "relation_type": r[2],
+                    "confidence": r[3]
+                }
+                for r in inferred
+            ]
+        })
+    except Exception as e:
+        emit_event("infer_relationships", f"failed: {e}", level="error")
+        logger.exception("Relationship inference failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/relationships/validate")
+@api_key_required
+def api_validate_relationships():
+    """Validate and fix relationship integrity."""
+    body = request.get_json(silent=True) or {}
+    fix_invalid = body.get("fix_invalid", True)
+    
+    emit_event("validate_relationships", "validating relationships")
+    
+    try:
+        report = relationship_manager.validate_relationships(fix_invalid=fix_invalid)
+        emit_event("validate_relationships", f"validation complete: {report['valid']}/{report['total']} valid")
+        return jsonify(report)
+    except Exception as e:
+        emit_event("validate_relationships", f"failed: {e}", level="error")
+        logger.exception("Relationship validation failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/relationships/deduplicate")
+@api_key_required
+def api_deduplicate_relationships():
+    """Deduplicate relationships."""
+    emit_event("deduplicate_relationships", "deduplicating relationships")
+    
+    try:
+        removed = relationship_manager.deduplicate_relationships()
+        emit_event("deduplicate_relationships", f"removed {removed} duplicates")
+        return jsonify({"removed_count": removed})
+    except Exception as e:
+        emit_event("deduplicate_relationships", f"failed: {e}", level="error")
+        logger.exception("Relationship deduplication failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/relationships/clusters")
+@api_key_required
+def api_relationship_clusters():
+    """Get entity clusters by relationship type."""
+    relation_types_raw = request.args.get("relation_types", "")
+    relation_types = [rt.strip() for rt in relation_types_raw.split(",") if rt.strip()] or None
+    
+    try:
+        clusters = relationship_manager.cluster_entities_by_relation(relation_types=relation_types)
+        
+        return jsonify({
+            "clusters": {
+                rel_type: [{"source": str(a), "target": str(b)} for a, b in pairs]
+                for rel_type, pairs in clusters.items()
+            }
+        })
+    except Exception as e:
+        logger.exception("Relationship clustering failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/crawl/learning/stats")
+@api_key_required
+def api_crawl_learning_stats():
+    """Get crawl learning statistics."""
+    try:
+        # Get domain reliability stats
+        domains = request.args.get("domains", "").split(",")
+        domains = [d.strip() for d in domains if d.strip()]
+        
+        stats = {
+            "domain_reliability": {},
+            "successful_patterns": {}
+        }
+        
+        # Get reliability for requested domains
+        for domain in domains[:20]:  # Limit to 20 domains
+            reliability = crawl_learner.get_domain_reliability(domain)
+            if reliability > 0:
+                stats["domain_reliability"][domain] = reliability
+        
+        # Get successful patterns for each entity type
+        for entity_type in ["PERSON", "COMPANY", "NEWS", "TOPIC"]:
+            patterns = crawl_learner.get_successful_patterns(entity_type)
+            if patterns:
+                stats["successful_patterns"][entity_type] = patterns[:10]  # Top 10
+        
+        return jsonify(stats)
+    except Exception as e:
+        logger.exception("Crawl learning stats failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/entities/<entity_id>/relations")
+@api_key_required
+def api_entity_relations(entity_id):
+    """Get all relationships for an entity."""
+    direction = request.args.get("direction", "both")
+    max_depth = int(request.args.get("max_depth", 1))
+    
+    try:
+        relations = store.get_entity_relations(
+            entity_id=entity_id,
+            direction=direction,
+            max_depth=max_depth
+        )
+        
+        return jsonify(relations)
+    except Exception as e:
+        logger.exception("Entity relations lookup failed")
+        return jsonify({"error": str(e)}), 500
 
 
 def main():

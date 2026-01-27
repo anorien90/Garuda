@@ -539,3 +539,567 @@ class SQLAlchemyStore(PersistenceStore):
         )
         session.merge(rel)
         return rel
+
+    # -------- Entity Deduplication --------
+    def find_similar_entities(
+        self, 
+        name: str, 
+        threshold: float = 0.8,
+        kind: Optional[str] = None,
+        embedder=None,
+    ) -> List[Entity]:
+        """
+        Find entities similar to given name using embeddings.
+        
+        Args:
+            name: Entity name to search for
+            threshold: Similarity threshold (0-1), default 0.8
+            kind: Optional entity kind filter
+            embedder: Optional LLMIntelExtractor instance for embedding generation
+            
+        Returns:
+            List of similar Entity objects
+        """
+        if not name:
+            return []
+        
+        # First try exact and fuzzy matches
+        with self.Session() as s:
+            stmt = select(Entity).where(func.lower(Entity.name).like(f"%{name.lower()}%"))
+            if kind:
+                stmt = stmt.where(Entity.kind == kind)
+            
+            # Get potential candidates
+            candidates = s.execute(stmt).scalars().all()
+            
+            if not embedder or not candidates:
+                # Return exact/fuzzy matches if no embedder or no candidates
+                # Use lower threshold (0.6) for string-based matching
+                string_threshold = max(0.6, threshold - 0.2)
+                return [c for c in candidates if self._name_similarity(name, c.name) >= string_threshold]
+            
+            # Use embedding similarity for better matching
+            try:
+                target_embedding = embedder.embed_text(name)
+                similar = []
+                
+                for candidate in candidates:
+                    candidate_embedding = embedder.embed_text(candidate.name)
+                    similarity = embedder.calculate_similarity(target_embedding, candidate_embedding)
+                    
+                    if similarity >= threshold:
+                        similar.append(candidate)
+                
+                return similar
+            except Exception as e:
+                self.logger.warning(f"Embedding similarity failed, using fuzzy match: {e}")
+                return [c for c in candidates if self._name_similarity(name, c.name) >= threshold]
+
+    def merge_entities(self, source_id: str, target_id: str) -> bool:
+        """
+        Merge source entity into target, redirecting all relationships.
+        
+        Args:
+            source_id: Source entity UUID to merge (will be deleted)
+            target_id: Target entity UUID to merge into (will be kept)
+            
+        Returns:
+            True if merge succeeded, False otherwise
+        """
+        if not source_id or not target_id or source_id == target_id:
+            self.logger.warning("Invalid merge: source and target must be different")
+            return False
+        
+        try:
+            with self.Session() as s:
+                # Get both entities
+                source = s.execute(select(Entity).where(Entity.id == source_id)).scalar_one_or_none()
+                target = s.execute(select(Entity).where(Entity.id == target_id)).scalar_one_or_none()
+                
+                if not source or not target:
+                    self.logger.error(f"Entity not found: source={source_id}, target={target_id}")
+                    return False
+                
+                # Merge data fields - preserve non-empty values from both entities
+                source_data = _as_dict(source.data)
+                target_data = _as_dict(target.data)
+                merged_data = {}
+                
+                # Field-level merging: keep non-empty values from both
+                all_keys = set(source_data.keys()) | set(target_data.keys())
+                for key in all_keys:
+                    source_val = source_data.get(key)
+                    target_val = target_data.get(key)
+                    
+                    # Keep non-empty value, prefer target if both non-empty
+                    if target_val:
+                        merged_data[key] = target_val
+                    elif source_val:
+                        merged_data[key] = source_val
+                
+                target.data = merged_data
+                
+                # Merge metadata
+                source_meta = _as_dict(source.metadata_json)
+                target_meta = _as_dict(target.metadata_json)
+                merged_meta = {**source_meta, **target_meta}
+                target.metadata_json = merged_meta
+                
+                # Update last_seen to most recent
+                if source.last_seen and target.last_seen:
+                    target.last_seen = max(source.last_seen, target.last_seen)
+                elif source.last_seen:
+                    target.last_seen = source.last_seen
+                
+                # Update incoming relationships (where source is target)
+                for rel in s.execute(select(Relationship).where(Relationship.target_id == source_id)).scalars().all():
+                    # Avoid creating duplicate relationships
+                    existing = s.execute(
+                        select(Relationship)
+                        .where(
+                            Relationship.source_id == rel.source_id,
+                            Relationship.target_id == target_id,
+                            Relationship.relation_type == rel.relation_type,
+                        )
+                    ).scalar_one_or_none()
+                    
+                    if not existing:
+                        rel.target_id = target_id
+                
+                # Update outgoing relationships (where source is source)
+                for rel in s.execute(select(Relationship).where(Relationship.source_id == source_id)).scalars().all():
+                    existing = s.execute(
+                        select(Relationship)
+                        .where(
+                            Relationship.source_id == target_id,
+                            Relationship.target_id == rel.target_id,
+                            Relationship.relation_type == rel.relation_type,
+                        )
+                    ).scalar_one_or_none()
+                    
+                    if not existing:
+                        rel.source_id = target_id
+                
+                # Redirect Intelligence records
+                for intel in s.execute(select(Intelligence).where(Intelligence.entity_id == source_id)).scalars().all():
+                    intel.entity_id = target_id
+                
+                # Redirect Page references
+                for page in s.execute(select(Page).where(Page.entity_id == source_id)).scalars().all():
+                    page.entity_id = target_id
+                
+                # Delete source entity
+                s.delete(source)
+                s.commit()
+                
+                self.logger.info(f"Merged entity {source.name} ({source_id}) into {target.name} ({target_id})")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Failed to merge entities: {e}")
+            return False
+
+    def resolve_entity_aliases(self, name: str, aliases: List[str], kind: Optional[str] = None) -> Optional[str]:
+        """
+        Match entities by aliases and return the entity ID if found.
+        
+        Args:
+            name: Primary entity name
+            aliases: List of alternative names/aliases
+            kind: Optional entity kind filter
+            
+        Returns:
+            Entity UUID if found, None otherwise
+        """
+        all_names = [name] + aliases
+        
+        with self.Session() as s:
+            for alias in all_names:
+                stmt = select(Entity).where(func.lower(Entity.name) == alias.lower())
+                if kind:
+                    stmt = stmt.where(Entity.kind == kind)
+                
+                entity = s.execute(stmt).scalar_one_or_none()
+                if entity:
+                    return str(entity.id)
+        
+        return None
+
+    def get_entity_relations(
+        self, 
+        entity_id: str, 
+        direction: str = "both", 
+        max_depth: int = 1,
+    ) -> Dict:
+        """
+        Traverse relationship graph bidirectionally.
+        
+        Args:
+            entity_id: Starting entity UUID
+            direction: "outgoing", "incoming", or "both"
+            max_depth: Maximum traversal depth (default 1)
+            
+        Returns:
+            Dictionary containing:
+            - entity: The root entity info
+            - outgoing: List of outgoing relationships
+            - incoming: List of incoming relationships
+            - depth: Current depth
+        """
+        def _traverse(eid: str, current_depth: int, visited: set) -> Dict:
+            if current_depth > max_depth or eid in visited:
+                return {"entity_id": eid, "outgoing": [], "incoming": [], "depth": current_depth}
+            
+            visited.add(eid)
+            
+            with self.Session() as s:
+                entity = s.execute(select(Entity).where(Entity.id == eid)).scalar_one_or_none()
+                if not entity:
+                    return {"entity_id": eid, "outgoing": [], "incoming": [], "depth": current_depth}
+                
+                result = {
+                    "entity_id": str(entity.id),
+                    "name": entity.name,
+                    "kind": entity.kind,
+                    "data": _as_dict(entity.data),
+                    "depth": current_depth,
+                    "outgoing": [],
+                    "incoming": [],
+                }
+                
+                # Get outgoing relationships
+                if direction in ["outgoing", "both"]:
+                    outgoing = s.execute(
+                        select(Relationship).where(Relationship.source_id == eid)
+                    ).scalars().all()
+                    
+                    for rel in outgoing:
+                        target = s.execute(select(Entity).where(Entity.id == rel.target_id)).scalar_one_or_none()
+                        rel_info = {
+                            "relation_type": rel.relation_type,
+                            "target_id": str(rel.target_id),
+                            "target_name": target.name if target else None,
+                            "target_kind": target.kind if target else None,
+                            "metadata": _as_dict(rel.metadata_json),
+                        }
+                        
+                        # Recursive traversal if depth allows
+                        if current_depth < max_depth:
+                            rel_info["nested"] = _traverse(str(rel.target_id), current_depth + 1, visited)
+                        
+                        result["outgoing"].append(rel_info)
+                
+                # Get incoming relationships
+                if direction in ["incoming", "both"]:
+                    incoming = s.execute(
+                        select(Relationship).where(Relationship.target_id == eid)
+                    ).scalars().all()
+                    
+                    for rel in incoming:
+                        source = s.execute(select(Entity).where(Entity.id == rel.source_id)).scalar_one_or_none()
+                        rel_info = {
+                            "relation_type": rel.relation_type,
+                            "source_id": str(rel.source_id),
+                            "source_name": source.name if source else None,
+                            "source_kind": source.kind if source else None,
+                            "metadata": _as_dict(rel.metadata_json),
+                        }
+                        
+                        # Recursive traversal if depth allows
+                        if current_depth < max_depth:
+                            rel_info["nested"] = _traverse(str(rel.source_id), current_depth + 1, visited)
+                        
+                        result["incoming"].append(rel_info)
+                
+                return result
+        
+        return _traverse(entity_id, 0, set())
+
+    def deduplicate_entities(self, threshold: float = 0.85, embedder=None) -> Dict[str, str]:
+        """
+        Automatically find and merge duplicate entities.
+        
+        Note: This implementation has O(n²) complexity within each entity kind.
+        For large datasets (>1000 entities per kind), consider implementing
+        clustering-based deduplication using embeddings.
+        
+        Args:
+            threshold: Similarity threshold for considering duplicates (0-1)
+            embedder: Optional LLMIntelExtractor for embedding-based matching
+            
+        Returns:
+            Dictionary mapping source_id -> target_id for all merged entities
+        """
+        merged_map = {}
+        
+        with self.Session() as s:
+            # Get all entities grouped by kind
+            entities_by_kind = {}
+            all_entities = s.execute(select(Entity)).scalars().all()
+            
+            for entity in all_entities:
+                kind = entity.kind or "unknown"
+                if kind not in entities_by_kind:
+                    entities_by_kind[kind] = []
+                entities_by_kind[kind].append(entity)
+        
+        # Process each kind separately
+        for kind, entities in entities_by_kind.items():
+            self.logger.info(f"Deduplicating {len(entities)} entities of kind '{kind}'")
+            
+            # Track which entities have been merged
+            merged_ids = set()
+            
+            for i, entity in enumerate(entities):
+                if str(entity.id) in merged_ids:
+                    continue
+                
+                # Find similar entities
+                similar = self.find_similar_entities(
+                    entity.name, 
+                    threshold=threshold, 
+                    kind=kind,
+                    embedder=embedder,
+                )
+                
+                # Merge duplicates into this entity (keep first occurrence)
+                for sim_entity in similar:
+                    if str(sim_entity.id) == str(entity.id):
+                        continue
+                    if str(sim_entity.id) in merged_ids:
+                        continue
+                    
+                    # Merge sim_entity into entity
+                    if self.merge_entities(str(sim_entity.id), str(entity.id)):
+                        merged_map[str(sim_entity.id)] = str(entity.id)
+                        merged_ids.add(str(sim_entity.id))
+                        self.logger.info(f"Merged duplicate: {sim_entity.name} -> {entity.name}")
+        
+        self.logger.info(f"Deduplication complete: {len(merged_map)} entities merged")
+        return merged_map
+
+    def _name_similarity(self, name1: str, name2: str) -> float:
+        """
+        Calculate simple string similarity between two names.
+        Uses basic edit distance / character overlap.
+        
+        Args:
+            name1: First name
+            name2: Second name
+            
+        Returns:
+            Similarity score (0-1)
+        """
+        if not name1 or not name2:
+            return 0.0
+        
+        n1 = name1.lower().strip()
+        n2 = name2.lower().strip()
+        
+        if n1 == n2:
+            return 1.0
+        
+        # Check if one is substring of other
+        if n1 in n2 or n2 in n1:
+            return 0.85
+        
+        # Simple character overlap
+        set1 = set(n1.replace(" ", ""))
+        set2 = set(n2.replace(" ", ""))
+        
+        if not set1 or not set2:
+            return 0.0
+        
+        overlap = len(set1 & set2)
+        total = len(set1 | set2)
+        
+        return overlap / total if total > 0 else 0.0
+
+    # -------- Relationship Queries (Phase 3) --------
+    def get_relationship_by_entities(
+        self, 
+        source_id: str, 
+        target_id: str, 
+        relation_type: Optional[str] = None
+    ) -> Optional[Relationship]:
+        """
+        Get relationship between two entities.
+        
+        Args:
+            source_id: Source entity UUID
+            target_id: Target entity UUID
+            relation_type: Optional relation type filter
+            
+        Returns:
+            Relationship object if found, None otherwise
+        """
+        try:
+            with self.Session() as s:
+                stmt = select(Relationship).where(
+                    Relationship.source_id == source_id,
+                    Relationship.target_id == target_id
+                )
+                if relation_type:
+                    stmt = stmt.where(Relationship.relation_type == relation_type)
+                
+                return s.execute(stmt).scalar_one_or_none()
+        except Exception as e:
+            self.logger.error(f"get_relationship_by_entities failed: {e}")
+            return None
+    
+    def get_all_relationships_for_entity(self, entity_id: str) -> List[Relationship]:
+        """
+        Get all relationships (incoming and outgoing) for an entity.
+        
+        Args:
+            entity_id: Entity UUID
+            
+        Returns:
+            List of Relationship objects
+        """
+        try:
+            with self.Session() as s:
+                outgoing = s.execute(
+                    select(Relationship).where(Relationship.source_id == entity_id)
+                ).scalars().all()
+                
+                incoming = s.execute(
+                    select(Relationship).where(Relationship.target_id == entity_id)
+                ).scalars().all()
+                
+                # Combine and deduplicate
+                all_rels = list(outgoing) + list(incoming)
+                seen = set()
+                unique_rels = []
+                for rel in all_rels:
+                    if rel.id not in seen:
+                        seen.add(rel.id)
+                        unique_rels.append(rel)
+                
+                return unique_rels
+        except Exception as e:
+            self.logger.error(f"get_all_relationships_for_entity failed: {e}")
+            return []
+    
+    def update_relationship_metadata(
+        self, 
+        relationship_id: str, 
+        metadata: Dict
+    ) -> bool:
+        """
+        Update relationship metadata including confidence score.
+        
+        Args:
+            relationship_id: Relationship UUID
+            metadata: Dictionary of metadata to merge with existing
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with self.Session() as s:
+                rel = s.execute(
+                    select(Relationship).where(Relationship.id == relationship_id)
+                ).scalar_one_or_none()
+                
+                if not rel:
+                    self.logger.warning(f"Relationship not found: {relationship_id}")
+                    return False
+                
+                # Merge metadata
+                current_meta = _as_dict(rel.metadata_json)
+                updated_meta = {**current_meta, **metadata}
+                rel.metadata_json = updated_meta
+                
+                s.commit()
+                return True
+        except Exception as e:
+            self.logger.error(f"update_relationship_metadata failed: {e}")
+            return False
+    
+    def delete_relationship(self, relationship_id: str) -> bool:
+        """
+        Delete a relationship.
+        
+        Args:
+            relationship_id: Relationship UUID to delete
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with self.Session() as s:
+                rel = s.execute(
+                    select(Relationship).where(Relationship.id == relationship_id)
+                ).scalar_one_or_none()
+                
+                if not rel:
+                    self.logger.warning(f"Relationship not found: {relationship_id}")
+                    return False
+                
+                s.delete(rel)
+                s.commit()
+                return True
+        except Exception as e:
+            self.logger.error(f"delete_relationship failed: {e}")
+            return False
+    
+    def get_entity_clusters(
+        self, 
+        relation_type: Optional[str] = None,
+        min_cluster_size: int = 2
+    ) -> List[List[str]]:
+        """
+        Find clusters of connected entities.
+        
+        Args:
+            relation_type: Optional filter for specific relationship type
+            min_cluster_size: Minimum number of entities in a cluster
+            
+        Returns:
+            List of clusters, where each cluster is a list of entity UUIDs
+        """
+        try:
+            from collections import defaultdict
+            
+            with self.Session() as s:
+                stmt = select(Relationship)
+                if relation_type:
+                    stmt = stmt.where(Relationship.relation_type == relation_type)
+                
+                relationships = s.execute(stmt).scalars().all()
+                
+                # Build adjacency list (undirected graph)
+                adjacency = defaultdict(set)
+                all_entities = set()
+                
+                for rel in relationships:
+                    source = str(rel.source_id)
+                    target = str(rel.target_id)
+                    adjacency[source].add(target)
+                    adjacency[target].add(source)
+                    all_entities.add(source)
+                    all_entities.add(target)
+                
+                # Find connected components using DFS
+                visited = set()
+                clusters = []
+                
+                def dfs(node, component):
+                    visited.add(node)
+                    component.append(node)
+                    for neighbor in adjacency.get(node, []):
+                        if neighbor not in visited:
+                            dfs(neighbor, component)
+                
+                for entity in all_entities:
+                    if entity not in visited:
+                        component = []
+                        dfs(entity, component)
+                        if len(component) >= min_cluster_size:
+                            clusters.append(component)
+                
+                return clusters
+        except Exception as e:
+            self.logger.error(f"get_entity_clusters failed: {e}")
+            return []
