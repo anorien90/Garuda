@@ -12,7 +12,6 @@ from collections import defaultdict
 import json
 
 from ..database.store import PersistenceStore
-from ..types.entity import EntityProfile, EntityType
 
 
 logger = logging.getLogger(__name__)
@@ -25,38 +24,39 @@ class EntityGapAnalyzer:
     """
     
     # Define expected fields per entity type
+    # Using string keys for consistency since not all types are in EntityType enum
     EXPECTED_FIELDS = {
-        EntityType.COMPANY: {
+        'company': {
             'critical': ['official_name', 'industry', 'website'],
             'important': ['ticker', 'founded', 'description', 'headquarters'],
             'supplementary': ['revenue', 'employees', 'ceo', 'products']
         },
-        EntityType.PERSON: {
+        'person': {
             'critical': ['full_name'],
             'important': ['title', 'organization', 'location'],
             'supplementary': ['bio', 'education', 'email', 'social_media']
         },
-        'product': {  # Not in EntityType enum, use string
+        'product': {
             'critical': ['name', 'manufacturer'],
             'important': ['description', 'category', 'launch_date'],
             'supplementary': ['price', 'specifications', 'reviews']
         },
-        'organization': {  # Not in EntityType enum, use string
+        'organization': {
             'critical': ['name', 'type'],
             'important': ['description', 'location', 'founded'],
             'supplementary': ['mission', 'leadership', 'size']
         },
-        'location': {  # Not in EntityType enum, use string
+        'location': {
             'critical': ['name', 'country'],
             'important': ['coordinates', 'type'],
             'supplementary': ['population', 'area', 'timezone']
         },
-        EntityType.TOPIC: {
+        'topic': {
             'critical': ['name', 'description'],
             'important': ['category', 'keywords'],
             'supplementary': ['related_topics', 'references']
         },
-        EntityType.NEWS: {
+        'news': {
             'critical': ['title', 'date'],
             'important': ['source', 'summary'],
             'supplementary': ['authors', 'categories', 'entities_mentioned']
@@ -330,10 +330,10 @@ class EntityGapAnalyzer:
                 queries.append(f'"{entity_name}" leadership team management')
         
         # Add entity-type specific queries
-        if entity_type == EntityType.COMPANY:
+        if entity_type == 'company':
             queries.append(f'"{entity_name}" investor relations')
             queries.append(f'"{entity_name}" annual report')
-        elif entity_type == EntityType.PERSON:
+        elif entity_type == 'person':
             queries.append(f'"{entity_name}" biography')
             queries.append(f'"{entity_name}" linkedin profile')
         
@@ -347,21 +347,21 @@ class EntityGapAnalyzer:
             f'"{entity_name}" information',
         ]
         
-        if entity_type == EntityType.COMPANY:
+        if entity_type == 'company':
             queries.extend([
                 f'"{entity_name}" company',
                 f'"{entity_name}" investor relations',
                 f'"{entity_name}" about us',
                 f'"{entity_name}" corporate information'
             ])
-        elif entity_type == EntityType.PERSON:
+        elif entity_type == 'person':
             queries.extend([
                 f'"{entity_name}" biography',
                 f'"{entity_name}" profile',
                 f'"{entity_name}" linkedin',
                 f'"{entity_name}" about'
             ])
-        elif entity_type == EntityType.PRODUCT:
+        elif entity_type == 'product':
             queries.extend([
                 f'"{entity_name}" product',
                 f'"{entity_name}" specifications',
@@ -423,7 +423,7 @@ class EntityGapAnalyzer:
         """Suggest specific sources to find missing data."""
         sources = []
         
-        if entity_type == EntityType.COMPANY:
+        if entity_type == 'company':
             sources.append({
                 "name": "Official Website",
                 "url_pattern": f"site:{{company_domain}} about",
@@ -445,7 +445,7 @@ class EntityGapAnalyzer:
                 "fields": ["description", "founded", "history"]
             })
         
-        elif entity_type == EntityType.PERSON:
+        elif entity_type == 'person':
             sources.append({
                 "name": "LinkedIn Profile",
                 "url_pattern": f"site:linkedin.com/in {entity_name}",
@@ -489,16 +489,17 @@ class EntityGapAnalyzer:
         return (filled_fields / total_fields) * 100
     
     def _normalize_entity_type(self, kind: Optional[str]) -> str:
-        """Normalize entity type to standard values."""
+        """Normalize entity type to standard string values."""
         if not kind:
             return 'entity'
         
         kind_lower = kind.lower()
         
+        # Map to standard string values
         if any(x in kind_lower for x in ['company', 'corporation', 'business']):
-            return EntityType.COMPANY
+            return 'company'
         elif any(x in kind_lower for x in ['person', 'individual', 'people']):
-            return EntityType.PERSON
+            return 'person'
         elif any(x in kind_lower for x in ['product', 'service']):
             return 'product'
         elif any(x in kind_lower for x in ['organization', 'org', 'ngo']):
@@ -506,25 +507,25 @@ class EntityGapAnalyzer:
         elif any(x in kind_lower for x in ['location', 'place', 'city', 'country']):
             return 'location'
         elif any(x in kind_lower for x in ['news', 'event', 'article']):
-            return EntityType.NEWS
+            return 'news'
         elif any(x in kind_lower for x in ['topic', 'subject', 'theme']):
-            return EntityType.TOPIC
+            return 'topic'
         else:
             return 'entity'
     
     def _infer_entity_type(self, entity_name: str) -> str:
-        """Infer entity type from name patterns."""
+        """Infer entity type from name patterns, returns standard string value."""
         name_lower = entity_name.lower()
         
         # Company indicators
         company_suffixes = ['inc', 'corp', 'ltd', 'llc', 'gmbh', 'ag', 'sa', 'plc']
         if any(suffix in name_lower for suffix in company_suffixes):
-            return EntityType.COMPANY
+            return 'company'
         
         # Person indicators (has spaces, title case)
         words = entity_name.split()
         if len(words) >= 2 and all(w[0].isupper() for w in words if w):
-            return EntityType.PERSON
+            return 'person'
         
         # Default
         return 'entity'
