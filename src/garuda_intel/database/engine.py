@@ -22,27 +22,8 @@ from .models import (
     Relationship,
 )
 from ..types.page.fingerprint import PageFingerprint
-
-
-def _uuid5_url(value: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, value))
-
-
-def _uuid4() -> str:
-    return str(uuid.uuid4())
-
-
-def _as_dict(obj):
-    if obj is None:
-        return {}
-    if isinstance(obj, str):
-        try:
-            return json.loads(obj)
-        except Exception:
-            return {}
-    if isinstance(obj, dict):
-        return obj
-    return {}
+from .helpers import uuid5_url as _uuid5_url, uuid4 as _uuid4, as_dict as _as_dict
+from .repositories.page_repository import PageRepository
 
 
 class SQLAlchemyStore(PersistenceStore):
@@ -53,6 +34,9 @@ class SQLAlchemyStore(PersistenceStore):
         self.Session = sessionmaker(self.engine, expire_on_commit=False, future=True)
         self.PageContent = PageContent
         self.Page = Page
+        
+        # Initialize repositories
+        self._page_repo = PageRepository(self.Session)
 
     def get_session(self):
         """
@@ -84,113 +68,23 @@ class SQLAlchemyStore(PersistenceStore):
         sort: str = "fresh",
         limit: int = 200,
     ) -> List[Page]:
-        q_norm = (q or "").strip().lower()
-        pc = aliased(PageContent, flat=True)
-        try:
-            with self.Session() as s:
-                stmt = select(Page).outerjoin(pc, Page.id == pc.page_id)
-
-                conditions = []
-                if q_norm:
-                    like = f"%{q_norm}%"
-                    conditions.append(
-                        or_(
-                            func.lower(Page.url).ilike(like),
-                            func.lower(Page.page_type).ilike(like),
-                            func.lower(Page.entity_type).ilike(like),
-                            func.lower(Page.domain_key).ilike(like),
-                            func.lower(Page.last_status).ilike(like),
-                            func.lower(pc.text).ilike(like),
-                        )
-                    )
-                if entity_type:
-                    conditions.append(Page.entity_type == entity_type)
-                if page_type:
-                    conditions.append(Page.page_type == page_type)
-                if min_score is not None:
-                    conditions.append(Page.score >= min_score)
-
-                if conditions:
-                    stmt = stmt.where(*conditions)
-
-                if sort == "score":
-                    stmt = stmt.order_by(Page.score.desc().nullslast(), Page.last_fetch_at.desc().nullslast())
-                else:
-                    stmt = stmt.order_by(Page.last_fetch_at.desc().nullslast())
-
-                stmt = stmt.limit(limit)
-                results = s.execute(stmt).scalars().all()
-                return results or []
-        except Exception as e:
-            self.logger.error(f"get_all_pages failed: {e}")
-            return []
+        return self._page_repo.get_all_pages(q, entity_type, page_type, min_score, sort, limit)
 
     def get_page_by_url(self, url: str) -> Optional[Dict]:
-        with self.Session() as s:
-            p = s.execute(select(Page).where(Page.url == url)).scalar_one_or_none()
-            if not p:
-                return None
-            return p.to_dict()
+        return self._page_repo.get_page_by_url(url)
 
     def get_page_content_by_url(self, url: str) -> Optional[Dict]:
-        with self.Session() as s:
-            page_id = s.execute(select(Page.id).where(Page.url == url)).scalar_one_or_none()
-            if not page_id:
-                return None
-            pc = s.execute(select(PageContent).where(PageContent.page_id == page_id)).scalar_one_or_none()
-            if pc:
-                return {
-                    "html": pc.html,
-                    "text": pc.text,
-                    "metadata": _as_dict(pc.metadata_json),
-                    "extracted": _as_dict(pc.extracted_json),
-                    "fetch_ts": pc.fetch_ts.isoformat(),
-                }
-            return None
+        return self._page_repo.get_page_content_by_url(url)
 
     # Convenience for legacy callers
     def get_page_content(self, url: str) -> Optional[Dict]:
-        return self.get_page_content_by_url(url)
+        return self._page_repo.get_page_content_by_url(url)
 
     def get_page(self, url: str) -> Optional[Dict]:
-        return self.get_page_by_url(url)
+        return self._page_repo.get_page_by_url(url)
 
     def save_page(self, page: Dict) -> str:
-        """
-        Upsert page + content. Returns the page UUID.
-        If no id is provided, a deterministic UUID5 is derived from the URL to keep Qdrant alignment stable.
-        """
-        url = page.get("url")
-        if not url:
-            raise ValueError("page url is required")
-        page_id = page.get("id") or _uuid5_url(url)
-
-        with self.Session() as s:
-            p = Page(
-                id=page_id,
-                url=url,
-                entity_type=page.get("entity_type"),
-                domain_key=page.get("domain_key"),
-                depth=page.get("depth"),
-                score=page.get("score"),
-                page_type=page.get("page_type"),
-                last_status=page.get("last_status"),
-                last_fetch_at=page.get("last_fetch_at"),
-                text_length=page.get("text_length"),
-            )
-            pc = PageContent(
-                id=_uuid4(),
-                page_id=page_id,
-                html=page.get("html", ""),
-                text=page.get("text_content", ""),
-                metadata_json=page.get("metadata", {}) or {},
-                extracted_json=page.get("extracted", {}) or {},
-                fetch_ts=page.get("last_fetch_at") or datetime.utcnow(),
-            )
-            s.merge(p)
-            s.merge(pc)
-            s.commit()
-            return page_id
+        return self._page_repo.save_page(page)
 
     # -------- Intelligence --------
     def save_intelligence(
@@ -448,16 +342,10 @@ class SQLAlchemyStore(PersistenceStore):
             return [{"url": r[0], "entity_type": r[1], "page_type": r[2]} for r in rows]
 
     def mark_visited(self, url: str):
-        with self.Session() as s:
-            p = s.execute(select(Page).where(Page.url == url)).scalar_one_or_none()
-            if p:
-                p.last_status = "visited"
-                p.last_fetch_at = datetime.utcnow()
-                s.commit()
+        self._page_repo.mark_visited(url)
 
     def has_visited(self, url: str) -> bool:
-        with self.Session() as s:
-            return s.execute(select(Page.id).where(Page.url == url)).scalar_one_or_none() is not None
+        return self._page_repo.has_visited(url)
 
     # -------- Text search across intel --------
     def search_intel(
@@ -535,9 +423,7 @@ class SQLAlchemyStore(PersistenceStore):
 
     # -------- Internal helpers --------
     def _resolve_page_id(self, session, url: Optional[str]) -> Optional[str]:
-        if not url:
-            return None
-        return session.execute(select(Page.id).where(Page.url == url)).scalar_one_or_none()
+        return self._page_repo.resolve_page_id(session, url)
 
     def _upsert_relationship(self, session, from_id: str, to_id: str, relation_type: str, meta: Optional[Dict] = None) -> Optional[Relationship]:
         if not from_id or not to_id or not relation_type:

@@ -18,6 +18,7 @@ from .services.event_system import init_event_logging
 
 # Import route blueprints
 from .routes import static, recorder, search, crawling, entities, relationships
+from .routes import entity_gaps, entity_deduplication, entity_relations
 
 
 settings = Settings.from_env()
@@ -101,6 +102,19 @@ app.register_blueprint(
         api_key_required, settings, store, llm, vector_store,
         entity_crawler, gap_analyzer, adaptive_crawler
     )
+)
+
+# Register new extracted entity route modules
+app.register_blueprint(
+    entity_gaps.init_gaps_routes(api_key_required, gap_analyzer, adaptive_crawler)
+)
+
+app.register_blueprint(
+    entity_deduplication.init_deduplication_routes(api_key_required, store)
+)
+
+app.register_blueprint(
+    entity_relations.init_relations_routes(api_key_required, store)
 )
 
 app.register_blueprint(

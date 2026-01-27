@@ -4,6 +4,7 @@ import logging
 import itertools
 from collections import Counter
 from flask import Blueprint, jsonify, request
+from sqlalchemy.orm import joinedload
 from ..services.event_system import emit_event
 from ..services.graph_builder import (
     _collect_entities_from_json,
@@ -150,9 +151,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
                 semantic_entity_hints = _qdrant_semantic_entity_hints(q, vector_store, llm) if q else set()
 
-                for row in session.query(db_models.IntelligenceData).limit(5000).all():
-                    ents_from_json = _collect_entities_from_json(row.data_json or {})
-                    rels_from_json = _collect_relationships_from_json(row.data_json or {})
+                for row in session.query(db_models.Intelligence).limit(5000).all():
+                    ents_from_json = _collect_entities_from_json(row.data or {})
+                    rels_from_json = _collect_relationships_from_json(row.data or {})
                     
                     if ents_from_json and row.entity_name:
                         primary = upsert_entity(row.entity_name, row.entity_type, row.confidence)
@@ -173,7 +174,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                                 add_edge(primary, other_id, kind="intel-mentions", weight=1)
 
                         intel_id_str = str(row.id)
-                        ensure_node(intel_id_str, f"Intel: {row.source_type or 'data'}", "intel", score=row.confidence,
+                        ensure_node(intel_id_str, f"Intel: {row.entity_type or 'data'}", "intel", score=row.confidence,
                                     meta={"intel_id": intel_id_str, "source_id": intel_id_str})
                         entry_type_map[intel_id_str] = "intel"
                         if primary:
@@ -183,13 +184,21 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                             if other_id:
                                 add_edge(intel_id_str, other_id, kind="intel-mentions", weight=1)
 
-                for row in session.query(db_models.Page).limit(3000).all():
+                for row in session.query(db_models.Page).options(joinedload(db_models.Page.content)).limit(3000).all():
                     page_id = _page_id_from_row(row)
                     page_id_to_url[page_id] = row.url
                     page_ents: list[str] = []
 
-                    if row.entities:
-                        for e_json in row.entities:
+                    # Access extracted data from PageContent if available
+                    extracted_data = {}
+                    metadata = {}
+                    if row.content:
+                        extracted_data = row.content.extracted_json or {}
+                        metadata = row.content.metadata_json or {}
+                    
+                    entities_list = extracted_data.get("entities", [])
+                    if entities_list:
+                        for e_json in entities_list:
                             if isinstance(e_json, dict):
                                 e_name = e_json.get("name") or e_json.get("entity")
                                 e_kind = e_json.get("type") or e_json.get("entity_type")
@@ -200,21 +209,22 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
                     add_cooccurrence_edges(page_ents)
 
-                    ensure_node(page_id, row.title or row.url, "page", score=row.intel_score,
+                    ensure_node(page_id, row.title or row.url, "page", score=row.score,
                                 meta={"url": row.url, "page_type": row.page_type, "source_id": page_id, "page_id": page_id})
                     entry_type_map[page_id] = "page"
 
                     for eid in page_ents:
                         add_edge(page_id, eid, kind="page-mentions", weight=1)
 
-                    for img in _collect_images_from_metadata(row.metadata_json or {}):
+                    for img in _collect_images_from_metadata(metadata):
                         img_url = img["url"]
                         img_id = f"img:{img_url}"
                         ensure_node(img_id, img.get("alt") or img_url, "image",
                                     meta={"source_url": img_url, "source_id": img_id})
                         add_edge(page_id, img_id, kind="page-image", weight=1)
 
-                    for link in row.outlinks or []:
+                    outlinks_list = extracted_data.get("outlinks", [])
+                    for link in outlinks_list:
                         if isinstance(link, str):
                             link_id = f"link:{link}"
                             ensure_node(link_id, link, "link", meta={"url": link, "source_id": link_id})
@@ -318,15 +328,15 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                         "source_id": str(entity.id),
                     }
 
-                intel = session.query(db_models.IntelligenceData).filter_by(id=node_id).first()
+                intel = session.query(db_models.Intelligence).filter_by(id=node_id).first()
                 if intel:
                     node_type = "intel"
-                    label = f"Intel: {intel.source_type or 'data'}"
+                    label = f"Intel: {intel.entity_type or 'data'}"
                     meta = {
                         "intel_id": str(intel.id),
                         "entity_name": intel.entity_name,
                         "entity_type": intel.entity_type,
-                        "data": intel.data_json,
+                        "data": intel.data,
                         "confidence": intel.confidence,
                         "source_id": str(intel.id),
                     }
@@ -340,7 +350,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                         "url": page.url,
                         "title": page.title,
                         "page_type": page.page_type,
-                        "intel_score": page.intel_score,
+                        "intel_score": page.score,
                         "source_id": str(page.id),
                     }
 
@@ -357,19 +367,6 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
         img_url = node_id[4:] if node_id.startswith("img:") else node_id
         return jsonify({"id": node_id, "type": "image", "meta": {"source_url": img_url, "source_id": img_url}})
-
-    @bp.get("/<entity_id>/gaps")
-    @api_key_required
-    def api_entity_gaps(entity_id):
-        """Analyze data gaps for a specific entity."""
-        emit_event("entity_gaps", f"analyzing entity {entity_id}")
-        try:
-            gaps = entity_crawler.analyze_entity_gaps(entity_id)
-            return jsonify(gaps)
-        except Exception as e:
-            emit_event("entity_gaps", f"failed: {e}", level="error")
-            logger.exception("Entity gap analysis failed")
-            return jsonify({"error": str(e)}), 500
 
     @bp.post("/crawl")
     @api_key_required
@@ -414,177 +411,6 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
         except Exception as e:
             emit_event("entity_crawl", f"failed: {e}", level="error")
             logger.exception("Entity crawl failed")
-            return jsonify({"error": str(e)}), 500
-
-    @bp.post("/deduplicate")
-    @api_key_required
-    def api_deduplicate_entities():
-        """Deduplicate entities based on similarity."""
-        body = request.get_json(silent=True) or {}
-        threshold = float(body.get("threshold", 0.85))
-        
-        emit_event("deduplication", f"deduplicating entities with threshold {threshold}")
-        
-        try:
-            merge_map = store.deduplicate_entities(threshold=threshold)
-            count = len(merge_map)
-            emit_event("deduplication", f"merged {count} duplicate entities")
-            return jsonify({
-                "merged_count": count,
-                "merge_map": {str(k): str(v) for k, v in merge_map.items()}
-            })
-        except Exception as e:
-            emit_event("deduplication", f"failed: {e}", level="error")
-            logger.exception("Entity deduplication failed")
-            return jsonify({"error": str(e)}), 500
-
-    @bp.post("/<source_id>/merge/<target_id>")
-    @api_key_required
-    def api_merge_entities(source_id, target_id):
-        """Manually merge two entities."""
-        emit_event("merge_entities", f"merging {source_id} into {target_id}")
-        
-        try:
-            success = store.merge_entities(source_id, target_id)
-            if success:
-                emit_event("merge_entities", "merge successful")
-                return jsonify({"status": "ok", "message": "Entities merged successfully"})
-            else:
-                return jsonify({"error": "Merge failed"}), 500
-        except Exception as e:
-            emit_event("merge_entities", f"failed: {e}", level="error")
-            logger.exception("Entity merge failed")
-            return jsonify({"error": str(e)}), 500
-
-    @bp.get("/<entity_id>/similar")
-    @api_key_required
-    def api_similar_entities(entity_id):
-        """Find similar entities."""
-        threshold = float(request.args.get("threshold", 0.75))
-        
-        try:
-            with store.Session() as session:
-                entity = session.query(db_models.Entity).filter_by(id=entity_id).first()
-                if not entity:
-                    return jsonify({"error": "Entity not found"}), 404
-                
-                entity_name = entity.name
-            
-            similar = store.find_similar_entities(entity_name, threshold=threshold)
-            
-            return jsonify({
-                "entity_name": entity_name,
-                "similar_entities": [
-                    {
-                        "id": str(e.id),
-                        "name": e.name,
-                        "kind": e.kind,
-                        "last_seen": e.last_seen.isoformat() if e.last_seen else None
-                    }
-                    for e in similar
-                ]
-            })
-        except Exception as e:
-            logger.exception("Similar entities lookup failed")
-            return jsonify({"error": str(e)}), 500
-
-    @bp.get("/<entity_id>/relations")
-    @api_key_required
-    def api_entity_relations(entity_id):
-        """Get all relationships for an entity."""
-        direction = request.args.get("direction", "both")
-        max_depth = int(request.args.get("max_depth", 1))
-        
-        try:
-            relations = store.get_entity_relations(
-                entity_id=entity_id,
-                direction=direction,
-                max_depth=max_depth
-            )
-            
-            return jsonify(relations)
-        except Exception as e:
-            logger.exception("Entity relations lookup failed")
-            return jsonify({"error": str(e)}), 500
-
-    @bp.route("/<entity_id>/analyze_gaps", methods=["GET"])
-    @api_key_required
-    def api_entity_analyze_gaps(entity_id):
-        """Analyze an entity to identify missing data fields."""
-        emit_event("entity_gaps_analysis", f"Analyzing gaps for entity {entity_id}")
-        
-        try:
-            analysis = gap_analyzer.analyze_entity_gaps(entity_id)
-            
-            emit_event(
-                "entity_gaps_analysis",
-                f"Analysis complete - {len(analysis.get('missing_fields', []))} gaps found",
-                level="info",
-                payload={"entity_id": entity_id, "completeness": analysis.get("completeness_score")}
-            )
-            
-            return jsonify(analysis)
-        except Exception as e:
-            logger.exception(f"Gap analysis failed for entity {entity_id}")
-            emit_event("entity_gaps_analysis", f"Error: {str(e)}", level="error")
-            return jsonify({"error": str(e)}), 500
-
-    @bp.route("/analyze_all_gaps", methods=["GET"])
-    @api_key_required
-    def api_entities_analyze_all_gaps():
-        """Analyze all entities to find those with critical data gaps."""
-        limit = min(int(request.args.get("limit", 50) or 50), 200)
-        
-        emit_event("bulk_gap_analysis", f"Analyzing gaps for up to {limit} entities")
-        
-        try:
-            results = gap_analyzer.analyze_all_entities(limit=limit)
-            
-            emit_event(
-                "bulk_gap_analysis",
-                f"Analyzed {len(results)} entities",
-                level="info",
-                payload={"count": len(results)}
-            )
-            
-            return jsonify({
-                "count": len(results),
-                "entities": results
-            })
-        except Exception as e:
-            logger.exception("Bulk gap analysis failed")
-            emit_event("bulk_gap_analysis", f"Error: {str(e)}", level="error")
-            return jsonify({"error": str(e)}), 500
-
-    @bp.route("/<entity_id>/infer_from_relationships", methods=["POST"])
-    @api_key_required
-    def api_entity_infer_from_relationships(entity_id):
-        """Use related entities to infer missing data for target entity."""
-        hops = int(request.args.get("hops", 1) or 1)
-        
-        emit_event(
-            "cross_entity_inference",
-            f"Inferring data for entity {entity_id} via relationships",
-            payload={"entity_id": entity_id, "hops": hops}
-        )
-        
-        try:
-            inferences = adaptive_crawler.cross_entity_inference(
-                entity_id=entity_id,
-                relationship_hops=hops
-            )
-            
-            emit_event(
-                "cross_entity_inference",
-                f"Found {len(inferences.get('inferred_fields', []))} possible inferences",
-                level="info",
-                payload=inferences
-            )
-            
-            return jsonify(inferences)
-        except Exception as e:
-            logger.exception(f"Cross-entity inference failed for {entity_id}")
-            emit_event("cross_entity_inference", f"Error: {str(e)}", level="error")
             return jsonify({"error": str(e)}), 500
     
     return bp
