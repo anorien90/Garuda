@@ -2,6 +2,7 @@
 
 import logging
 import itertools
+import uuid as uuid_module
 from collections import Counter
 from flask import Blueprint, jsonify, request
 from sqlalchemy.orm import joinedload
@@ -358,7 +359,6 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
             return jsonify({"id": node_id, "type": "image", "meta": {"source_url": img_url, "source_id": img_url}})
 
         # Check if node_id is a valid UUID before querying database
-        import uuid as uuid_module
         is_valid_uuid = False
         try:
             uuid_module.UUID(node_id)

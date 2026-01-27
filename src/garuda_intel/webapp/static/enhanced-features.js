@@ -13,7 +13,7 @@ import { pill } from './ui.js';
 export async function analyzeEntityGaps(entityId) {
   try {
     const response = await fetch(`${API_BASE}/api/entities/${entityId}/gaps`, {
-      headers: { 'X-API-Key': getApiKey() }
+      headers: { 'X-API-Key': getApiKey() || '' }
     });
     
     if (!response.ok) {
