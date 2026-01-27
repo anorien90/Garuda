@@ -70,9 +70,9 @@ def init_media_routes(
                     query = query.filter(MediaItem.media_type == media_type)
                 
                 if processed == "true":
-                    query = query.filter(MediaItem.processed == True)
+                    query = query.filter(MediaItem.processed.is_(True))
                 elif processed == "false":
-                    query = query.filter(MediaItem.processed == False)
+                    query = query.filter(MediaItem.processed.is_(False))
                 elif processed == "error":
                     query = query.filter(MediaItem.processing_error.isnot(None))
                 
@@ -112,6 +112,14 @@ def init_media_routes(
             if not url:
                 return jsonify({"error": "url is required"}), 400
             
+            # Validate media_type
+            if media_type not in ["image", "video", "audio"]:
+                return jsonify({"error": f"Invalid media_type: {media_type}. Must be one of: image, video, audio"}), 400
+            
+            # Basic URL validation
+            if not url.startswith(("http://", "https://")):
+                return jsonify({"error": "Invalid URL format. Must start with http:// or https://"}), 400
+            
             # Create media item in database
             with store.get_session() as session:
                 from ....database.models import MediaItem, Page
@@ -146,9 +154,10 @@ def init_media_routes(
                 session.commit()
                 
                 return jsonify({
-                    "message": "Media item created. Processing is not yet implemented.",
+                    "message": "Media item created successfully. Automatic processing is not yet implemented.",
                     "id": str(media_item.id),
-                    "status": "pending"
+                    "status": "pending",
+                    "note": "Media processing requires downloading and processing the file. Manual processing will be added in a future update."
                 })
                 
         except Exception as e:

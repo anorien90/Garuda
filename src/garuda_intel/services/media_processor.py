@@ -136,8 +136,11 @@ class MediaProcessor:
     def process_audio(self, audio_path: str, url: str) -> Dict[str, Any]:
         """Extract text from audio using speech recognition.
         
+        Note: Only supports WAV audio files. Other formats need conversion first.
+        Uses Google's speech recognition API which has rate limits.
+        
         Args:
-            audio_path: Local path to audio file
+            audio_path: Local path to audio file (WAV format)
             url: Original URL of the audio
             
         Returns:
@@ -201,6 +204,11 @@ class MediaProcessor:
             return None
         
         try:
+            # Check if LLM has embedding functionality
+            if not hasattr(self.llm, 'embed_text'):
+                logger.warning("LLM does not support embedding generation")
+                return None
+                
             # Use the LLM's embedding functionality
             embedding = self.llm.embed_text(text)
             if embedding:

@@ -59,7 +59,7 @@ entity_crawler = EntityAwareCrawler(store, llm)
 crawl_learner = CrawlLearner(store)
 gap_analyzer = EntityGapAnalyzer(store)
 adaptive_crawler = AdaptiveCrawlerService(store, llm, crawl_learner)
-media_processor = MediaProcessor(llm, enable_processing=True)
+media_processor = MediaProcessor(llm, enable_processing=settings.media_processing_enabled)
 
 # Initialize event logging
 init_event_logging()

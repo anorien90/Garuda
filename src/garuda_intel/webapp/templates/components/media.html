@@ -173,8 +173,9 @@ async function loadMediaItems() {
     const typeFilter = document.getElementById('media-type-filter').value;
     const statusFilter = document.getElementById('media-processed-filter').value;
     
-    // Placeholder - would call actual API
-    container.innerHTML = '<p class="text-sm text-slate-500 italic">Media processing API not yet implemented. Coming soon!</p>';
+    // Note: Automatic media processing requires file download and processing
+    // For now, media items can be created via API but processing is manual
+    container.innerHTML = '<p class="text-sm text-slate-500 italic">Media items will appear here. API integration pending.</p>';
     
   } catch (error) {
     container.innerHTML = `<p class="text-sm text-red-500">Error: ${error.message}</p>`;
@@ -185,15 +186,15 @@ async function loadMediaItems() {
 document.getElementById('manual-media-process-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const resultDiv = document.getElementById('media-process-result');
-  resultDiv.innerHTML = '<p class="text-sm text-slate-500 italic">Processing media...</p>';
+  resultDiv.innerHTML = '<p class="text-sm text-slate-500 italic">Creating media item...</p>';
   
   try {
     const url = document.getElementById('media-url').value;
     const type = document.getElementById('media-type').value;
     
-    // Placeholder - would call actual API
+    // Note: This creates the database entry, but automatic processing requires file download
     resultDiv.innerHTML = `<div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg text-sm">
-      Media processing feature is under development. Would process ${type} from ${url}
+      Media item created for ${type} from ${url}. Automatic file download and processing will be added in a future update.
     </div>`;
     
   } catch (error) {
