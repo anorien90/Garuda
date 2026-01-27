@@ -26,12 +26,15 @@ function renderIntelCard(hit) {
     </div>
   `;
 
+  const idPill = hit.id ? pill(`id: ${hit.id}`) : '';
+  const entityIdPill = hit.entity_id ? pill(`entity_id: ${hit.entity_id}`) : '';
+
   return `
   <article class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4 space-y-3">
     <div class="flex justify-between items-center">
       <div>
         <h4 class="text-lg font-semibold text-slate-900 dark:text-white">${hit.entity || info.official_name || ''}</h4>
-        <div class="text-xs uppercase text-brand-600">${hit.entity_type || ''}</div>
+        <div class="flex flex-wrap gap-1 text-[11px] text-brand-600">${idPill}${entityIdPill}${hit.entity_type ? pill(hit.entity_type) : ''}</div>
       </div>
       <span class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded" title="Confidence">${hit.confidence ?? (hit.score?.toFixed?.(2) ?? '')}</span>
     </div>

@@ -5,6 +5,7 @@ import json
 from collections import defaultdict
 from typing import List, Dict, Optional, Set, Tuple, Any
 from urllib.parse import urlparse, urljoin
+from uuid import uuid5, NAMESPACE_URL
 from bs4 import BeautifulSoup
 
 from ..browser.selenium import SeleniumBrowser
@@ -16,6 +17,16 @@ from ..database.store import PersistenceStore
 from ..vector.engine import VectorStore
 from ..extractor.llm import LLMIntelExtractor
 
+
+def _uuid5_url(url: str) -> str:
+    return str(uuid5(NAMESPACE_URL, url))
+
+def _as_list(val):
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return val
+    return [val]
 
 class IntelligentExplorer:
     """
@@ -66,6 +77,13 @@ class IntelligentExplorer:
     def explore(self, start_urls: List[str], browser: Optional[SeleniumBrowser] = None) -> Dict[str, dict]:
         """Main loop orchestrating the full intelligence pipeline."""
         frontier = Frontier()
+        if self.store:
+            for url in start_urls:
+                try:
+                    self.store.save_seed(query=self.profile.name, entity_type=self.profile.entity_type.value, source="explorer")
+                except Exception:
+                    pass
+
         for url in start_urls:
             score, _ = self.url_scorer.score_url(url, "", 0)
             frontier.push(score, 0, url, "Seed URL")
@@ -129,75 +147,58 @@ class IntelligentExplorer:
         return self.explored_data
 
     def _run_intelligence_pipeline(self, url: str, html: str, depth: int, score: float) -> Optional[Dict]:
-        """The full extraction and reflection process."""
-        # A. Physical Extraction
-        self.logger.info(f"Processing: {url} at depth {depth} with score {score:.2f}")
+        """
+        The full extraction and reflection process:
+        - Extract text, metadata, links
+        - Run LLM extraction + reflection
+        - Persist page, links, entities, intel
+        - Persist embeddings
+        """
+        # 1) Extract content and links
         text_content = self.content_extractor.html_to_text(html)
-        text_length = len(text_content) if text_content else 0
         metadata = self.content_extractor.extract_metadata(html)
-        page_type = self.content_extractor.detect_page_type(url, html, metadata, self.profile.entity_type)
-
-        # 0. Bring in prior intel context via semantic search so downstream extraction knows what we already found.
-        prior_intel = []
-        if self.vector_store and self.llm_extractor:
-            prior_intel = self._collect_prior_intel_context(text_content)
-
-        # B. Semantic Redundancy Check
-        if self.vector_store and self.llm_extractor:
-            embedding = self.llm_extractor.embed_text(text_content)
-            if embedding:
-                similar = self.vector_store.search(embedding, top_k=1)
-                if similar and similar[0].score > 0.96:
-                    self.logger.info(f"Redundancy Filter: Skipping {url} (Similarity: {similar[0].score:.2f})")
-                    return None
-                self.vector_store.upsert(
-                    url,
-                    embedding,
-                    {
-                        "kind": "page_raw",
-                        "title": metadata.get("title"),
-                        "type": page_type,
-                        "entity": self.profile.name,
-                        "entity_type": getattr(self.profile.entity_type, "value", str(self.profile.entity_type)),
-                    },
-                )
-
-        # C. Intelligence Extraction & Verification
-        verified_findings = []
-        has_high_confidence = False
+        page_type = self.content_extractor.detect_page_type(
+            url, html, metadata, self.profile.entity_type
+        )
+        links = self._extract_links(url, html, metadata, depth)
         extracted_entities: List[Dict] = []
-        finding_ids: List[Tuple[Dict, Optional[int]]] = []
+        verified_findings: List[Dict] = []
+        verified_findings_with_scores: List[Tuple[Dict, float]] = []
+        finding_ids: List[Tuple[Dict, Optional[str], Optional[str]]] = []
 
+        # 2) LLM extraction + reflection
         if self.llm_extractor:
             raw_intel = self.llm_extractor.extract_intelligence(
-                self.profile,
-                text_content,
-                page_type,
-                url,
-                prior_intel or None,
+                profile=self.profile,
+                text=text_content,
+                page_type=page_type,
+                url=url,
+                existing_intel=None,
             )
-
-            findings = raw_intel if isinstance(raw_intel, list) else [raw_intel]
-            for finding in findings:
-                if not finding:
-                    continue
-                is_verified, conf_score = self.llm_extractor.reflect_and_verify(self.profile, finding)
-                self.logger.debug(f"Reflection Result - Verified: {is_verified}, Confidence: {conf_score}")
-                if is_verified and conf_score >= 70:
-                    has_high_confidence = True
-                    if not finding.get("basic_info", {}).get("official_name"):
+            if raw_intel:
+                for finding in _as_list(raw_intel):
+                    is_verified, conf_score = self.llm_extractor.reflect_and_verify(
+                        self.profile, finding
+                    )
+                    if is_verified:
                         finding.setdefault("basic_info", {})["official_name"] = self.profile.name
-                    verified_findings.append(finding)
-                    intel_id = None
-                    if self.store:
-                        intel_id = self.store.save_intelligence(finding, conf_score)
-                    finding_ids.append((finding, intel_id))
-                    extracted_entities.extend(self.llm_extractor.extract_entities_from_finding(finding))
+                        verified_findings.append(finding)
+                        verified_findings_with_scores.append((finding, conf_score))
+                        extracted_entities.extend(
+                            self.llm_extractor.extract_entities_from_finding(finding)
+                        )
 
             if not verified_findings and raw_intel:
-                extracted_entities.extend(self.llm_extractor.extract_entities_from_finding(raw_intel))
+                extracted_entities.extend(
+                    self.llm_extractor.extract_entities_from_finding(raw_intel)
+                )
 
-        summary = self.llm_extractor.summarize_page(text_content) if self.llm_extractor else ""
+        summary = (
+            self.llm_extractor.summarize_page(text_content)
+            if self.llm_extractor
+            else ""
+        )
+        text_length = len(text_content or "")
 
         page_record = {
             "url": url,
@@ -205,32 +206,90 @@ class IntelligentExplorer:
             "score": score,
             "summary": summary,
             "extracted_intel": verified_findings,
-            "has_high_confidence_intel": has_high_confidence,
-            "text_content": text_content,
             "metadata": metadata,
+            "extracted": extracted_entities,
+            "links": links,
+            "has_high_confidence_intel": any(
+                cs >= 70 for _, cs in verified_findings_with_scores
+            ),
+            "text_content": text_content,
             "text_length": text_length,
             "entity_type": getattr(self.profile.entity_type, "value", str(self.profile.entity_type)),
             "domain_key": self._get_domain_key(url),
             "depth": depth,
         }
 
-        entity_id_map: Dict[tuple, int] = {}
-        if self.store:
-            self.store.save_page(page_record)
-            if extracted_entities:
-                entity_id_map = self.store.save_entities(extracted_entities)
+        # Initialize to avoid UnboundLocalError when store is absent or fails
+        entity_id_map: Dict[tuple, str] = {}
+        primary_entity_id: Optional[str] = None
+        page_uuid: Optional[str] = None
 
-        if self.vector_store and self.llm_extractor:
-            self._persist_embeddings(
-                url,
-                metadata,
-                summary,
-                text_content,
-                finding_ids,
-                extracted_entities,
-                entity_id_map,
-                page_type,
+        # 3) Persist page, entities, links, intel
+        if self.store:
+            page_uuid = self.store.save_page(page_record)
+            page_record["id"] = page_uuid
+
+            if extracted_entities:
+                entity_id_map = self.store.save_entities(extracted_entities) or {}
+
+            if links:
+                try:
+                    self.store.save_links(url, links)
+                except Exception as e:
+                    self.logger.debug(f"save_links failed: {e}")
+
+            primary_entity_id = entity_id_map.get(
+                (
+                    self.profile.name,
+                    getattr(self.profile.entity_type, "value", str(self.profile.entity_type)),
+                )
             )
+
+        for finding, conf_score in verified_findings_with_scores:
+            intel_id = None
+            if self.store:
+                intel_id = self.store.save_intelligence(
+                    finding=finding,
+                    confidence=conf_score,
+                    page_id=page_uuid,
+                    entity_id=primary_entity_id,
+                    entity_name=self.profile.name,
+                    entity_type=getattr(self.profile.entity_type, "value", str(self.profile.entity_type)),
+                )
+            finding_ids.append((finding, intel_id, primary_entity_id))
+
+        # 4) Persist embeddings (page + entities + findings)
+        if self.vector_store and self.llm_extractor:
+            try:
+                entries = self.llm_extractor.build_embeddings_for_page(
+                    url=url,
+                    metadata=metadata,
+                    summary=summary,
+                    text_content=text_content,
+                    findings_with_ids=finding_ids,
+                    page_type=page_type,
+                    entity_name=self.profile.name,
+                    entity_type=self.profile.entity_type,
+                    page_uuid=page_uuid,
+                )
+                if extracted_entities:
+                    entries.extend(
+                        self.llm_extractor.build_embeddings_for_entities(
+                            entities=extracted_entities,
+                            source_url=url,
+                            entity_type=self.profile.entity_type,
+                            entity_id_map=entity_id_map,
+                            page_uuid=page_uuid,
+                        )
+                    )
+                for entry in entries:
+                    self.vector_store.upsert(
+                        point_id=entry["id"],
+                        vector=entry["vector"],
+                        payload=entry["payload"],
+                    )
+            except Exception as e:
+                self.logger.debug(f"embedding persist failed: {e}")
 
         return page_record
 
@@ -261,7 +320,7 @@ class IntelligentExplorer:
             return html, links
         else:
             html = self._fetch_with_requests(url)
-            links = self._extract_links(html, url) if depth < self.max_depth else []
+            links = self._extract_links(url, html, {}, depth) if depth < self.max_depth else []
             return html, links
 
     def _boost_domain_priority(self, url: str):
@@ -286,14 +345,36 @@ class IntelligentExplorer:
         except Exception:
             return ""
 
-    def _extract_links(self, html: str, base_url: str) -> List[Dict]:
-        soup = BeautifulSoup(html, "html.parser")
-        found = []
-        for a in soup.find_all("a", href=True):
-            href = urljoin(base_url, a["href"])
-            if href.startswith("http"):
-                found.append({"href": href, "text": a.get_text(strip=True)})
-        return found
+    def _extract_links(
+        self,
+        url: str,
+        html: str,
+        metadata: Optional[dict] = None,
+        depth: int = 0,
+    ) -> List[Dict]:
+        """
+        Parse outgoing links from the page. Metadata/depth are accepted for compatibility.
+        """
+        links: List[Dict] = []
+        if not html:
+            return links
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            for a in soup.find_all("a", href=True):
+                href = a.get("href")
+                text = a.get_text(strip=True)[:500] if a.get_text() else ""
+                links.append(
+                    {
+                        "href": urljoin(url, href),
+                        "text": text,
+                        "depth": depth + 1,
+                        "reason": "page_link",
+                        "score": 0,
+                    }
+                )
+        except Exception as e:
+            self.logger.debug(f"_extract_links failed: {e}")
+        return links
 
     def _collect_prior_intel_context(self, text_content: str) -> List[Dict]:
         context = []
@@ -316,10 +397,11 @@ class IntelligentExplorer:
         metadata: Dict,
         summary: str,
         text_content: str,
-        finding_ids: List[Tuple[Dict, Optional[int]]],
+        finding_ids: List[Tuple[Dict, Optional[int], Optional[str]]],
         entities: List[Dict],
-        entity_id_map: Dict[tuple, int],
+        entity_id_map: Dict[tuple, Any],
         page_type: str,
+        page_uuid: Optional[str],
     ):
         try:
             entries = self.llm_extractor.build_embeddings_for_page(
@@ -327,10 +409,11 @@ class IntelligentExplorer:
                 metadata=metadata,
                 summary=summary,
                 text_content=text_content,
-                findings_with_ids=finding_ids,
+                findings_with_ids=[(f, iid, ent_id) for (f, iid, ent_id) in finding_ids],
                 page_type=page_type,
                 entity_name=self.profile.name,
                 entity_type=self.profile.entity_type,
+                page_uuid=page_uuid,
             )
             if entities:
                 entries.extend(
@@ -339,6 +422,7 @@ class IntelligentExplorer:
                         source_url=url,
                         entity_type=self.profile.entity_type,
                         entity_id_map=entity_id_map,
+                        page_uuid=page_uuid,
                     )
                 )
             for entry in entries:

@@ -6,6 +6,10 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
 
+def point_id_for_page(url: str) -> str:
+    """Use deterministic UUID for pages so SQL/Qdrant stay aligned."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, url))
+
 
 class QdrantVectorStore(VectorStore):
     def __init__(self, url: str = "http://qdrant:6333", collection: str = "pages", vector_size: int = 384):
@@ -41,7 +45,6 @@ class QdrantVectorStore(VectorStore):
         )
 
     def search(self, query_vector: List[float], top_k: int = 10, filter_: Optional[qmodels.Filter] = None):
-        # Modern qdrant-client uses .search() or .query_points()
         response = self.client.query_points(
             collection_name=self.collection,
             query=query_vector,

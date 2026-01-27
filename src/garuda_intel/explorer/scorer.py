@@ -7,38 +7,38 @@ from ..types.entity.type import EntityType
 class URLScorer:
     # Restored for compatibility with engine/_build_seed_urls logic
     REGISTRY_DOMAINS = {
-        'opencorporates.com',
-        'northdata.de',
-        'company-information.service.gov.uk',
-        'crunchbase.com',
-        'pitchbook.com',
-        'bloomberg.com',
-        'reuters.com',
-        'dnb.com',
-        'linkedin.com',
-        'facebook.com',
-        'twitter.com',
-        'instagram.com',
-        'wikipedia.org',
-        'zoominfo.com',
-        'kompass.com',
-        'yellowpages.com',
-        'gelbeseiten.de',
-        'yelp.com',
-        'firmenwissen.de'
+        "opencorporates.com",
+        "northdata.de",
+        "company-information.service.gov.uk",
+        "crunchbase.com",
+        "pitchbook.com",
+        "bloomberg.com",
+        "reuters.com",
+        "dnb.com",
+        "linkedin.com",
+        "facebook.com",
+        "twitter.com",
+        "instagram.com",
+        "wikipedia.org",
+        "zoominfo.com",
+        "kompass.com",
+        "yellowpages.com",
+        "gelbeseiten.de",
+        "yelp.com",
+        "firmenwissen.de",
     }
 
     def __init__(self, company_name: str, entity_type: EntityType, patterns: List[Dict] = None, domains: List[Dict] = None):
         self.entity_type = entity_type
         self.company_name = company_name.lower()
         self.company_words = set(self.company_name.split())
-        self.company_words -= {'inc', 'llc', 'ltd', 'corp', 'corporation', 'company', 'co', 'gmbh', 'ag', 'limited'}
-        self.clean_company_name = re.sub(r'[^a-z0-9]', '', self.company_name)
+        self.company_words -= {"inc", "llc", "ltd", "corp", "corporation", "company", "co", "gmbh", "ag", "limited"}
+        self.clean_company_name = re.sub(r"[^a-z0-9]", "", self.company_name)
         self.official_domains = set(d["domain"] for d in (domains or []) if d.get("is_official"))
         self.patterns = patterns or []
         self.domains = domains or []
         self.blacklist_compiled = self._compile_blacklist()
-        self.dynamic_domains = {} # Add this to track learned boosts
+        self.dynamic_domains = {}  # track learned boosts
 
     def boost_domain(self, domain: str, amount: float = 25.0):
         """Allows the explorer to 'learn' which domains are useful."""
@@ -46,9 +46,22 @@ class URLScorer:
 
     def _compile_blacklist(self):
         default = [
-            r'facebook\.com/sharer', r'twitter\.com/intent', r'linkedin\.com/share',
-            r'mailto:', r'sms:', r'tel:', r'javascript:', r'#$', r'/rss\.xml', r'/feed\.xml',
-            r'/privacy', r'/terms', r'/login', r'/signup', r'/register', r'/newsletter'
+            r"facebook\.com/sharer",
+            r"twitter\.com/intent",
+            r"linkedin\.com/share",
+            r"mailto:",
+            r"sms:",
+            r"tel:",
+            r"javascript:",
+            r"#$",
+            r"/rss\.xml",
+            r"/feed\.xml",
+            r"/privacy",
+            r"/terms",
+            r"/login",
+            r"/signup",
+            r"/register",
+            r"/newsletter",
         ]
         return [re.compile(p, re.IGNORECASE) for p in default]
 
@@ -61,24 +74,21 @@ class URLScorer:
         if not url_lower.startswith(("http://", "https://")):
             return (0.0, "Non-HTTP URL")
 
-        score = 40.0  # Increase base score so we don't start at zero
+        score = 40.0  # higher base to avoid zero starts
         reasons = ["Base topic score"]
-        
-        url_lower = url.lower()
-        text_lower = link_text.lower()
-    
-        # Add specific logic for TOPIC type
+
+        # Topic-specific boost
         if self.entity_type == EntityType.TOPIC:
             topic_keywords = ["wiki", "encyclopedia", "journal", "edu", "theory", "science"]
             for kw in topic_keywords:
                 if kw in url_lower:
                     score += 30
                     reasons.append(f"Topic-relevant domain: {kw}")
-    
-        # Ensure the name match is robust
+
+        # Strong name matches
         for word in self.company_words:
             if len(word) > 3 and (word in url_lower or word in text_lower):
-                score += 50 # Give a massive boost for the actual entity name
+                score += 50
                 reasons.append(f"Match: {word}")
 
         parsed = urlparse(url)
@@ -87,7 +97,7 @@ class URLScorer:
         sld = clean_domain.split(".")[0]
         clean_sld = re.sub(r"[^a-z0-9]", "", sld)
 
-        # Domain boosts from data
+        # Domain boosts from supplied domains/patterns
         for d in self.domains:
             if d["domain"] in domain:
                 score += d.get("weight", 0)
@@ -98,12 +108,12 @@ class URLScorer:
                     reasons.append("Official domain")
                 break
 
-        # Exact name match boost for non-registry
+        # Exact company name match in domain
         if self.clean_company_name and clean_sld == self.clean_company_name:
             score += 40
             reasons.append("Exact company name match in domain")
 
-        # Data-driven patterns
+        # Regex patterns
         for p in self.patterns:
             pat = p.get("pattern")
             w = p.get("weight", 0)
@@ -112,7 +122,7 @@ class URLScorer:
                 reasons.append(f"Pattern match: {pat}")
                 break
 
-        # Entity-specific keywords in link text/URL
+        # Entity-type keywords
         keywords = []
         if self.entity_type == EntityType.NEWS:
             keywords = ["news", "headline", "breaking", "latest"]
@@ -133,6 +143,12 @@ class URLScorer:
             if len(word) > 3 and (word in url_lower or word in text_lower):
                 score += 15
                 reasons.append("Name match")
+
+        # Dynamic boosts
+        for dom, boost in self.dynamic_domains.items():
+            if dom in domain:
+                score += boost
+                reasons.append(f"Learned boost: {dom}")
 
         # Depth penalty
         score -= current_depth * 5

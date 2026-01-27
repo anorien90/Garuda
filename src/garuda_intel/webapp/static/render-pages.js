@@ -46,6 +46,7 @@ export function showPageDetailModal(payload) {
               ${chips([meta.content_type || 'Unknown type', meta.language, meta.site_name])}
               ${meta.text_length ? `<div class="text-xs text-slate-500">${Math.round(meta.text_length/1024)} KB</div>` : ''}
               ${meta.last_fetch_at ? `<div class="text-xs text-slate-500">Fetched: ${meta.last_fetch_at}</div>` : ''}
+              ${meta.id ? `<div class="text-xs text-slate-500">UUID: ${meta.id}</div>` : ''}
             </div>
             ${renderStructuredData(structured)}
           </div>
@@ -70,6 +71,7 @@ function renderPageCard(p) {
     p.page_type && pill(p.page_type),
     p.score != null && pill(`score ${p.score}`),
     size && pill(size),
+    p.id && pill(`uuid ${p.id}`),
     highConf,
   ].filter(Boolean).join('');
 

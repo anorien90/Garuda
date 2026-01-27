@@ -1,4 +1,3 @@
-# minor change: entity context support
 import json
 import logging
 import requests
@@ -22,12 +21,16 @@ class SemanticFilter:
         Return JSON only: {{"relevant": true/false, "score": 0-100}}
         """
         try:
-            response = requests.post(self.ollama_url, json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json"
-            }, timeout=30)
+            response = requests.post(
+                self.ollama_url,
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "format": "json",
+                },
+                timeout=30,
+            )
             result = json.loads(response.json().get("response", "{}"))
             return result.get("relevant", False), result.get("score", 0) / 100.0
         except Exception as e:

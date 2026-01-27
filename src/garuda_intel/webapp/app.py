@@ -10,6 +10,8 @@ from collections import deque, Counter
 import itertools
 from typing import Generator
 import re
+import uuid  # NEW
+from uuid import uuid5, NAMESPACE_URL
 
 from ..database import models as db_models
 from ..database.engine import SQLAlchemyStore
@@ -81,6 +83,20 @@ def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _looks_like_uuid(val: str) -> bool:
+    try:
+        uuid.UUID(str(val))
+        return True
+    except Exception:
+        return False
+
+
+def _page_uuid_from_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    return str(uuid5(NAMESPACE_URL, url))
+
+
 def emit_event(step: str, message: str, level: str = "info", payload=None, session_id=None):
     """Primary emitter used across the app when logging explicit steps."""
     evt = {
@@ -110,7 +126,6 @@ class EventQueueHandler(logging.Handler):
             }
             _publish_event(evt)
         except Exception:
-            # Never break app logging on handler errors
             pass
 
 
@@ -125,7 +140,6 @@ def init_event_logging():
     if root_logger.level > logging.INFO:
         root_logger.setLevel(logging.INFO)
 
-    # Tone down noisy HTTP access logs but still capture warnings/errors
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 
@@ -151,7 +165,6 @@ def _event_stream():
 def api_key_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        # If no key configured, allow open access (for local dev)
         if not settings.api_key:
             return fn(*args, **kwargs)
         key = request.headers.get("X-API-Key") or request.args.get("api_key")
@@ -169,7 +182,6 @@ def home():
 
 
 def _canonical(name) -> str:
-    # Accept any type, convert to string, then normalize
     if name is None:
         return ""
     try:
@@ -186,10 +198,6 @@ def _best_label(variants_counter: Counter[str]) -> str:
 
 
 def _collect_entities_from_json(obj, path="root"):
-    """
-    Recursively walk a JSON-like structure and collect entities.
-    Returns list of {"name": str, "kind": Optional[str], "path": str}
-    """
     out = []
     if obj is None:
         return out
@@ -218,10 +226,6 @@ def _as_list(val):
 
 
 def _collect_images_from_metadata(meta: dict):
-    """
-    Extract image-like references from metadata/structured data.
-    Looks at common OpenGraph/Twitter and generic keys.
-    """
     if not isinstance(meta, dict):
         return []
     candidates = []
@@ -285,27 +289,69 @@ def _norm_kind(k: str | None) -> str | None:
     k2 = k.strip().lower()
     if k2 in ORG_KINDS:
         return "org"
+    if k2 == "person":
+        return "person"
     return k2
+
+
+def _page_id_from_row(row):
+    if not row:
+        return None
+    for key in ("id", "page_id"):
+        v = getattr(row, key, None) if not isinstance(row, dict) else row.get(key)
+        if v:
+            return v
+    url = getattr(row, "page_url", None) or getattr(row, "url", None) if not isinstance(row, dict) else row.get("url") or row.get("page_url")
+    if url:
+        return _page_uuid_from_url(url)
+    return None
+
+
+def _qdrant_semantic_page_hits(query: str, top_k: int = 200):
+    """Return Qdrant page hits with payload; empty if vector store unavailable."""
+    if not (vector_store and query):
+        return []
+    vec = llm.embed_text(query)
+    if not vec:
+        return []
+    try:
+        return vector_store.search(vec, top_k=top_k)
+    except Exception as e:
+        logger.warning(f"entities graph semantic page search failed: {e}")
+        return []
+
+
+def _qdrant_semantic_entity_hints(query: str, top_k: int = 200) -> set[str]:
+    """Pull entity names from semantic hits payload."""
+    hints: set[str] = set()
+    for r in _qdrant_semantic_page_hits(query, top_k=top_k):
+        p = getattr(r, "payload", {}) or {}
+        for key in ("entity", "entity_name", "name"):
+            val = p.get(key)
+            if val:
+                canon = _canonical(val)
+                if canon:
+                    hints.add(canon)
+    return hints
+
+
+def _add_relationship_edges(session, ensure_node, add_edge):
+    """Include explicit Entity->Entity relationships as edges."""
+    for rel in session.query(db_models.Relationship).limit(20000).all():
+        sid = str(rel.source_id)
+        tid = str(rel.target_id)
+        kind = rel.relation_type or "relationship"
+        ensure_node(sid, sid, "entity", meta={"entity_id": sid, "source_id": sid})
+        ensure_node(tid, tid, "entity", meta={"entity_id": tid, "source_id": tid})
+        add_edge(sid, tid, kind=kind, weight=1, meta=rel.metadata_json or {})
 
 
 @app.get("/api/entities/graph")
 @api_key_required
 def api_entities_graph():
-    """
-    Build entity co-occurrence graph with combined semantic + SQL filtering.
-    Query params:
-      query: semantic filter (vector-backed) combined with SQL substring fallback
-      type: optional type filter (matches derived node type or entity_kind)
-      min_score: minimum confidence for an intel row (default 0)
-      limit: max nodes returned (default 100, cap 500)
-      depth: BFS depth from seeds; -1/None to disable
-      node_types: comma list of allowed node types (defaults include org/corporation)
-      edge_kinds: comma list of allowed edge kinds
-      include_meta: if "1", include richer edge meta for traceability
-    """
     q = (request.args.get("query") or "").strip().lower()
     type_filter_raw = request.args.get("type")
-    type_filter = _norm_kind(type_filter_raw) or ""  # normalize org/corp/etc; never None
+    type_filter = _norm_kind(type_filter_raw) or ""
     min_score = float(request.args.get("min_score", 0) or 0)
     limit = min(int(request.args.get("limit", 100) or 100), 500)
     depth_limit = int(request.args.get("depth", 1) or 1)
@@ -317,7 +363,7 @@ def api_entities_graph():
     )
     edge_kind_filters = _parse_list_param(
         request.args.get("edge_kinds"),
-        default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link"},
+        default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit"},
     )
 
     emit_event(
@@ -340,33 +386,34 @@ def api_entities_graph():
         variants: dict[str, Counter[str]] = {}
         links: dict[tuple[str, str], dict] = {}
         canonical_type: dict[str, str] = {}
-        entity_ids: dict[str, int] = {}
+        entity_ids: dict[str, str] = {}
+        entity_kinds: dict[str, str] = {}
+        page_id_to_url: dict[str, str] = {}
 
-        def semantic_entity_hints(query: str, top_k: int = 200) -> set[str]:
-            hints: set[str] = set()
-            if not vector_store or not query:
-                return hints
-            vec = llm.embed_text(query)
-            if not vec:
-                return hints
-            try:
-                results = vector_store.search(vec, top_k=top_k)
-            except Exception as e:
-                logger.warning(f"entities graph semantic search failed: {e}")
-                return hints
-            for r in results:
-                p = getattr(r, "payload", {}) or {}  # type: ignore[attr-defined]
-                for key in ("entity", "entity_name", "name"):
-                    val = p.get(key)
-                    if val:
-                        canon = _canonical(val)
-                        if canon:
-                            hints.add(canon)
-            return hints
+        def add_edge(a: str, b: str, kind: str, weight: int = 1, meta: dict | None = None):
+            if not a or not b:
+                return
+            a_str, b_str = str(a), str(b)
+            key = tuple(sorted((a_str, b_str)))
+            if key not in links:
+                links[key] = {"weight": 0, "kind": kind, "meta": meta or {}}
+            links[key]["weight"] += weight
+            if kind and links[key].get("kind") != kind:
+                links[key]["kind"] = kind
+            if meta is not None:
+                edge_meta = links[key].get("meta") or {}
+                edge_meta.update({k: v for k, v in meta.items() if v is not None})
+                links[key]["meta"] = edge_meta
+
+        def add_cooccurrence_edges(entity_keys: list[str]):
+            unique_keys = sorted(set([e for e in entity_keys if e]))
+            for a, b in itertools.combinations(unique_keys, 2):
+                add_edge(a, b, kind="cooccurrence", weight=1)
 
         def ensure_node(node_id: str, label: str, node_type: str, score: float | None = None, count_inc: int = 1, meta: dict | None = None):
             if not node_id:
                 return None
+            node_id = str(node_id)
             node = nodes.get(node_id, {"id": node_id, "label": label or node_id, "type": node_type, "score": 0, "count": 0, "meta": {}})
             node["count"] = (node.get("count") or 0) + (count_inc or 0)
             if score is not None:
@@ -386,35 +433,31 @@ def api_entities_graph():
                 return None
             norm_kind = _norm_kind(kind)
             variants.setdefault(canon, Counter()).update([raw_name])
-            node_id = ensure_node(canon, raw_name, node_type=norm_kind or "entity", score=score, meta={"entity_kind": norm_kind, **(meta or {})})
+            ent_uuid = entity_ids.get(canon)
+            node_key = str(ent_uuid) if ent_uuid else canon
+            node_meta = {"entity_kind": norm_kind, "canonical": canon, "entity_id": ent_uuid, "source_id": node_key}
+            if meta:
+                node_meta.update(meta)
+            node_id = ensure_node(node_key, raw_name, node_type=norm_kind or "entity", score=score, meta=node_meta)
             if norm_kind:
                 canonical_type[canon] = canonical_type.get(canon) or norm_kind
-                nodes[canon]["type"] = canonical_type[canon]
-            if canon in entity_ids:
-                nodes[canon]["meta"]["entity_id"] = entity_ids[canon]
-                nodes[canon]["meta"]["source_id"] = entity_ids[canon]
+                nodes[node_id]["type"] = canonical_type[canon]
             return node_id
 
-        def add_edge(a: str, b: str, kind: str, weight: int = 1, meta: dict | None = None):
-            if not a or not b:
-                return
-            key = tuple(sorted((a, b)))
-            if key not in links:
-                links[key] = {"weight": 0, "kind": kind, "meta": meta or {}}
-            links[key]["weight"] += weight
-            if kind and links[key].get("kind") != kind:
-                links[key]["kind"] = kind
-            if meta:
-                edge_meta = links[key].get("meta") or {}
-                edge_meta.update({k: v for k, v in meta.items() if v is not None})
-                links[key]["meta"] = edge_meta
+        # preload canonical kinds/ids
+        with store.Session() as session:
+            for ent in session.query(db_models.Entity).limit(10000).all():
+                canon = _canonical(ent.name)
+                if canon:
+                    if ent.kind:
+                        entity_kinds[canon] = _norm_kind(ent.kind) or ent.kind.lower()
+                    entity_ids[canon] = str(ent.id)
+            # page_id -> url mapping
+            for p in session.query(db_models.Page).limit(10000).all():
+                if getattr(p, "id", None) and getattr(p, "url", None):
+                    page_id_to_url[str(p.id)] = p.url
 
-        def add_cooccurrence_edges(entity_keys: list[str]):
-            unique_keys = sorted(set([e for e in entity_keys if e]))
-            for a, b in itertools.combinations(unique_keys, 2):
-                add_edge(a, b, kind="cooccurrence", weight=1)
-
-        semantic_allow = semantic_entity_hints(q, top_k=200) if q else set()
+        semantic_allow = _qdrant_semantic_entity_hints(q, top_k=200) if q else set()
 
         with store.Session() as session:
             intel_q = session.query(db_models.Intelligence)
@@ -427,15 +470,9 @@ def api_entities_graph():
             page_rows = session.query(db_models.PageContent).limit(5000).all()
             link_rows = session.query(db_models.Link).limit(10000).all()
 
-            entity_kinds = {}
-            for ent in session.query(db_models.Entity).limit(10000).all():
-                canon = _canonical(ent.name)
-                if canon:
-                    if ent.kind:
-                        entity_kinds[canon] = _norm_kind(ent.kind) or ent.kind.lower()
-                    entity_ids[canon] = ent.id
+            _add_relationship_edges(session, ensure_node, add_edge)
 
-        # Process intel rows
+        # Intel rows
         for row in intel_rows:
             try:
                 payload = json.loads(row.data or "{}")
@@ -444,29 +481,29 @@ def api_entities_graph():
             payload_preview = payload if isinstance(payload, dict) else {}
             if len(json.dumps(payload_preview)) > 4000:
                 payload_preview = {"truncated": True, "keys": list(payload.keys())[:50]}
+
+            intel_id = getattr(row, "id", None)
             primary = upsert_entity(
                 row.entity_name,
                 _norm_kind(payload.get("entity_type") or payload.get("entity_kind") if isinstance(payload, dict) else None),
-                row.confidence,
-                meta={"source": "intel", "intel_id": row.id, "source_id": row.id},
+                score=row.confidence,
+                meta={"entity_id": payload.get("sql_entity_id") or entity_ids.get(_canonical(row.entity_name) or ""), "source_id": intel_id},
             )
             intel_node_id = ensure_node(
-                f"intel:{row.id}",
-                label=f"Intel #{row.id}",
+                intel_id or row.entity_name,
+                label=row.entity_name,
                 node_type="intel",
                 score=row.confidence,
-                meta={
-                    "entity": row.entity_name,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "payload_preview": payload_preview,
-                    "source_url": payload.get("url") if isinstance(payload, dict) else None,
-                    "intel_id": row.id,
-                    "source_id": row.id,
-                },
+                meta={"intel_id": intel_id, "source_id": intel_id, "payload_preview": payload_preview},
             )
-            if primary and intel_node_id:
-                add_edge(primary, intel_node_id, kind="intel-primary", meta={"source": "intel", "intel_id": row.id} if include_meta else None)
-            doc_entity_keys = []
+
+            if row.page_id:
+                pid = str(row.page_id)
+                page_canon = page_id_to_url.get(pid, pid)
+                page_node = ensure_node(page_canon, page_canon, "page", meta={"source_id": page_canon})
+                add_edge(intel_node_id, page_node, kind="intel-primary", weight=1, meta={"page_id": page_canon} if include_meta else None)
+
+            doc_entity_keys: list[str] = []
             for ent in _collect_entities_from_json(payload):
                 ck = upsert_entity(ent["name"], _norm_kind(ent.get("kind")), None, meta={"path": ent.get("path")})
                 if ck:
@@ -475,11 +512,11 @@ def api_entities_graph():
                         intel_node_id,
                         ck,
                         kind="intel-mentions",
-                        meta={"path": ent.get("path"), "entity": ent.get("name"), "intel_id": row.id} if include_meta else None,
+                        meta={"path": ent.get("path"), "entity": ent.get("name"), "intel_id": intel_id} if include_meta else None,
                     )
             add_cooccurrence_edges(doc_entity_keys + ([primary] if primary else []))
 
-        # Process page_content
+        # Page content
         for p in page_rows:
             try:
                 extracted = json.loads(p.extracted_json or "{}")
@@ -489,6 +526,12 @@ def api_entities_graph():
                 metadata = json.loads(p.metadata_json or "{}")
             except Exception:
                 metadata = {}
+
+            page_uuid = getattr(p, "page_id", None) or _page_uuid_from_url(getattr(p, "page_url", None))
+            page_url_val = getattr(p, "page_url", None)
+            page_node_id = page_url_val or (page_uuid and str(page_uuid)) or ""
+            if page_uuid and page_url_val:
+                page_id_to_url[str(page_uuid)] = page_url_val
 
             page_meta = {
                 "page_type": None,
@@ -500,11 +543,10 @@ def api_entities_graph():
                 "text_length": None,
                 "depth": None,
             }
-            page_row = store.get_page(p.page_url)
+            page_row = store.get_page(p.page_url) if hasattr(store, "get_page") else None
             if page_row:
                 def _get(obj, key):
                     return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
-
                 page_meta.update(
                     {
                         "page_type": _get(page_row, "page_type"),
@@ -524,35 +566,41 @@ def api_entities_graph():
                     "language": metadata.get("language"),
                     "site_name": metadata.get("site_name"),
                     "structured_data": metadata.get("structured_data"),
+                    "id": page_uuid,
+                    "url": page_url_val,
+                    "page_url": page_url_val,
+                    "page_uuid": page_uuid,
+                    "content_preview": (p.text or "")[:1200] if getattr(p, "text", None) else None,
+                    "source_url": page_url_val,
+                    "source_id": page_url_val or (page_uuid and str(page_uuid)),
                 }
             )
 
-            content_preview = None
-            try:
-                content_text = p.text or ""
-                if content_text:
-                    content_preview = content_text[:1200]
-            except Exception:
-                content_preview = None
-
             page_node_id = ensure_node(
-                p.page_url,
-                label=p.page_url,
+                page_node_id,
+                label=page_url_val or page_uuid,
                 node_type="page",
                 score=page_meta.get("score"),
-                meta={**page_meta, "content_preview": content_preview, "source_url": p.page_url, "page_url": p.page_url, "source_id": p.page_url},
+                meta=page_meta,
             )
+
+            page_entity_id = getattr(p, "entity_id", None) or getattr(page_row, "entity_id", None) if page_row else None
+            if page_entity_id:
+                ent_id = str(page_entity_id)
+                ensure_node(ent_id, ent_id, "entity", meta={"entity_id": ent_id, "source_id": ent_id})
+                add_edge(ent_id, page_node_id, kind="page-entity", meta={"page_id": page_uuid, "page_url": page_url_val} if include_meta else None)
+
             doc_entity_keys = []
             for ent in _collect_entities_from_json(extracted):
                 ck = upsert_entity(ent["name"], _norm_kind(ent.get("kind")), None, meta={"path": ent.get("path")})
                 if ck:
                     doc_entity_keys.append(ck)
-                    add_edge(page_node_id, ck, kind="page-mentions", meta={"path": ent.get("path"), "page_url": p.page_url} if include_meta else None)
+                    add_edge(page_node_id, ck, kind="page-mentions", meta={"path": ent.get("path"), "page_id": page_uuid, "page_url": page_url_val} if include_meta else None)
             for ent in _collect_entities_from_json(metadata):
                 ck = upsert_entity(ent["name"], _norm_kind(ent.get("kind")), None, meta={"path": ent.get("path")})
                 if ck:
                     doc_entity_keys.append(ck)
-                    add_edge(page_node_id, ck, kind="page-mentions", meta={"path": ent.get("path"), "source": "metadata", "page_url": p.page_url} if include_meta else None)
+                    add_edge(page_node_id, ck, kind="page-mentions", meta={"path": ent.get("path"), "source": "metadata", "page_id": page_uuid, "page_url": page_url_val} if include_meta else None)
             for img in _collect_images_from_metadata(metadata):
                 img_id = f"img:{img['url']}"
                 ensure_node(
@@ -562,39 +610,56 @@ def api_entities_graph():
                     meta={
                         "alt": img.get("alt"),
                         "source": img.get("source"),
-                        "page": p.page_url,
+                        "page": page_url_val,
                         "thumb": img.get("url"),
                         "source_url": img.get("url"),
                         "source_id": img.get("url"),
                     },
                 )
-                add_edge(page_node_id, img_id, kind="page-image", meta={"source": img.get("source"), "url": img["url"], "page_url": p.page_url} if include_meta else None)
+                add_edge(page_node_id, img_id, kind="page-image", meta={"source": img.get("source"), "url": img["url"], "page_id": page_uuid, "page_url": page_url_val} if include_meta else None)
             add_cooccurrence_edges(doc_entity_keys)
 
-        # Process link graph
+        # Links (URL-based, annotated)
         for l in link_rows:
             from_id = ensure_node(l.from_url, l.from_url, node_type="page", meta={"depth": l.depth, "reason": l.reason, "source_url": l.from_url, "source_id": l.from_url})
             to_id = ensure_node(l.to_url, l.to_url, node_type="page", meta={"source_url": l.to_url, "source_id": l.to_url})
             add_edge(
                 from_id,
                 to_id,
-                kind="link",
+                kind=l.relation_type or "link",
                 weight=int(l.score or 1),
-                meta={"anchor": l.anchor_text, "reason": l.reason, "score": l.score, "from_id": l.from_url, "to_id": l.to_url, "depth": l.depth} if include_meta else None,
+                meta={"anchor": l.anchor_text, "reason": l.reason, "score": l.score, "from_id": l.from_url, "to_id": l.to_url, "depth": l.depth, "relation_type": getattr(l, "relation_type", "hyperlink")} if include_meta else None,
             )
 
-        for canon, k in entity_kinds.items():
-            if canon in nodes:
-                canonical_type[canon] = canonical_type.get(canon) or k
-                nodes[canon]["type"] = canonical_type[canon]
-                if canon in entity_ids:
-                    nodes[canon]["meta"]["entity_id"] = entity_ids[canon]
-                    nodes[canon]["meta"]["source_id"] = entity_ids[canon]
+        # Semantic page hits from Qdrant
+        if q:
+            for hit in _qdrant_semantic_page_hits(q, top_k=200):
+                payload = getattr(hit, "payload", {}) or {}
+                url = payload.get("url") or payload.get("page_url")
+                if not url:
+                    continue
+                page_node_id = ensure_node(
+                    url,
+                    label=url,
+                    node_type="page",
+                    score=hit.score,
+                    meta={
+                        "source_url": url,
+                        "source_id": url,
+                        "semantic_hit": True,
+                        "page_type": payload.get("page_type"),
+                        "entity_type": _norm_kind(payload.get("entity_type")),
+                        "kind": payload.get("kind"),
+                        "vector_score": hit.score,
+                    },
+                )
+                ent_name = payload.get("entity") or payload.get("entity_name") or payload.get("name")
+                if ent_name:
+                    ent_node = upsert_entity(ent_name, _norm_kind(payload.get("entity_type")), None, meta={"source": "semantic"})
+                    if ent_node:
+                        add_edge(page_node_id, ent_node, kind="semantic-hit", weight=1, meta={"score": hit.score} if include_meta else None)
 
-        for canon, node in nodes.items():
-            node["label"] = _best_label(variants.get(canon, Counter())) or node["label"]
-
-        # Apply type filter (matches node type OR entity_kind meta), after normalization
+        # Apply type filters
         if type_filter:
             nodes = {
                 k: v
@@ -603,7 +668,6 @@ def api_entities_graph():
                 or _norm_kind((v.get("meta") or {}).get("entity_kind")) == type_filter
             }
 
-        # Apply node-type allowlist
         nodes = {
             k: v
             for k, v in nodes.items()
@@ -611,7 +675,6 @@ def api_entities_graph():
             or (v.get("meta") or {}).get("entity_kind") in node_type_filters
         }
 
-        # Edge filtering by kind
         filtered_links = []
         node_ids = set(nodes.keys())
         for (a, b), edge in links.items():
@@ -628,19 +691,17 @@ def api_entities_graph():
                     }
                 )
 
-        # Text/semantic allowlist
         allowed_keys: set[str] = set(nodes.keys()) if not q else set()
         if q:
             allowed_keys |= semantic_allow
             for k, v in nodes.items():
                 lbl_norm = str(v.get("label") or "").lower()
-                if q in lbl_norm or q in k.lower():
+                if q in lbl_norm or q in str(k).lower():
                     allowed_keys.add(k)
             nodes = {k: v for k, v in nodes.items() if (not allowed_keys) or (k in allowed_keys)}
             node_ids = set(nodes.keys())
             filtered_links = [l for l in filtered_links if l["source"] in node_ids and l["target"] in node_ids]
 
-        # Expand to neighbors of allowed seeds
         if q and allowed_keys:
             expanded = set(nodes.keys())
             for l in filtered_links:
@@ -651,11 +712,9 @@ def api_entities_graph():
             node_ids = set(nodes.keys())
             filtered_links = [l for l in filtered_links if l["source"] in node_ids and l["target"] in node_ids]
 
-        # Depth pruning
         seeds = _seeds_from_query(list(nodes.values()), q)
         depth_nodes, depth_links = _filter_by_depth(list(nodes.values()), filtered_links, depth_limit, seeds)
 
-        # Limit
         sorted_nodes = sorted(depth_nodes, key=lambda n: (n.get("count", 0), n.get("score", 0)), reverse=True)
         top_nodes = {n["id"]: n for n in sorted_nodes[:limit]}
         if q and allowed_keys:
@@ -679,48 +738,20 @@ def api_entities_graph():
 @app.get("/api/entities/graph/node")
 @api_key_required
 def api_entities_graph_node():
-    """
-    Fetch full detail for a graph node on demand to keep the main graph response small.
-    Query params:
-      id: node id (e.g., intel:123, page URL, img:<url>, or canonical entity id)
-    """
     node_id = request.args.get("id")
     if not node_id:
         return jsonify({"error": "id required"}), 400
 
-    # --- Intel node detail ---
-    if node_id.startswith("intel:"):
-        try:
-            intel_id = int(node_id.split(":", 1)[1])
-        except ValueError:
-            return jsonify({"error": "bad intel id"}), 400
-        with store.Session() as s:
-            row = s.get(db_models.Intelligence, intel_id)
-            if not row:
-                return jsonify({"error": "not found"}), 404
-            try:
-                payload = json.loads(row.data or "{}")
-            except Exception:
-                payload = {}
-            return jsonify(
-                {
-                    "id": node_id,
-                    "type": "intel",
-                    "meta": {
-                        "entity": row.entity_name,
-                        "created_at": row.created_at.isoformat() if row.created_at else None,
-                        "source_url": payload.get("url") if isinstance(payload, dict) else None,
-                        "intel_id": row.id,
-                        "source_id": row.id,
-                    },
-                    "payload": payload,
-                }
-            )
-
-    # --- Page node detail ---
     with store.Session() as s:
-        page_row = s.get(db_models.Page, node_id)
-        pc_row = s.get(db_models.PageContent, node_id)
+        page_row = None
+        pc_row = None
+        if _looks_like_uuid(node_id):
+            page_row = s.get(db_models.Page, node_id)
+            pc_row = s.get(db_models.PageContent, node_id)
+        else:
+            page_row = s.query(db_models.Page).filter(db_models.Page.url == node_id).one_or_none()
+            pc_row = s.query(db_models.PageContent).filter(db_models.PageContent.page_url == node_id).one_or_none()
+
         if page_row or pc_row:
             try:
                 metadata = json.loads(pc_row.metadata_json or "{}") if pc_row else {}
@@ -749,7 +780,6 @@ def api_entities_graph_node():
                 }
             )
 
-    # --- Entity node detail: aggregated intel (unique) for render-intel consumption ---
     canon = _canonical(node_id)
     if canon:
         with store.Session() as s:
@@ -789,9 +819,9 @@ def api_entities_graph_node():
                     }
                 )
 
-    # --- Image or unknown ---
     img_url = node_id[4:] if node_id.startswith("img:") else node_id
     return jsonify({"id": node_id, "type": "image", "meta": {"source_url": img_url, "source_id": img_url}})
+
 
 @app.get("/favicon.ico")
 def favicon():
@@ -803,7 +833,6 @@ def static_files(filename):
     return send_from_directory(app.static_folder, filename)
 
 
-# --- Status ---
 @app.get("/api/status")
 @api_key_required
 def status():
@@ -834,7 +863,6 @@ def status():
     )
 
 
-# --- Logging endpoints ---
 @app.get("/api/logs/stream")
 @api_key_required
 def logs_stream():
@@ -864,7 +892,6 @@ def logs_clear():
     return jsonify({"status": "cleared"})
 
 
-# --- Intel APIs ---
 @app.get("/api/intel")
 @api_key_required
 def api_intel():
@@ -976,7 +1003,6 @@ def api_page():
 
 
 def _looks_like_refusal(text: str) -> bool:
-    """Detect common LLM refusal/empty patterns even if not 'INSUFFICIENT_DATA'."""
     if not text:
         return True
     t = text.lower()
@@ -985,7 +1011,6 @@ def _looks_like_refusal(text: str) -> bool:
         "not have information",
         "unable to find",
         "does not contain",
-        "context provided does not contain",
         "cannot provide details",
         "i don't have enough",
         "no data",
@@ -998,13 +1023,6 @@ def _looks_like_refusal(text: str) -> bool:
 @app.post("/api/chat")
 @api_key_required
 def api_chat():
-    """
-    Align web chat behavior with CLI interactive_chat:
-    - Try local RAG (SQL + vector).
-    - If insufficient, generate seeds, resolve live URLs, run crawl, and re-run RAG.
-    - Never return raw INSUFFICIENT_DATA to the client.
-    - Also treat generic refusals as insufficient to force the crawl path.
-    """
     body = request.get_json(silent=True) or {}
     question = body.get("question") or request.args.get("q")
     entity = body.get("entity") or request.args.get("entity")
@@ -1026,7 +1044,7 @@ def api_chat():
                     vec_hits = [
                         {
                             "url": r.payload.get("url"),
-                            "snippet": r.payload.get("text"),
+                            "snippet": r.payload.get("text", ""),
                             "score": r.score,
                             "source": "vector",
                         }
@@ -1101,7 +1119,6 @@ def api_chat():
     )
 
 
-# --- Recorder-like helpers exposed to UI (search, health, queue, mark)
 @app.get("/api/recorder/search")
 @api_key_required
 def api_recorder_search():
@@ -1145,7 +1162,6 @@ def api_recorder_mark():
     return jsonify({"status": "received", "url": url, "mode": mode, "session_id": session_id})
 
 
-# --- Crawl: wired to search.py logic ---
 @app.post("/api/crawl")
 @api_key_required
 def api_crawl():

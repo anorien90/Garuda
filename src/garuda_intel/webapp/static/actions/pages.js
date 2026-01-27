@@ -69,10 +69,8 @@ export async function loadPageDetail(url) {
   }
 }
 
-// Init: bind filters once
 bindFilters();
 
-// Delegate click on page cards to open detail
 if (els.pagesList) {
   els.pagesList.addEventListener('click', (e) => {
     const article = e.target.closest('[data-page-url]');

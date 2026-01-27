@@ -422,6 +422,7 @@ class LLMIntelExtractor:
         entity_name: str,
         entity_type: EntityType,
         max_sentences: int = 40,
+        page_uuid: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Produce multiple semantic views:
@@ -429,11 +430,12 @@ class LLMIntelExtractor:
           - sentence-level for full text (capped)
           - overlapping sentence windows (to preserve continuity)
           - findings with ids
+        Uses page_uuid when provided to keep SQL/Qdrant alignment.
         """
         entries: List[Dict[str, Any]] = []
         total_embeddings = 0
+        primary_id = page_uuid or url
 
-        # Clean text before splitting/embedding
         cleaned_text = self._clean_text(text_content)
 
         # Page-level views
@@ -453,7 +455,7 @@ class LLMIntelExtractor:
             if vec:
                 entries.append(
                     self._make_entry(
-                        base_id=url,
+                        base_id=primary_id,
                         suffix=f"page-{name}",
                         vector=vec,
                         kind="page",
@@ -462,6 +464,7 @@ class LLMIntelExtractor:
                         entity_name=entity_name,
                         entity_type=entity_type,
                         text=text,
+                        sql_page_id=page_uuid,
                     )
                 )
                 total_embeddings += 1
@@ -479,7 +482,7 @@ class LLMIntelExtractor:
             if vec:
                 entries.append(
                     self._make_entry(
-                        base_id=url,
+                        base_id=primary_id,
                         suffix=f"sentence-{idx}",
                         vector=vec,
                         kind="page_sentence",
@@ -488,6 +491,7 @@ class LLMIntelExtractor:
                         entity_name=entity_name,
                         entity_type=entity_type,
                         text=sent,
+                        sql_page_id=page_uuid,
                     )
                 )
                 total_embeddings += 1
@@ -506,7 +510,7 @@ class LLMIntelExtractor:
             if vec:
                 entries.append(
                     self._make_entry(
-                        base_id=url,
+                        base_id=primary_id,
                         suffix=f"window-{idx}",
                         vector=vec,
                         kind="page_window",
@@ -515,20 +519,24 @@ class LLMIntelExtractor:
                         entity_name=entity_name,
                         entity_type=entity_type,
                         text=win_text,
+                        sql_page_id=page_uuid,
                     )
                 )
                 total_embeddings += 1
 
-        # Findings
-        for idx, (finding, sql_id) in enumerate(findings_with_ids or []):
+        # Findings (tuple may contain finding, sql_intel_id, optional sql_entity_id)
+        for idx, tup in enumerate(findings_with_ids or []):
             if total_embeddings >= self.max_total_embeddings:
                 break
+            finding = tup[0] if len(tup) > 0 else {}
+            sql_id = tup[1] if len(tup) > 1 else None
+            sql_entity_id = tup[2] if len(tup) > 2 else None
             text = self._format_finding(finding)
             vec = self.embed_text(text)
             if vec:
                 entries.append(
                     self._make_entry(
-                        base_id=url,
+                        base_id=primary_id,
                         suffix=f"finding-{idx}",
                         vector=vec,
                         kind="finding",
@@ -539,6 +547,8 @@ class LLMIntelExtractor:
                         text=text,
                         data=finding,
                         sql_id=sql_id,
+                        sql_entity_id=sql_entity_id,
+                        sql_page_id=page_uuid,
                     )
                 )
                 total_embeddings += 1
@@ -553,9 +563,11 @@ class LLMIntelExtractor:
         entities: List[Dict[str, Any]],
         source_url: str,
         entity_type: EntityType,
-        entity_id_map: Dict[tuple, int],
+        entity_id_map: Dict[tuple, Any],
+        page_uuid: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         entries: List[Dict[str, Any]] = []
+        primary_id = page_uuid or source_url
         for ent in entities:
             text = json.dumps({"name": ent.get("name"), **(ent.get("attrs") or {})}, ensure_ascii=False)
             vec = self.embed_text(text)
@@ -566,7 +578,7 @@ class LLMIntelExtractor:
             sql_ent_id = entity_id_map.get((ent.get("name"), ent_kind))
             entries.append(
                 self._make_entry(
-                    base_id=source_url,
+                    base_id=primary_id,
                     suffix=suffix,
                     vector=vec,
                     kind="entity",
@@ -577,6 +589,7 @@ class LLMIntelExtractor:
                     text=text,
                     data=ent,
                     sql_entity_id=sql_ent_id,
+                    sql_page_id=page_uuid,
                 )
             )
         return entries
@@ -595,6 +608,7 @@ class LLMIntelExtractor:
         data: Any = None,
         sql_id: Any = None,
         sql_entity_id: Any = None,
+        sql_page_id: Any = None,
     ) -> Dict[str, Any]:
         pid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{base_id}#{suffix}"))
         payload = {
@@ -611,6 +625,8 @@ class LLMIntelExtractor:
             payload["sql_intel_id"] = sql_id
         if sql_entity_id is not None:
             payload["sql_entity_id"] = sql_entity_id
+        if sql_page_id is not None:
+            payload["sql_page_id"] = sql_page_id
         return {
             "id": pid,
             "vector": vector,

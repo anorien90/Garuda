@@ -1,5 +1,3 @@
-# src/modules/crawl/discovery/seeds.py
-
 from typing import List
 import logging
 from ..types.entity.type import EntityType
@@ -38,7 +36,7 @@ def generate_seeds(profile: EntityProfile, llm: LLMIntelExtractor) -> List[str]:
     final_queries = []
 
     for q in candidates:
-        if not target_emb: # Fallback if embedding is disabled
+        if not target_emb:  # Fallback if embedding is disabled
             final_queries.append(q)
             continue
             

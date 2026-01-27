@@ -35,7 +35,7 @@ export function renderKeyValTable(obj) {
   `;
 }
 
-// NEW: render a single page result
+// Render a single page result
 export function renderCrawlPage(url, page) {
   const intel = (page.extracted_intel || []).map((fi, i) => collapsible(
     `Finding ${i + 1}`,
@@ -62,12 +62,13 @@ export function renderCrawlPage(url, page) {
         ${page.entity_type ? pill(page.entity_type) : ''}
         ${page.depth !== undefined ? pill(`depth ${page.depth}`) : ''}
         ${page.text_length ? pill(`${page.text_length} chars`) : ''}
+        ${page.id ? pill(`uuid ${page.id}`) : ''}
       </div>
     </article>
   `;
 }
 
-// NEW: render full crawl result
+// Render full crawl result
 export function renderCrawlResult(payload) {
   if (!payload || !payload.explored_data) {
     return `<div class="text-xs text-slate-400">No crawl results</div>`;

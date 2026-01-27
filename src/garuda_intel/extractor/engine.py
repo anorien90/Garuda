@@ -3,7 +3,8 @@ import re
 import json
 import logging
 from bs4 import BeautifulSoup
-from typing import List, Dict
+from typing import List, Dict, Optional
+
 from .filter import SemanticFilter
 from ..types.entity.type import EntityType
 from ..types.page.fingerprint import PageFingerprint
@@ -25,21 +26,23 @@ class ContentExtractor:
         return re.sub(r"\s+", " ", text)[:max_length]
 
     def extract_images(self, html: str, base_url: str) -> List[Dict]:
-           """
-           Specific extraction for better visual data selection.
-           """
-           soup = BeautifulSoup(html, "html.parser")
-           images = []
-           for img in soup.find_all("img"):
-               src = img.get("src")
-               if src and not src.startswith("data:"):
-                   images.append({
-                       "url": src,
-                       "alt": img.get("alt", ""),
-                       "title": img.get("title", ""),
-                       "parent_text": img.parent.get_text()[:100] if img.parent else ""
-                   })
-           return images   
+        """
+        Specific extraction for better visual data selection.
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        images = []
+        for img in soup.find_all("img"):
+            src = img.get("src")
+            if src and not src.startswith("data:"):
+                images.append(
+                    {
+                        "url": src,
+                        "alt": img.get("alt", ""),
+                        "title": img.get("title", ""),
+                        "parent_text": img.parent.get_text()[:100] if img.parent else "",
+                    }
+                )
+        return images   
     
     def extract_metadata(self, html: str) -> dict:
         metadata = {}
@@ -86,15 +89,27 @@ class ContentExtractor:
             return "wikipedia"
         return "general"
     
-    def capture_fingerprints(self, page_type: str, soup: BeautifulSoup, page_url: str) -> List[PageFingerprint]:
+    def capture_fingerprints(self, page_type: str, soup: BeautifulSoup, page_url: str, page_id: Optional[str] = None) -> List[PageFingerprint]:
         fps: List[PageFingerprint] = []
-        
+        pid = page_id
+
+        def add_fp(selector: str, purpose: str, sample: str):
+            fps.append(
+                PageFingerprint(
+                    page_id=pid,
+                    page_url=page_url,
+                    selector=selector,
+                    purpose=purpose,
+                    sample_text=sample,
+                )
+            )
+
         if page_type == "news":
             for selector in [".article", ".story", "article", ".post", ".card"]:
                 nodes = soup.select(selector)
                 if len(nodes) >= 2:
                     sample = nodes[0].get_text(strip=True)[:200] if nodes else ""
-                    fps.append(PageFingerprint(page_url=page_url, selector=selector, purpose="headline_list", sample_text=sample))
+                    add_fp(selector, "headline_list", sample)
                     break
 
         if page_type in ("leadership", "person_profile"):
@@ -102,7 +117,7 @@ class ContentExtractor:
                 nodes = soup.select(selector)
                 if len(nodes) >= 1:
                     sample = nodes[0].get_text(strip=True)[:200] if nodes else ""
-                    fps.append(PageFingerprint(page_url=page_url, selector=selector, purpose="people_section", sample_text=sample))
+                    add_fp(selector, "people_section", sample)
                     break
  
         if page_type == "registry":
@@ -110,7 +125,7 @@ class ContentExtractor:
                 nodes = soup.select(selector)
                 if len(nodes) >= 1:
                     sample = nodes[0].get_text(strip=True)[:200] if nodes else ""
-                    fps.append(PageFingerprint(page_url=page_url, selector=selector, purpose="company_info", sample_text=sample))
+                    add_fp(selector, "company_info", sample)
                     break
         
         if page_type == "investor":
@@ -118,7 +133,7 @@ class ContentExtractor:
                 nodes = soup.select(selector)
                 if len(nodes) >= 1:
                     sample = nodes[0].get_text(strip=True)[:200] if nodes else ""
-                    fps.append(PageFingerprint(page_url=page_url, selector=selector, purpose="financial_data", sample_text=sample))
+                    add_fp(selector, "financial_data", sample)
                     break
 
         if page_type == "wikipedia":
@@ -126,7 +141,7 @@ class ContentExtractor:
                 nodes = soup.select(selector)
                 if len(nodes) >= 1:
                     sample = nodes[0].get_text(strip=True)[:200] if nodes else ""
-                    fps.append(PageFingerprint(page_url=page_url, selector=selector, purpose="infobox", sample_text=sample))
+                    add_fp(selector, "infobox", sample)
                     break
 
         if page_type == "general":
@@ -134,16 +149,15 @@ class ContentExtractor:
                 nodes = soup.select(selector)
                 if len(nodes) >= 5:
                     sample = nodes[0].get_text(strip=True)[:200] if nodes else ""
-                    fps.append(PageFingerprint(page_url=page_url, selector=selector, purpose="general_content", sample_text=sample))
+                    add_fp(selector, "general_content", sample)
                     break
-
 
         if page_type == "sec_filing":
             for selector in [".sec-document", "#form-data", "pre"]:
                 nodes = soup.select(selector)
                 if len(nodes) >= 1:
                     sample = nodes[0].get_text(strip=True)[:200] if nodes else ""
-                    fps.append(PageFingerprint(page_url=page_url, selector=selector, purpose="sec_filing_data", sample_text=sample))
+                    add_fp(selector, "sec_filing_data", sample)
                     break
 
         if page_type == "person_profile":
@@ -151,7 +165,7 @@ class ContentExtractor:
                 nodes = soup.select(selector)
                 if len(nodes) >= 1:
                     sample = nodes[0].get_text(strip=True)[:200] if nodes else ""
-                    fps.append(PageFingerprint(page_url=page_url, selector=selector, purpose="contact_info", sample_text=sample))
+                    add_fp(selector, "contact_info", sample)
                     break
 
         return fps

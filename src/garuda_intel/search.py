@@ -10,11 +10,9 @@ from urllib.parse import urlparse
 from datetime import datetime, date
 from typing import List, Dict, Any
 
-
-
 def try_load_dotenv():
     try:
-        import dotenv
+        import dotenv  # type: ignore
         dotenv.load_dotenv(override=True)
         print("[.env] Loaded environment from .env files.")
     except ImportError:
@@ -24,7 +22,7 @@ try_load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-from ddgs import DDGS
+from ddgs import DDGS  # type: ignore
 from sqlalchemy import select
 from qdrant_client.http import models as qmodels
 
@@ -42,8 +40,10 @@ from .discover.refresh import RefreshRunner
 from .explorer.scorer import URLScorer
 from .vector.engine import QdrantVectorStore
 
+
 def add_common_logging(parser: argparse.ArgumentParser):
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+
 
 def add_store_args(parser: argparse.ArgumentParser):
     parser.add_argument("--use-sqlite", action="store_true", help="Use SQLite DB at sqlite-path (default crawler.db)")
@@ -155,6 +155,7 @@ def parse_args() -> argparse.Namespace:
     
     return parser.parse_args()
 
+
 def _kind_filter(kind: str) -> qmodels.Filter | None:
     if kind == "any":
         return None
@@ -167,6 +168,7 @@ def _kind_filter(kind: str) -> qmodels.Filter | None:
         ]
     )
 
+
 def _dedupe_payload_hits(hits: List[Any]) -> List[Any]:
     seen = set()
     uniq = []
@@ -178,6 +180,7 @@ def _dedupe_payload_hits(hits: List[Any]) -> List[Any]:
         uniq.append(h)
     return uniq
 
+
 def _filter_by_entity_name(hits: List[Dict], entity_name: str) -> List[Dict]:
     if not entity_name:
         return hits
@@ -188,6 +191,7 @@ def _filter_by_entity_name(hits: List[Dict], entity_name: str) -> List[Dict]:
         if name == needle:
             out.append(h)
     return out
+
 
 def _aggregate_entities(hits: List[Dict], max_field_vals: int) -> List[Dict]:
     """
@@ -210,11 +214,9 @@ def _aggregate_entities(hits: List[Dict], max_field_vals: int) -> List[Dict]:
                 "sources": [],
                 "attrs": {},
             }
-        # sources: preserve order, dedupe
         src = h.get("url")
         if src and src not in agg[key]["sources"]:
             agg[key]["sources"].append(src)
-        # attrs: lists up to max_field_vals
         for k, v in (attrs or {}).items():
             if v in (None, ""):
                 continue
@@ -230,6 +232,7 @@ def _aggregate_entities(hits: List[Dict], max_field_vals: int) -> List[Dict]:
             "sources": val["sources"],
         })
     return out
+
 
 def _extract_entity_fields(aggregated: List[Dict], fields: List[str]) -> Dict[str, Dict[str, List[Any]]]:
     """
@@ -247,7 +250,8 @@ def _extract_entity_fields(aggregated: List[Dict], fields: List[str]) -> Dict[st
                 result[ent][f] = attrs.get(f, [])
     return result
 
-def _hydrate_intel(store: SQLAlchemyStore, ids: List[int]) -> List[Dict]:
+
+def _hydrate_intel(store: SQLAlchemyStore, ids: List[str]) -> List[Dict]:
     if not ids:
         return []
     with store.Session() as s:
@@ -255,20 +259,23 @@ def _hydrate_intel(store: SQLAlchemyStore, ids: List[int]) -> List[Dict]:
         rows = s.execute(stmt).scalars().all()
         out = []
         for r in rows:
-            try:
-                data = json.loads(r.data)
-            except Exception:
-                data = r.data
+            data = r.data
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except Exception:
+                    pass
             out.append({
                 "id": r.id,
-                "entity": r.entity_name,
+                "entity_id": r.entity_id,
                 "confidence": r.confidence,
                 "data": data,
                 "created": r.created_at.isoformat(),
             })
         return out
 
-def _hydrate_entities(store: SQLAlchemyStore, ids: List[int]) -> List[Dict]:
+
+def _hydrate_entities(store: SQLAlchemyStore, ids: List[str]) -> List[Dict]:
     if not ids:
         return []
     with store.Session() as s:
@@ -276,10 +283,12 @@ def _hydrate_entities(store: SQLAlchemyStore, ids: List[int]) -> List[Dict]:
         rows = s.execute(stmt).scalars().all()
         out = []
         for r in rows:
-            try:
-                data = json.loads(r.data)
-            except Exception:
-                data = r.data
+            data = r.data
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except Exception:
+                    pass
             out.append({
                 "id": r.id,
                 "name": r.name,
@@ -289,13 +298,14 @@ def _hydrate_entities(store: SQLAlchemyStore, ids: List[int]) -> List[Dict]:
             })
         return out
 
+
 def handle_intel(args):
     """Integrated intel.py logic"""
     persistence_enabled = args.use_sqlite or bool(args.db_url)
     db_url = normalize_db_url(args.db_url, args.sqlite_path) if persistence_enabled else ""
     store = SQLAlchemyStore(db_url) if persistence_enabled else SQLAlchemyStore()
 
-    # Deep semantic / hybrid search path (shared with run)
+    # Deep semantic / hybrid search path
     if args.semantic_search or args.hybrid_search:
         llm = LLMIntelExtractor(args.ollama_url, args.model, embedding_model=args.embedding_model)
         vector_store = QdrantVectorStore(url=args.qdrant_url, collection=args.qdrant_collection)
@@ -321,10 +331,10 @@ def handle_intel(args):
                 "text": r.payload.get("text"),
                 "sql_intel_id": r.payload.get("sql_intel_id"),
                 "sql_entity_id": r.payload.get("sql_entity_id"),
+                "sql_page_id": r.payload.get("sql_page_id"),
             }
             for r in results
         ]
-        # entity-name filter (case-insensitive)
         if args.semantic_kind == "entity" and args.entity_name:
             hits = _filter_by_entity_name(hits, args.entity_name)
 
@@ -354,6 +364,7 @@ def handle_intel(args):
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
+    # Simple intel search/export
     if args.query:
         results = store.search_intelligence_data(args.query)
     else:
@@ -366,12 +377,12 @@ def handle_intel(args):
     flattened = []
     for r in results:
         row = {
-            "entity": r['entity'],
-            "confidence": r.get('confidence', 0),
-            "date": r.get('created', '')
+            "entity": r["entity"],
+            "confidence": r.get("confidence", 0),
+            "date": r.get("created", ""),
         }
-        if isinstance(r['data'], dict):
-            for k, v in r['data'].items():
+        if isinstance(r["data"], dict):
+            for k, v in r["data"].items():
                 row[k] = str(v)
         flattened.append(row)
     
@@ -388,12 +399,14 @@ def handle_intel(args):
     else:
         print(json.dumps(results, indent=2))
 
+
 def normalize_db_url(db_url: str, sqlite_path: str) -> str:
     if db_url:
         if "://" not in db_url:
             return f"sqlite:///{db_url}"
         return db_url
     return f"sqlite:///{sqlite_path}"
+
 
 def collect_candidates(queries, seed_limit) -> list:
     candidates = []
@@ -414,6 +427,7 @@ def collect_candidates(queries, seed_limit) -> list:
             deduped.append(c)
     return deduped
 
+
 def list_pages(store):
     try:
         pages = store.get_all_pages()
@@ -426,13 +440,14 @@ def list_pages(store):
     except AttributeError as e:
         print(f"Error: The store implementation is missing a method: {e}")
 
+
 def fetch_text(store: SQLAlchemyStore, url: str):
-    with store.Session() as s:
-        row = s.get(PageContent, url)
-        if row and row.text:
-            print(row.text)
-            return True
+    pc = store.get_page_content_by_url(url)
+    if pc and pc.get("text"):
+        print(pc["text"])
+        return True
     return False
+
 
 def load_seeds_from_db(store: SQLAlchemyStore, from_links: bool, from_pages: bool, domains, patterns, min_score, limit):
     import re as _re
@@ -482,6 +497,7 @@ def load_seeds_from_db(store: SQLAlchemyStore, from_links: bool, from_pages: boo
             uniq.append(u)
     return uniq[:limit]
 
+
 def print_active_mode_instructions(session_id):
     msg = f"""
     ===============================================
@@ -508,6 +524,7 @@ def print_active_mode_instructions(session_id):
     ===============================================
     """
     print(msg)
+
 
 def run_active_session(store):
     mark_queue = start_server_thread()
@@ -542,15 +559,15 @@ def run_active_session(store):
     print(">> Session Complete.")
     sys.exit(0)
 
+
 def collect_candidates_simple(queries, limit=5) -> list:
     """Helper to actually fetch URLs from DuckDuckGo."""
     candidates = []
     with DDGS() as ddgs:
         for q in queries:
             try:
-                # Fetch a few results per query
                 results = list(ddgs.text(q, max_results=3))
-                candidates.extend([r['href'] for r in results if 'href' in r])
+                candidates.extend([r["href"] for r in results if "href" in r])
             except Exception as e:
                 logger.warning(f"Search failed for '{q}': {e}")
     return list(set(candidates))[:limit]
@@ -558,7 +575,7 @@ def collect_candidates_simple(queries, limit=5) -> list:
 
 def perform_rag_search(query, store, v_store, llm):
     """Gathers context from SQL and Vector DB for the LLM."""
-    search_terms = llm.generate_search_queries(query)
+    search_terms = llm.generate_seed_queries(query)
     context_hits = []
     
     # 1. Vector Search
@@ -566,7 +583,6 @@ def perform_rag_search(query, store, v_store, llm):
     if q_vec and v_store:
         try:
             hits = v_store.search(q_vec, top_k=5)
-            # Ensure snippet extraction
             context_hits.extend([{"url": h.payload.get("url"), "snippet": h.payload.get("text", "")} for h in hits])
         except Exception as e:
             logging.debug(f"Vector search failed: {e}")
@@ -576,6 +592,7 @@ def perform_rag_search(query, store, v_store, llm):
         context_hits.extend(store.search_intel(term))
     
     return llm.synthesize_answer(query, context_hits)
+
 
 def interactive_chat(args):
     """The Autonomous Intel Loop with Live Web Search Integration."""
@@ -596,25 +613,23 @@ def interactive_chat(args):
     while True:
         try:
             query = input(f"[{profile.name}]> ").strip()
-            if query.lower() in ["exit", "quit"]: break
-            if not query: continue
+            if query.lower() in ["exit", "quit"]:
+                break
+            if not query:
+                continue
 
             print("[*] Searching existing knowledge base...")
             answer = perform_rag_search(query, store, v_store, llm)
             
-            # If answer is good, print and continue
             if llm.evaluate_sufficiency(answer):
                 print(f"\n[AI]: {answer}\n")
                 continue
 
-            # If answer is insufficient, trigger crawl
             print("[!] Local data is insufficient. Resolving online search seeds...")
             
-            # 1. Generate search strings (e.g. "Bill Gates recent news")
             search_queries = llm.generate_seed_queries(query, profile.name)
             print(f"[*] Generated Queries: {search_queries}")
             
-            # 2. RESOLVE to URLs using DuckDuckGo
             live_urls = collect_candidates_simple(search_queries, limit=5)
             
             if not live_urls:
@@ -624,15 +639,13 @@ def interactive_chat(args):
 
             print(f"[*] Found {len(live_urls)} URLs. Starting autonomous crawl...")
             
-            # 3. Execute Crawl
-            # NOTE: We lower score_threshold to 5.0 to ensure these seeds are definitely processed.
             explorer = IntelligentExplorer(
                 profile=profile, 
                 persistence=store, 
                 vector_store=v_store, 
                 llm_extractor=llm,
-                max_total_pages=args.max_pages if hasattr(args, 'max_pages') else 5,
-                score_threshold=5.0 
+                max_total_pages=args.max_pages if hasattr(args, "max_pages") else 5,
+                score_threshold=5.0,
             )
             
             browser = None
@@ -643,19 +656,19 @@ def interactive_chat(args):
             try:
                 explorer.explore(live_urls, browser)
             finally:
-                if browser: browser.close()
+                if browser:
+                    browser.close()
 
             print("[*] Re-evaluating with fresh intelligence...")
             answer = perform_rag_search(query, store, v_store, llm)
             final_text = answer.replace("INSUFFICIENT_DATA", "I searched online but still couldn't find a definitive answer.")
             print(f"\n[AI]: {final_text}\n")
 
-        except KeyboardInterrupt: break
+        except KeyboardInterrupt:
+            break
         except Exception as e:
             logger.error(f"Chat Loop Error: {e}")
 
-
-# ... existing imports remain ...
 
 def handle_run(args, return_result: bool = False):
     persistence_enabled = args.use_sqlite or bool(args.db_url)
@@ -699,6 +712,7 @@ def handle_run(args, return_result: bool = False):
                 "text": r.payload.get("text"),
                 "sql_intel_id": r.payload.get("sql_intel_id"),
                 "sql_entity_id": r.payload.get("sql_entity_id"),
+                "sql_page_id": r.payload.get("sql_page_id"),
             }
             for r in results
         ]
@@ -758,7 +772,7 @@ def handle_run(args, return_result: bool = False):
                     return {"fetch_text": args.fetch_text, "status": "ok"}
                 return
             logging.info("Text not found; refetching page...")
-            rr = RefreshRunner(store=store, use_selenium=args.use_selenium, vector_store=vector_store, llm_extractor=llm)
+            rr = RefreshRunner(store=store, use_selenium=args.use_selenium, vector_store=vector_store, llm_extractor=llm)  # type: ignore
             rr.run(batch=1)
             found = fetch_text(store, args.fetch_text)
             if not found:
@@ -768,7 +782,7 @@ def handle_run(args, return_result: bool = False):
                 logging.error(msg)
             return
         if args.refresh:
-            rr = RefreshRunner(store=store, use_selenium=args.use_selenium, vector_store=vector_store, llm_extractor=llm)
+            rr = RefreshRunner(store=store, use_selenium=args.use_selenium, vector_store=vector_store, llm_extractor=llm)  # type: ignore
             rr.run(batch=args.refresh_batch)
             if return_result:
                 return {"refresh": "ok", "batch": args.refresh_batch}
@@ -896,7 +910,6 @@ def run_crawl_api(payload: dict) -> dict:
     """
     from .config import Settings
     settings = Settings.from_env()
-    # Defaults aligned with parse_args()
     args = argparse.Namespace(
         command="run",
         verbose=False,

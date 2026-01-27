@@ -1,6 +1,3 @@
-
-
-
 function pill(text) {
   return `<span class="inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 px-2 py-0.5 text-[10px] font-medium">${text}</span>`;
 }
@@ -19,6 +16,10 @@ function renderSemanticHit(hit, idx) {
     hit.kind && pill(hit.kind),
     hit.entity_type && pill(hit.entity_type),
     hit.page_type && pill(hit.page_type),
+    hit.entity_kind && pill(hit.entity_kind),
+    hit.sql_page_id && pill(`page_id: ${hit.sql_page_id}`),
+    hit.sql_entity_id && pill(`entity_id: ${hit.sql_entity_id}`),
+    hit.sql_intel_id && pill(`intel_id: ${hit.sql_intel_id}`),
     score && pill(`score ${score}`),
   ].filter(Boolean).join('');
 

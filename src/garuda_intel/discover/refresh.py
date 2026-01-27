@@ -15,7 +15,11 @@ def refresh_patterns(entity: str, entity_type: EntityType, seeds: List[str], oll
     Avoid social share and generic spam.
     """
     try:
-        response = requests.post(ollama_url, json={"model": model, "prompt": prompt, "stream": False, "format": "json"}, timeout=60)
+        response = requests.post(
+            ollama_url,
+            json={"model": model, "prompt": prompt, "stream": False, "format": "json"},
+            timeout=60,
+        )
         result = json.loads(response.json().get("response", "{}"))
         return {
             "patterns": result.get("patterns", []),

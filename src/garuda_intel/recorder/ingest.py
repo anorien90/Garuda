@@ -1,7 +1,13 @@
 import logging
 from datetime import datetime
-from ..extractor.engine import ContentExtractor
+from uuid import uuid5, NAMESPACE_URL
 
+from ..extractor.engine import ContentExtractor
+from ..types.page.fingerprint import PageFingerprint
+
+
+def _page_id_from_url(url: str) -> str:
+    return str(uuid5(NAMESPACE_URL, url))
 
 
 class RecorderIngestor:
@@ -13,7 +19,6 @@ class RecorderIngestor:
         self.last_marks = {}  # (url, mode, selector) => ts
 
     def is_duplicate(self, url, mode, selector, within_secs=30):
-        # Don't record if last identical mark within N seconds (avoid spam/repeats)
         key = (url, mode, selector or "")
         now = datetime.now().timestamp()
         mark_ts = self.last_marks.get(key, 0)
@@ -34,7 +39,6 @@ class RecorderIngestor:
         session_id = data.get("session_id", None)
         client_id = data.get("client_id", None)
 
-        # Deduplication
         if self.is_duplicate(url, mode, selector):
             self.logger.info(f"Skipped duplicate mark ({mode}) for {url} [{selector}]")
             return False
@@ -67,14 +71,14 @@ class RecorderIngestor:
             "selector": selector,
         }
         try:
-            self.store.save_page(page_record)
+            page_id = self.store.save_page(page_record)
             if selector:
-                from .models.page_fingerprint import PageFingerprint
                 fp = PageFingerprint(
+                    page_id=page_id,
                     page_url=url,
                     selector=selector,
                     purpose=f"manual_{mode}_selection",
-                    sample_text=selected[:200]
+                    sample_text=selected[:200],
                 )
                 self.store.save_fingerprint(fp)
             self.logger.info(f"Successfully recorded {mode} from {url} [session: {session_id}]")

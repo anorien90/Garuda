@@ -40,13 +40,21 @@ let selectedNodeId = null;
 let hoverTimer = null;
 let activeModalNodeId = null;
 
-// Local selectors for filters
 const filterEls = {
   nodeFilters: () => Array.from(document.querySelectorAll('.entities-node-filter')),
   edgeFilters: () => Array.from(document.querySelectorAll('.entities-edge-filter')),
   depth: () => document.getElementById('entities-graph-depth'),
   toggle3d: () => document.getElementById('entities-graph-toggle3d'),
 };
+
+function escapeHtml(val) {
+  return String(val)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function setStatus(msg, isError = false) {
   if (!els.entitiesGraphStatus) return;
@@ -63,7 +71,7 @@ function renderLegend() {
           ([k, v]) => `
         <div class="flex items-center gap-2">
           <span class="inline-block w-3 h-3 rounded-full" style="background:${v}"></span>
-          <span>${k}</span>
+          <span>${escapeHtml(k)}</span>
         </div>
       `
         )
@@ -72,7 +80,12 @@ function renderLegend() {
       <div class="flex flex-wrap gap-2 text-[11px]">
         ${Object.entries(EDGE_COLORS)
           .filter(([k]) => k !== 'default')
-          .map(([k, v]) => `<span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-0.5" style="background:${v}"></span>${k}</span>`)
+          .map(
+            ([k, v]) =>
+              `<span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-0.5" style="background:${v}"></span>${escapeHtml(
+                k
+              )}</span>`
+          )
           .join('')}
       </div>
     </div>
@@ -91,12 +104,16 @@ function metaTableWithLinks(meta) {
   }
   return renderKeyValTable(
     Object.fromEntries(
-      Object.entries(meta).map(([k, v]) => [
-        k,
-        typeof v === 'string' && v.startsWith('http')
-          ? `<a class="text-blue-600 underline" href="${v}" target="_blank" rel="noreferrer">${v}</a>`
-          : v,
-      ])
+      Object.entries(meta).map(([k, v]) => {
+        if (typeof v === 'string' && v.startsWith('http')) {
+          const safeUrl = escapeHtml(v);
+          return [
+            escapeHtml(k),
+            `<a class="text-blue-600 underline" href="${safeUrl}" target="_blank" rel="noreferrer">${safeUrl}</a>`,
+          ];
+        }
+        return [escapeHtml(k), escapeHtml(fmt(v))];
+      })
     )
   );
 }
@@ -109,11 +126,16 @@ function renderDetailBody(node) {
       ? `
     <div class="space-y-2">
       <div class="text-xs uppercase text-slate-500">Page</div>
-      <div class="text-xs">${pill(meta.page_type || 'page')} ${meta.entity_type ? pill(meta.entity_type) : ''} ${meta.score ? pill(`score ${meta.score}`) : ''}</div>
-      ${meta.last_status ? `<div class="text-xs text-slate-500">Last status: ${meta.last_status}</div>` : ''}
-      ${meta.last_fetch_at ? `<div class="text-xs text-slate-500">Fetched: ${meta.last_fetch_at}</div>` : ''}
-      ${meta.text_length ? `<div class="text-xs text-slate-500">Text length: ${meta.text_length}</div>` : ''}
-      <div class="text-xs"><a class="text-blue-600 underline" href="${meta.source_url || node.id}" target="_blank" rel="noreferrer">Open page</a></div>
+      <div class="text-xs">${pill(meta.page_type || 'page')} ${
+          meta.entity_type ? pill(meta.entity_type) : ''
+        } ${meta.score ? pill(`score ${meta.score}`) : ''}</div>
+      ${meta.last_status ? `<div class="text-xs text-slate-500">Last status: ${escapeHtml(meta.last_status)}</div>` : ''}
+      ${meta.last_fetch_at ? `<div class="text-xs text-slate-500">Fetched: ${escapeHtml(meta.last_fetch_at)}</div>` : ''}
+      ${meta.text_length ? `<div class="text-xs text-slate-500">Text length: ${escapeHtml(meta.text_length)}</div>` : ''}
+      ${meta.id ? `<div class="text-xs text-slate-500">UUID: ${escapeHtml(meta.id)}</div>` : ''}
+      <div class="text-xs"><a class="text-blue-600 underline" href="${escapeHtml(
+        meta.source_url || node.id
+      )}" target="_blank" rel="noreferrer">Open page</a></div>
     </div>`
       : '';
 
@@ -123,11 +145,13 @@ function renderDetailBody(node) {
     <div class="space-y-2">
       <div class="text-xs uppercase text-slate-500">Image</div>
       <div class="rounded border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-900">
-        <img src="${node.label}" alt="${meta.alt || node.label}" class="max-h-56 w-full object-contain">
+        <img src="${escapeHtml(node.label)}" alt="${escapeHtml(meta.alt || node.label)}" class="max-h-56 w-full object-contain">
       </div>
-      <div class="text-[11px] text-slate-500">${meta.alt || ''}</div>
-      <div class="text-[11px] text-slate-500">Source: ${meta.source || 'unknown'}</div>
-      <div class="text-xs"><a class="text-blue-600 underline" href="${meta.source_url || node.label}" target="_blank" rel="noreferrer">Open image</a></div>
+      <div class="text-[11px] text-slate-500">${escapeHtml(meta.alt || '')}</div>
+      <div class="text-[11px] text-slate-500">Source: ${escapeHtml(meta.source || 'unknown')}</div>
+      <div class="text-xs"><a class="text-blue-600 underline" href="${escapeHtml(
+        meta.source_url || node.label
+      )}" target="_blank" rel="noreferrer">Open image</a></div>
     </div>`
       : '';
 
@@ -136,9 +160,11 @@ function renderDetailBody(node) {
       ? `
     <div class="space-y-2">
       <div class="text-xs uppercase text-slate-500">Intel</div>
-      ${meta.entity ? `<div class="text-xs">Entity: <b>${meta.entity}</b></div>` : ''}
-      ${meta.created_at ? `<div class="text-xs text-slate-500">Created: ${meta.created_at}</div>` : ''}
-      <details class="text-xs"><summary class="cursor-pointer font-semibold">Raw meta</summary><pre class="mt-1 p-2 bg-slate-900 text-slate-100 rounded text-xs whitespace-pre-wrap">${JSON.stringify(meta, null, 2)}</pre></details>
+      ${meta.entity ? `<div class="text-xs">Entity: <b>${escapeHtml(meta.entity)}</b></div>` : ''}
+      ${meta.created_at ? `<div class="text-xs text-slate-500">Created: ${escapeHtml(meta.created_at)}</div>` : ''}
+      <details class="text-xs"><summary class="cursor-pointer font-semibold">Raw meta</summary><pre class="mt-1 p-2 bg-slate-900 text-slate-100 rounded text-xs whitespace-pre-wrap">${escapeHtml(
+        JSON.stringify(meta, null, 2)
+      )}</pre></details>
     </div>`
       : '';
 
@@ -153,17 +179,17 @@ function renderDetailBody(node) {
       : '';
 
   return `
-    <div class="space-y-3">
-      ${entityBadge}
-      ${pagePreview}
-      ${imagePreview}
-      ${intelPreview}
-      <div class="space-y-1">
-        <div class="text-xs uppercase text-slate-500">Meta</div>
-        ${metaTableWithLinks(meta)}
+      <div class="space-y-3">
+        ${entityBadge}
+        ${pagePreview}
+        ${imagePreview}
+        ${intelPreview}
+        <div class="space-y-1">
+          <div class="text-xs uppercase text-slate-500">Meta</div>
+          ${metaTableWithLinks(meta)}
+        </div>
       </div>
-    </div>
-  `;
+    `;
 }
 
 function renderDetails(node, links) {
@@ -188,22 +214,25 @@ function renderDetails(node, links) {
     <div class="flex items-center justify-between">
       <div>
         <div class="text-xs uppercase tracking-wide text-slate-500">Details</div>
-        <div class="text-sm font-semibold break-all">${node.label || node.id}</div>
+        <div class="text-sm font-semibold break-all">${escapeHtml(node.label || node.id)}</div>
         <div class="text-xs text-slate-500">
-          ${node.type || 'unknown'} • score ${fmt(node.score)} • count ${fmt(node.count)}
+          ${escapeHtml(node.type || 'unknown')} • score ${escapeHtml(fmt(node.score))} • count ${escapeHtml(fmt(node.count))}
         </div>
       </div>
       <div class="flex items-center gap-2">
-        ${node.type === 'page' || node.type === 'image'
-          ? `<a class="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs font-semibold text-blue-600 dark:text-blue-200" href="${node.meta?.source_url || node.label || node.id}" target="_blank" rel="noreferrer">Open</a>`
-          : ''
+        ${
+          node.type === 'page' || node.type === 'image'
+            ? `<a class="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs font-semibold text-blue-600 dark:text-blue-200" href="${escapeHtml(
+                node.meta?.source_url || node.label || node.id
+              )}" target="_blank" rel="noreferrer">Open</a>`
+            : ''
         }
         <button
           type="button"
           data-action="expand-node"
-          data-node-id="${node.id}"
-          data-node-label="${node.label || node.id}"
-          data-node-type="${node.type || 'unknown'}"
+          data-node-id="${escapeHtml(node.id)}"
+          data-node-label="${escapeHtml(node.label || node.id)}"
+          data-node-type="${escapeHtml(node.type || 'unknown')}"
           class="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-100 hover:border-brand-400 dark:hover:border-brand-500"
         >
           Expand
@@ -220,12 +249,12 @@ function renderDetails(node, links) {
           ? connections
               .map(
                 ({ node: nid, weight, kind, meta }) =>
-                  `<li><span class="font-semibold">${nid}</span> <span class="text-slate-500">[${kind || 'link'}]</span>${
-                    weight ? `<span class="text-slate-400"> w:${weight}</span>` : ''
-                  }${
+                  `<li><span class="font-semibold">${escapeHtml(nid)}</span> <span class="text-slate-500">[${escapeHtml(
+                    kind || 'link'
+                  )}]</span>${weight ? `<span class="text-slate-400"> w:${escapeHtml(fmt(weight))}</span>` : ''}${
                     meta && Object.keys(meta).length
                       ? `<div class="text-slate-500">${Object.entries(meta)
-                          .map(([k, v]) => `${k}: ${fmt(v)}`)
+                          .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(fmt(v))}`)
                           .join(' • ')}</div>`
                       : ''
                   }</li>`
@@ -267,10 +296,12 @@ function renderNodeModalContent(node, links, detail) {
     ? `<ul class="text-xs space-y-1">${connections
         .map(
           (c) =>
-            `<li><b>${c.id}</b> <span class="text-slate-500">[${c.kind || 'link'}]</span>${c.weight ? ` w:${c.weight}` : ''}${
+            `<li><b>${escapeHtml(c.id)}</b> <span class="text-slate-500">[${escapeHtml(c.kind || 'link')}]</span>${
+              c.weight ? ` w:${escapeHtml(fmt(c.weight))}` : ''
+            }${
               c.meta && Object.keys(c.meta).length
                 ? `<div class="text-slate-500">${Object.entries(c.meta)
-                    .map(([k, v]) => `${k}: ${fmt(v)}`)
+                    .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(fmt(v))}`)
                     .join(' • ')}</div>`
                 : ''
             }</li>`
@@ -284,21 +315,30 @@ function renderNodeModalContent(node, links, detail) {
     const sd = metaMerged.structured_data
       ? collapsible(
           'Structured data',
-          `<pre class="p-2 bg-slate-900 text-white rounded text-xs whitespace-pre-wrap">${JSON.stringify(metaMerged.structured_data, null, 2)}</pre>`
+          `<pre class="p-2 bg-slate-900 text-white rounded text-xs whitespace-pre-wrap">${escapeHtml(
+            JSON.stringify(metaMerged.structured_data, null, 2)
+          )}</pre>`
         )
       : '';
     const previewText = content.text || metaMerged.content_preview || '';
     const preview = previewText
-      ? `<div class="bg-slate-50 dark:bg-slate-900 p-2 rounded text-xs font-mono max-h-64 overflow-y-auto whitespace-pre-wrap">${previewText.slice(0, 5000)}${previewText.length > 5000 ? '…' : ''}</div>`
+      ? `<div class="bg-slate-50 dark:bg-slate-900 p-2 rounded text-xs font-mono max-h-64 overflow-y-auto whitespace-pre-wrap">${escapeHtml(
+          previewText.slice(0, 5000)
+        )}${previewText.length > 5000 ? '…' : ''}</div>`
       : '';
     return `
       <div class="space-y-3">
         <div class="text-xs uppercase text-slate-500">Page</div>
-        <div class="text-sm font-semibold break-all">${node.label || node.id}</div>
-        <div class="text-xs text-slate-500">${pill(metaMerged.page_type || 'page')} ${metaMerged.entity_type ? pill(metaMerged.entity_type) : ''} ${metaMerged.score ? pill('score ' + metaMerged.score) : ''}</div>
-        ${metaMerged.last_fetch_at ? `<div class="text-xs text-slate-500">Fetched: ${metaMerged.last_fetch_at}</div>` : ''}
-        ${metaMerged.text_length ? `<div class="text-xs text-slate-500">Text length: ${metaMerged.text_length}</div>` : ''}
-        <div class="text-xs"><a class="text-blue-600 underline" href="${metaMerged.source_url || node.label || node.id}" target="_blank" rel="noreferrer">Open page</a></div>
+        <div class="text-sm font-semibold break-all">${escapeHtml(node.label || node.id)}</div>
+        <div class="text-xs text-slate-500">${pill(metaMerged.page_type || 'page')} ${
+      metaMerged.entity_type ? pill(metaMerged.entity_type) : ''
+    } ${metaMerged.score ? pill('score ' + metaMerged.score) : ''}</div>
+        ${metaMerged.last_fetch_at ? `<div class="text-xs text-slate-500">Fetched: ${escapeHtml(metaMerged.last_fetch_at)}</div>` : ''}
+        ${metaMerged.text_length ? `<div class="text-xs text-slate-500">Text length: ${escapeHtml(metaMerged.text_length)}</div>` : ''}
+        ${metaMerged.id ? `<div class="text-xs text-slate-500">UUID: ${escapeHtml(metaMerged.id)}</div>` : ''}
+        <div class="text-xs"><a class="text-blue-600 underline" href="${escapeHtml(
+          metaMerged.source_url || node.label || node.id
+        )}" target="_blank" rel="noreferrer">Open page</a></div>
         ${preview}
         ${sd}
         <div>
@@ -317,11 +357,19 @@ function renderNodeModalContent(node, links, detail) {
     return `
       <div class="space-y-3">
         <div class="text-xs uppercase text-slate-500">Image</div>
-        <img src="${node.label}" alt="${meta.alt || node.label}" class="w-full max-h-72 object-contain rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-        <div class="text-xs text-slate-500">${meta.alt || ''}</div>
-        <div class="text-xs text-slate-500">Source: ${meta.source || 'unknown'}</div>
-        ${meta.page ? `<div class="text-xs">Found on: <a class="text-blue-600 underline" href="${meta.page}" target="_blank" rel="noreferrer">${meta.page}</a></div>` : ''}
-        <div class="text-xs"><a class="text-blue-600 underline" href="${meta.source_url || node.label}" target="_blank" rel="noreferrer">Open image</a></div>
+        <img src="${escapeHtml(node.label)}" alt="${escapeHtml(meta.alt || node.label)}" class="w-full max-h-72 object-contain rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+        <div class="text-xs text-slate-500">${escapeHtml(meta.alt || '')}</div>
+        <div class="text-xs text-slate-500">Source: ${escapeHtml(meta.source || 'unknown')}</div>
+        ${
+          meta.page
+            ? `<div class="text-xs">Found on: <a class="text-blue-600 underline" href="${escapeHtml(
+                meta.page
+              )}" target="_blank" rel="noreferrer">${escapeHtml(meta.page)}</a></div>`
+            : ''
+        }
+        <div class="text-xs"><a class="text-blue-600 underline" href="${escapeHtml(
+          meta.source_url || node.label
+        )}" target="_blank" rel="noreferrer">Open image</a></div>
         <div>
           <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
           ${metaTable}
@@ -337,15 +385,23 @@ function renderNodeModalContent(node, links, detail) {
   if (node.type === 'intel' || detail?.type === 'intel') {
     const payload = detail?.payload || meta.payload_preview;
     const payloadBlock = payload
-      ? `<pre class="p-2 bg-slate-900 text-white rounded text-xs whitespace-pre-wrap max-h-64 overflow-y-auto">${JSON.stringify(payload, null, 2)}</pre>`
+      ? `<pre class="p-2 bg-slate-900 text-white rounded text-xs whitespace-pre-wrap max-h-64 overflow-y-auto">${escapeHtml(
+          JSON.stringify(payload, null, 2)
+        )}</pre>`
       : '<div class="text-xs text-slate-500">No payload available</div>';
     return `
       <div class="space-y-3">
         <div class="text-xs uppercase text-slate-500">Intel</div>
-        <div class="text-sm font-semibold">${node.label || node.id}</div>
-        ${meta.entity ? `<div class="text-xs">Entity: <b>${meta.entity}</b></div>` : ''}
-        ${meta.created_at ? `<div class="text-xs text-slate-500">Created: ${meta.created_at}</div>` : ''}
-        ${meta.source_url ? `<div class="text-xs"><a class="text-blue-600 underline" href="${meta.source_url}" target="_blank" rel="noreferrer">Source</a></div>` : ''}
+        <div class="text-sm font-semibold">${escapeHtml(node.label || node.id)}</div>
+        ${meta.entity ? `<div class="text-xs">Entity: <b>${escapeHtml(meta.entity)}</b></div>` : ''}
+        ${meta.created_at ? `<div class="text-xs text-slate-500">Created: ${escapeHtml(meta.created_at)}</div>` : ''}
+        ${
+          meta.source_url
+            ? `<div class="text-xs"><a class="text-blue-600 underline" href="${escapeHtml(
+                meta.source_url
+              )}" target="_blank" rel="noreferrer">Source</a></div>`
+            : ''
+        }
         ${payloadBlock}
         <div>
           <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
@@ -362,8 +418,10 @@ function renderNodeModalContent(node, links, detail) {
   return `
     <div class="space-y-3">
       <div class="text-xs uppercase text-slate-500">Entity</div>
-      <div class="text-sm font-semibold break-all">${node.label || node.id}</div>
-      <div class="text-xs text-slate-500">Type: ${node.type || 'unknown'} • score ${fmt(node.score)} • count ${fmt(node.count)}</div>
+      <div class="text-sm font-semibold break-all">${escapeHtml(node.label || node.id)}</div>
+      <div class="text-xs text-slate-500">Type: ${escapeHtml(node.type || 'unknown')} • score ${escapeHtml(
+    fmt(node.score)
+  )} • count ${escapeHtml(fmt(node.count))}</div>
       <div>
         <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
         ${metaTable}
@@ -385,7 +443,7 @@ function openNodeModal(node) {
     content: `<div class="text-xs text-slate-500">Loading…</div>`,
   });
   fetchNodeDetail(node).then((detail) => {
-    if (activeModalNodeId !== node.id) return; // stale
+    if (activeModalNodeId !== node.id) return;
     const content = renderNodeModalContent(node, filteredLinks, detail || {});
     showModal({
       title: node.label || node.id || 'Node detail',
@@ -412,7 +470,6 @@ function wireHoverModal(graph) {
   }
 }
 
-// Prefer local copy; fall back to CDNs if needed
 const FORCE_GRAPH_2D_SOURCES = [
   '/static/vendor/force-graph.min.js',
   'https://cdn.jsdelivr.net/npm/force-graph@1.50.1/dist/force-graph.min.js',
@@ -470,61 +527,6 @@ async function loadForceGraphLib(is3D) {
   }
 }
 
-async function fetchGraph() {
-  const base = val('base-url') || '';
-  const q = encodeURIComponent(els.entitiesGraphQuery?.value || '');
-  const type = encodeURIComponent(els.entitiesGraphType?.value || '');
-  const min = encodeURIComponent(els.entitiesGraphMinScore?.value || 0);
-  const limit = encodeURIComponent(els.entitiesGraphLimit?.value || 100);
-  const url = `${base}/api/entities/graph?query=${q}&type=${type}&min_score=${min}&limit=${limit}`;
-  setStatus('Loading...');
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
-  });
-  if (!res.ok) throw new Error(`Request failed (${res.status})`);
-  return res.json();
-}
-
-function clearGraphCanvas() {
-  if (!els.entitiesGraphCanvas) return;
-  while (els.entitiesGraphCanvas.firstChild) {
-    els.entitiesGraphCanvas.removeChild(els.entitiesGraphCanvas.firstChild);
-  }
-}
-
-function resizeGraph() {
-  if (!graphInstance || !els.entitiesGraphCanvas) return;
-  const rect = els.entitiesGraphCanvas.getBoundingClientRect();
-  const w = Math.max(320, rect.width || els.entitiesGraphCanvas.clientWidth || 800);
-  const h = Math.max(320, rect.height || els.entitiesGraphCanvas.clientHeight || 540);
-  if (use3D) {
-    setTimeout(() => graphInstance && graphInstance.width(w).height(h), 10);
-  } else {
-    graphInstance.width(w).height(h);
-  }
-}
-
-function tuneForces(instance) {
-  const charge = instance.d3Force && instance.d3Force('charge');
-  if (charge) charge.strength(-180).distanceMax(500);
-  const linkForce = instance.d3Force && instance.d3Force('link');
-  if (linkForce) {
-    linkForce
-      .distance((l) => 60 + (l.weight || 1) * 12)
-      .strength((l) => 0.6 + Math.min(1, (l.weight || 1) * 0.15));
-  }
-}
-
-function pseudoRandomFromKey(key) {
-  let hash = 2166136261;
-  for (let i = 0; i < key.length; i++) {
-    hash ^= key.charCodeAt(i);
-    hash *= 16777619;
-  }
-  return (hash >>> 0) / 0xffffffff;
-}
-
-// Filtering helpers
 function getNodeTypeFilters() {
   return filterEls.nodeFilters()
     .filter((c) => c.checked)
@@ -546,7 +548,7 @@ function seedsFromQuery(nodes, query) {
   if (!query) return nodes.map((n) => n.id);
   const q = query.toLowerCase();
   const seeds = nodes
-    .filter((n) => (n.label || '').toLowerCase().includes(q) || (n.id || '').toLowerCase().includes(q))
+    .filter((n) => (n.label || '').toLowerCase().includes(q) || (String(n.id) || '').toLowerCase().includes(q))
     .map((n) => n.id);
   return seeds.length ? seeds : nodes.map((n) => n.id);
 }
@@ -596,10 +598,13 @@ function applyFilters(rawNodes, rawLinks) {
 
   let nodes = rawNodes.filter((n) => {
     const t = (n.type || 'unknown').toLowerCase();
-    return nodeTypes.has(t) || nodeTypes.has(n.meta?.entity_kind) || (nodeTypes.has('entity') && t === 'unknown');
+    const ek = (n.meta?.entity_kind || '').toLowerCase();
+    return nodeTypes.has(t) || nodeTypes.has(ek) || (nodeTypes.has('entity') && t === 'unknown');
   });
 
-  let links = rawLinks.filter((l) => edgeKinds.has(l.kind || 'cooccurrence'));
+  let links = rawLinks
+    .map((l) => ({ ...l, kind: l.kind || 'link' }))
+    .filter((l) => edgeKinds.has(l.kind));
 
   const nodeSet = new Set(nodes.map((n) => n.id));
   links = links.filter((l) => nodeSet.has(l.source) && nodeSet.has(l.target));
@@ -608,13 +613,6 @@ function applyFilters(rawNodes, rawLinks) {
   const depthFiltered = filterByDepth(nodes, links, depthLimit, seeds);
   nodes = depthFiltered.nodes;
   links = depthFiltered.links;
-
-  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
-  links = links.map((l) => ({
-    ...l,
-    source: nodeMap.get(l.source) || l.source,
-    target: nodeMap.get(l.target) || l.target,
-  }));
 
   filteredNodes = nodes;
   filteredLinks = links;
@@ -639,6 +637,74 @@ function shouldAnimateLink(l) {
   return pseudoRandomFromKey(key) < PARTICLE_PROB;
 }
 
+async function fetchGraph() {
+  const base = val('base-url') || '';
+  const q = encodeURIComponent(els.entitiesGraphQuery?.value || '');
+  const type = encodeURIComponent(els.entitiesGraphType?.value || '');
+  const min = encodeURIComponent(els.entitiesGraphMinScore?.value || 0);
+  const limit = encodeURIComponent(els.entitiesGraphLimit?.value || 100);
+  const nodeTypes = encodeURIComponent(getNodeTypeFilters().join(','));
+  const edgeKinds = encodeURIComponent(getEdgeKindFilters().join(','));
+  const depth = encodeURIComponent(getDepthLimit());
+  const url = `${base}/api/entities/graph?query=${q}&type=${type}&min_score=${min}&limit=${limit}&node_types=${nodeTypes}&edge_kinds=${edgeKinds}&depth=${depth}&include_meta=1`;
+  setStatus('Loading...');
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+  });
+  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  return res.json();
+}
+
+function clearGraphCanvas() {
+  if (!els.entitiesGraphCanvas) return;
+  while (els.entitiesGraphCanvas.firstChild) {
+    els.entitiesGraphCanvas.removeChild(els.entitiesGraphCanvas.firstChild);
+  }
+}
+
+function resizeGraph() {
+  if (!graphInstance || !els.entitiesGraphCanvas) return;
+  const rect = els.entitiesGraphCanvas.getBoundingClientRect();
+  const w = Math.max(320, rect.width || els.entitiesGraphCanvas.clientWidth || 800);
+  const h = Math.max(320, rect.height || els.entitiesGraphCanvas.clientHeight || 540);
+  if (use3D) {
+    setTimeout(() => graphInstance && graphInstance.width(w).height(h), 10);
+  } else {
+    graphInstance.width(w).height(h);
+  }
+}
+
+function tuneForces(instance) {
+  const charge = instance.d3Force && instance.d3Force('charge');
+  if (charge) charge.strength(-180).distanceMax(500);
+  const linkForce = instance.d3Force && instance.d3Force('link');
+  if (linkForce) {
+    linkForce
+      .distance((l) => 60 + (l.weight || 1) * 12)
+      .strength((l) => 0.6 + Math.min(1, (l.weight || 1) * 0.15));
+  }
+}
+
+function pseudoRandomFromKey(key) {
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i);
+    hash *= 16777619;
+  }
+  return (hash >>> 0) / 0xffffffff;
+}
+
+function renderGraphData(forceGraphInstance) {
+  // ForceGraph accepts ids or node objects; pass ids or objects as available
+  const nodeMap = new Map(filteredNodes.map((n) => [n.id, n]));
+  const links = filteredLinks.map((l) => ({
+    ...l,
+    source: nodeMap.get(l.source?.id || l.source) || l.source,
+    target: nodeMap.get(l.target?.id || l.target) || l.target,
+  }));
+  forceGraphInstance.graphData({ nodes: filteredNodes, links });
+}
+
 async function renderGraph() {
   if (!els.entitiesGraphCanvas) return;
   clearGraphCanvas();
@@ -658,7 +724,16 @@ async function renderGraph() {
     .linkDirectionalParticles((l) => (shouldAnimateLink(l) ? 1 : 0))
     .linkDirectionalParticleWidth((l) => Math.max(PARTICLE_WIDTH_BASE, (l.weight || 1) * 0.6))
     .linkDirectionalParticleSpeed(() => PARTICLE_SPEED)
-    .linkLabel((l) => `${l.kind || 'link'}${l.weight ? ` (w:${l.weight})` : ''}${l.meta && Object.keys(l.meta).length ? `\n${Object.entries(l.meta).map(([k,v])=>`${k}: ${fmt(v)}`).join('\n')}` : ''}`)
+    .linkLabel(
+      (l) =>
+        `${l.kind || 'link'}${l.weight ? ` (w:${l.weight})` : ''}${
+          l.meta && Object.keys(l.meta).length
+            ? `\n${Object.entries(l.meta)
+                .map(([k, v]) => `${k}: ${fmt(v)}`)
+                .join('\n')}`
+            : ''
+        }`
+    )
     .onNodeClick((n) => {
       selectedNodeId = n.id;
       renderDetails(n, filteredLinks);
@@ -666,7 +741,7 @@ async function renderGraph() {
     });
 
   tuneForces(graphInstance);
-  graphInstance.graphData({ nodes: filteredNodes, links: filteredLinks });
+  renderGraphData(graphInstance);
   wireHoverModal(graphInstance);
   resizeGraph();
   renderDetails(null, []);

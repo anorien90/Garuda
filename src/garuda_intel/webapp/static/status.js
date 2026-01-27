@@ -37,7 +37,7 @@ export function showHealthPopup() {
         <div class="font-semibold">${s.name || 'Service'}</div>
         <div class="text-xs text-slate-500">${s.detail || ''}</div>
       </div>
-      <span class="text-xs px-2 py-0.5 rounded ${computeHealthColor({ services: [s] })} text-white">${s.status || ''}</span>
+        <span class="text-xs px-2 py-0.5 rounded ${computeHealthColor({ services: [s] })} text-white">${s.status || ''}</span>
     </div>
   `).join('') || '<div class="text-sm text-slate-500">No per-service data available.</div>';
 

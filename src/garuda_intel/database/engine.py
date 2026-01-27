@@ -1,15 +1,48 @@
 import json
-from datetime import datetime
-from typing import Dict, List, Optional, Any
 import logging
+import uuid
+from datetime import datetime
+from typing import List, Dict, Optional, Any
 
-from sqlalchemy import create_engine, func, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import create_engine, func, select, or_
+from sqlalchemy import create_engine, select, func, or_, String
+from sqlalchemy.orm import sessionmaker, aliased
 
-from .models import Base, Domain, Fingerprint, Link, Page, PageContent, Pattern, Seed, Intelligence, Entity
 from .store import PersistenceStore
+from .models import (
+    Base,
+    Page,
+    PageContent,
+    Seed,
+    Intelligence,
+    Link,
+    Fingerprint,
+    Pattern,
+    Domain,
+    Entity,
+    Relationship,
+)
 from ..types.page.fingerprint import PageFingerprint
+
+
+def _uuid5_url(value: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, value))
+
+
+def _uuid4() -> str:
+    return str(uuid.uuid4())
+
+
+def _as_dict(obj):
+    if obj is None:
+        return {}
+    if isinstance(obj, str):
+        try:
+            return json.loads(obj)
+        except Exception:
+            return {}
+    if isinstance(obj, dict):
+        return obj
+    return {}
 
 
 class SQLAlchemyStore(PersistenceStore):
@@ -21,11 +54,15 @@ class SQLAlchemyStore(PersistenceStore):
         self.PageContent = PageContent
         self.Page = Page
 
-    def save_seed(self, query: str, entity_type: str, source: str):
+    # -------- Seeds --------
+    def save_seed(self, query: str, entity_type: str, source: str) -> str:
         with self.Session() as s:
-            s.add(Seed(query=query, entity_type=entity_type, source=source))
+            seed = Seed(id=_uuid4(), query=query, entity_type=entity_type, source=source)
+            s.merge(seed)
             s.commit()
-    
+            return seed.id
+
+    # -------- Pages / Content --------
     def get_all_pages(
         self,
         q: Optional[str] = None,
@@ -35,117 +72,91 @@ class SQLAlchemyStore(PersistenceStore):
         sort: str = "fresh",
         limit: int = 200,
     ) -> List[Page]:
-        """
-        Fetch pages with optional filtering and sorting applied at the DB level.
-        sort: "fresh" (last_fetch_at desc) | "score" (score desc, then recency)
-        q: fuzzy match against url, page_type, entity_type, domain_key, last_status, and page text.
-        """
         q_norm = (q or "").strip().lower()
-        with self.Session() as s:
-            stmt = select(Page).outerjoin(PageContent, Page.url == PageContent.page_url)
-
-            conditions = []
-            if q_norm:
-                like = f"%{q_norm}%"
-                conditions.append(
-                    or_(
-                        func.lower(Page.url).ilike(like),
-                        func.lower(Page.page_type).ilike(like),
-                        func.lower(Page.entity_type).ilike(like),
-                        func.lower(Page.domain_key).ilike(like),
-                        func.lower(Page.last_status).ilike(like),
-                        func.lower(PageContent.text).ilike(like),
-                    )
-                )
-            if entity_type:
-                conditions.append(Page.entity_type == entity_type)
-            if page_type:
-                conditions.append(Page.page_type == page_type)
-            if min_score is not None:
-                conditions.append(Page.score >= min_score)
-
-            if conditions:
-                stmt = stmt.where(*conditions)
-
-            if sort == "score":
-                stmt = stmt.order_by(Page.score.desc().nullslast(), Page.last_fetch_at.desc().nullslast())
-            else:  # fresh by default
-                stmt = stmt.order_by(Page.last_fetch_at.desc().nullslast())
-
-            stmt = stmt.limit(limit)
-            results = s.execute(stmt).scalars().all()
-            return results
-
-    def save_intelligence(self, finding: Dict, confidence: float) -> Optional[int]:
-        """
-        Saves verified extraction results to the database and returns the inserted row id.
-        """
+        pc = aliased(PageContent, flat=True)
         try:
             with self.Session() as s:
-                entity_name = finding.get("basic_info", {}).get("official_name", "Unknown Entity")
-                intel_record = Intelligence(
-                    entity_name=entity_name,
-                    data=json.dumps(finding),
-                    confidence=confidence
-                )
-                s.add(intel_record)
-                s.commit()
-                self.logger.info(f"Saved intelligence for {entity_name} (Confidence: {confidence})")
-                return intel_record.id
-        except Exception as e:
-            self.logger.error(f"Failed to save intelligence: {e}")
-            return None
-    
-    def get_intelligence(self, 
-                           entity_name: Optional[str] = None, 
-                           min_confidence: float = 0.0, 
-                           limit: int = 100) -> List[Dict]:
-        with self.Session() as s:
-            stmt = select(Intelligence).where(Intelligence.confidence >= min_confidence)
-            if entity_name:
-                stmt = stmt.where(Intelligence.entity_name.ilike(f"%{entity_name}%"))
-            stmt = stmt.order_by(Intelligence.confidence.desc()).limit(limit)
-            results = s.execute(stmt).scalars().all()
-            return [
-                {
-                    "id": r.id,
-                    "entity": r.entity_name,
-                    "confidence": r.confidence,
-                    "data": json.loads(r.data),
-                    "created": r.created_at.isoformat()
-                } for r in results
-            ]
+                stmt = select(Page).outerjoin(pc, Page.id == pc.page_id)
 
-    def get_page_content(self, url: str) -> Optional[Dict]:
+                conditions = []
+                if q_norm:
+                    like = f"%{q_norm}%"
+                    conditions.append(
+                        or_(
+                            func.lower(Page.url).ilike(like),
+                            func.lower(Page.page_type).ilike(like),
+                            func.lower(Page.entity_type).ilike(like),
+                            func.lower(Page.domain_key).ilike(like),
+                            func.lower(Page.last_status).ilike(like),
+                            func.lower(pc.text).ilike(like),
+                        )
+                    )
+                if entity_type:
+                    conditions.append(Page.entity_type == entity_type)
+                if page_type:
+                    conditions.append(Page.page_type == page_type)
+                if min_score is not None:
+                    conditions.append(Page.score >= min_score)
+
+                if conditions:
+                    stmt = stmt.where(*conditions)
+
+                if sort == "score":
+                    stmt = stmt.order_by(Page.score.desc().nullslast(), Page.last_fetch_at.desc().nullslast())
+                else:
+                    stmt = stmt.order_by(Page.last_fetch_at.desc().nullslast())
+
+                stmt = stmt.limit(limit)
+                results = s.execute(stmt).scalars().all()
+                return results or []
+        except Exception as e:
+            self.logger.error(f"get_all_pages failed: {e}")
+            return []
+
+    def get_page_by_url(self, url: str) -> Optional[Dict]:
         with self.Session() as s:
-            pc = s.get(PageContent, url)
+            p = s.execute(select(Page).where(Page.url == url)).scalar_one_or_none()
+            if not p:
+                return None
+            return p.to_dict()
+
+    def get_page_content_by_url(self, url: str) -> Optional[Dict]:
+        with self.Session() as s:
+            page_id = s.execute(select(Page.id).where(Page.url == url)).scalar_one_or_none()
+            if not page_id:
+                return None
+            pc = s.execute(select(PageContent).where(PageContent.page_id == page_id)).scalar_one_or_none()
             if pc:
                 return {
                     "html": pc.html,
                     "text": pc.text,
-                    "metadata": json.loads(pc.metadata_json) if pc.metadata_json else {},
-                    "extracted": json.loads(pc.extracted_json) if pc.extracted_json else {},
+                    "metadata": _as_dict(pc.metadata_json),
+                    "extracted": _as_dict(pc.extracted_json),
                     "fetch_ts": pc.fetch_ts.isoformat(),
                 }
             return None
 
-    def search_intelligence_data(self, query: str) -> List[Dict]:
-        with self.Session() as s:
-            stmt = select(Intelligence).where(Intelligence.data.ilike(f"%{query}%"))
-            results = s.execute(stmt).scalars().all()
-            return [{"entity": r.entity_name, "data": json.loads(r.data)} for r in results]
-    
-    def get_page(self, url: str) -> Optional[Dict]:
-        with self.Session() as s:
-            p = s.get(Page, url)
-            if p:
-                return p.to_dict()
-            return None
+    # Convenience for legacy callers
+    def get_page_content(self, url: str) -> Optional[Dict]:
+        return self.get_page_content_by_url(url)
 
-    def save_page(self, page: Dict):
+    def get_page(self, url: str) -> Optional[Dict]:
+        return self.get_page_by_url(url)
+
+    def save_page(self, page: Dict) -> str:
+        """
+        Upsert page + content. Returns the page UUID.
+        If no id is provided, a deterministic UUID5 is derived from the URL to keep Qdrant alignment stable.
+        """
+        url = page.get("url")
+        if not url:
+            raise ValueError("page url is required")
+        page_id = page.get("id") or _uuid5_url(url)
+
         with self.Session() as s:
             p = Page(
-                url=page.get("url"),
+                id=page_id,
+                url=url,
                 entity_type=page.get("entity_type"),
                 domain_key=page.get("domain_key"),
                 depth=page.get("depth"),
@@ -156,17 +167,86 @@ class SQLAlchemyStore(PersistenceStore):
                 text_length=page.get("text_length"),
             )
             pc = PageContent(
-                page_url=page.get("url"),
+                id=_uuid4(),
+                page_id=page_id,
                 html=page.get("html", ""),
                 text=page.get("text_content", ""),
-                metadata_json=json.dumps(page.get("metadata", {})),
-                extracted_json=json.dumps(page.get("extracted", {})),
-                fetch_ts=datetime.utcnow(),
+                metadata_json=page.get("metadata", {}) or {},
+                extracted_json=page.get("extracted", {}) or {},
+                fetch_ts=page.get("last_fetch_at") or datetime.utcnow(),
             )
             s.merge(p)
             s.merge(pc)
             s.commit()
+            return page_id
 
+    # -------- Intelligence --------
+    def save_intelligence(
+        self,
+        finding: Dict,
+        confidence: float,
+        page_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_name: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Persist an intel record with optional page/entity context.
+        """
+        entity_name = entity_name or finding.get("basic_info", {}).get("official_name") or "Unknown Entity"
+        entity_type = entity_type or finding.get("basic_info", {}).get("entity_type")
+        data = finding.get("data", finding)  # fallback to whole finding
+        with self.Session() as s:
+            intel = Intelligence(
+                id=_uuid4(),
+                entity_id=entity_id,
+                entity_name=entity_name,
+                entity_type=entity_type,
+                page_id=page_id,
+                data=_as_dict(data),
+                confidence=confidence,
+            )
+            s.add(intel)
+            s.commit()
+            return intel.id
+
+    def get_intelligence(
+        self,
+        entity_name: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        min_confidence: float = 0.0,
+        limit: int = 100,
+    ) -> List[Dict]:
+        with self.Session() as s:
+            stmt = select(Intelligence).where(Intelligence.confidence >= min_confidence)
+            if entity_id:
+                stmt = stmt.where(Intelligence.entity_id == entity_id)
+            if entity_name:
+                stmt = stmt.where(Intelligence.entity_name.ilike(f"%{entity_name}%"))
+            stmt = stmt.order_by(Intelligence.created_at.desc()).limit(limit)
+            rows = s.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": r.id,
+                    "entity_id": r.entity_id,
+                    "entity_name": r.entity_name,
+                    "entity_type": r.entity_type,
+                    "confidence": r.confidence,
+                    "data": _as_dict(r.data),
+                    "created": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in rows
+            ]
+
+    def search_intelligence_data(self, query: str) -> List[Dict]:
+        with self.Session() as s:
+            stmt = select(Intelligence).where(
+                func.cast(Intelligence.data, String).ilike(f"%{query}%")
+            )
+            rows = s.execute(stmt).scalars().all()
+            return [{"id": r.id, "entity_id": r.entity_id, "data": _as_dict(r.data)} for r in rows]
+
+    # -------- Links / Relationships --------
     def save_links(self, from_url: str, links: List[Dict]):
         if not links:
             return
@@ -174,21 +254,47 @@ class SQLAlchemyStore(PersistenceStore):
             for l in links:
                 s.add(
                     Link(
+                        id=_uuid4(),
                         from_url=from_url,
                         to_url=l.get("href"),
                         anchor_text=l.get("text", ""),
                         score=l.get("score", 0),
                         reason=l.get("reason", ""),
                         depth=l.get("depth", 0),
+                        relation_type="hyperlink",
                     )
                 )
             s.commit()
 
+    def save_relationship(self, from_id: str, to_id: str, relation_type: str, meta: Optional[Dict] = None) -> Optional[str]:
+        """
+        Persist an explicit relationship between two entries (entities, pages, intel, etc.).
+        Uses correct columns: source_id / target_id / metadata_json.
+        """
+        if not from_id or not to_id or not relation_type:
+            return None
+        with self.Session() as s:
+            rel = Relationship(
+                id=_uuid4(),
+                source_id=from_id,
+                target_id=to_id,
+                relation_type=relation_type,
+                metadata_json=meta or {},
+            )
+            s.merge(rel)
+            s.commit()
+            return str(rel.id)
+
+    # -------- Fingerprints --------
     def save_fingerprint(self, fp: PageFingerprint):
+        page_id = fp.page_id or (fp.page_url and _uuid5_url(fp.page_url))
+        if not page_id:
+            raise ValueError("page_id or page_url is required for fingerprint")
         with self.Session() as s:
             s.add(
                 Fingerprint(
-                    page_url=fp.page_url,
+                    id=_uuid4(),
+                    page_id=page_id,
                     selector=fp.selector,
                     purpose=fp.purpose,
                     sample_text=fp.sample_text,
@@ -196,6 +302,7 @@ class SQLAlchemyStore(PersistenceStore):
             )
             s.commit()
 
+    # -------- Patterns / Domains --------
     def save_patterns(self, patterns: List[Dict]):
         if not patterns:
             return
@@ -203,6 +310,7 @@ class SQLAlchemyStore(PersistenceStore):
             for p in patterns:
                 s.add(
                     Pattern(
+                        id=_uuid4(),
                         entity_type=p.get("entity_type"),
                         pattern=p.get("pattern"),
                         weight=p.get("weight", 0),
@@ -218,6 +326,7 @@ class SQLAlchemyStore(PersistenceStore):
             for d in domains:
                 s.add(
                     Domain(
+                        id=_uuid4(),
                         entity_type=d.get("entity_type"),
                         domain=d.get("domain"),
                         weight=d.get("weight", 0),
@@ -227,40 +336,45 @@ class SQLAlchemyStore(PersistenceStore):
                 )
             s.commit()
 
-    def save_entities(self, entities: List[Dict]) -> Dict[tuple, int]:
+    # -------- Entities --------
+    def save_entities(self, entities: List[Dict]) -> Dict[tuple, str]:
         """
         Merge/enrich entity nodes across pages. Entity identity: (name, kind).
         Returns mapping {(name, kind): id}.
         """
-        ids = {}
         if not entities:
-            return ids
+            return {}
+        mapping: Dict[tuple, str] = {}
         with self.Session() as s:
-            for ent in entities:
-                name = ent.get("name")
-                kind = ent.get("kind", "entity")
-                attrs = ent.get("attrs", {})
-                row = (
-                    s.query(Entity)
-                    .filter(Entity.name == name)
-                    .filter(Entity.kind == kind)
-                    .one_or_none()
+            for e in entities:
+                name = e.get("name")
+                kind = e.get("kind") or "entity"
+                data = _as_dict(e.get("data") or e.get("attrs"))
+                meta = _as_dict(e.get("meta"))
+                key = (name, kind)
+                existing = (
+                    s.execute(select(Entity).where(Entity.name == name, Entity.kind == kind))
+                    .scalar_one_or_none()
                 )
-                if row:
-                    try:
-                        existing = json.loads(row.data)
-                    except Exception:
-                        existing = {}
-                    merged = {**existing, **attrs}
-                    row.data = json.dumps(merged)
-                    row.last_seen = datetime.utcnow()
+                if existing:
+                    existing.data = {**existing.data, **data}
+                    existing.metadata_json = {**_as_dict(existing.metadata_json), **meta}
+                    existing.last_seen = datetime.utcnow()
+                    eid = existing.id
                 else:
-                    row = Entity(name=name, kind=kind, data=json.dumps(attrs))
-                    s.add(row)
-                s.flush()
-                ids[(name, kind)] = row.id
+                    eid = _uuid4()
+                    s.add(
+                        Entity(
+                            id=eid,
+                            name=name,
+                            kind=kind,
+                            data=data,
+                            metadata_json=meta,
+                        )
+                    )
+                mapping[key] = eid
             s.commit()
-        return ids
+        return mapping
 
     def get_entities(self, name_like: Optional[str] = None, kind: Optional[str] = None, limit: int = 100) -> List[Dict]:
         with self.Session() as s:
@@ -271,8 +385,19 @@ class SQLAlchemyStore(PersistenceStore):
                 stmt = stmt.where(Entity.kind == kind)
             stmt = stmt.limit(limit)
             rows = s.execute(stmt).scalars().all()
-            return [{"name": r.name, "kind": r.kind, "data": json.loads(r.data), "last_seen": r.last_seen.isoformat()} for r in rows]
+            return [
+                {
+                    "id": r.id,
+                    "name": r.name,
+                    "kind": r.kind,
+                    "data": _as_dict(r.data),
+                    "meta": _as_dict(r.metadata_json),
+                    "last_seen": r.last_seen.isoformat(),
+                }
+                for r in rows
+            ]
 
+    # -------- Refresh helpers --------
     def get_pending_refresh(self, limit: int = 50) -> List[Dict]:
         with self.Session() as s:
             stmt = (
@@ -285,7 +410,7 @@ class SQLAlchemyStore(PersistenceStore):
 
     def mark_visited(self, url: str):
         with self.Session() as s:
-            p = s.get(Page, url)
+            p = s.execute(select(Page).where(Page.url == url)).scalar_one_or_none()
             if p:
                 p.last_status = "visited"
                 p.last_fetch_at = datetime.utcnow()
@@ -293,8 +418,9 @@ class SQLAlchemyStore(PersistenceStore):
 
     def has_visited(self, url: str) -> bool:
         with self.Session() as s:
-            return s.get(Page, url) is not None
+            return s.execute(select(Page.id).where(Page.url == url)).scalar_one_or_none() is not None
 
+    # -------- Text search across intel --------
     def search_intel(
         self,
         keyword: str,
@@ -316,7 +442,7 @@ class SQLAlchemyStore(PersistenceStore):
                         200,
                     ).label("snippet"),
                 )
-                .join(PageContent, Page.url == PageContent.page_url)
+                .join(PageContent, Page.id == PageContent.page_id)
                 .where(PageContent.text.ilike(kw_like))
                 .order_by(Page.score.desc().nullslast(), Page.last_fetch_at.desc().nullslast())
                 .limit(limit)
@@ -340,28 +466,30 @@ class SQLAlchemyStore(PersistenceStore):
     def get_aggregated_entity_data(self, entity_name: str) -> Dict[str, Any]:
         """Aggregates all Intelligence records for an entity into one JSON structure."""
         with self.Session() as s:
-            stmt = select(Intelligence).where(Intelligence.entity_name.ilike(f"%{entity_name}%"))
+            stmt = select(Intelligence).where(
+                func.cast(Intelligence.data, String).ilike(f"%{entity_name}%")
+            )
             records = s.execute(stmt).scalars().all()
-            
+
             aggregated = {
                 "official_names": set(),
                 "persons": [],
                 "metrics": [],
                 "financials": [],
                 "products": [],
-                "sources_count": len(records)
+                "sources_count": len(records),
             }
-            
+
             for r in records:
-                data = json.loads(r.data)
+                data = _as_dict(r.data)
                 bi = data.get("basic_info", {})
-                if bi.get("official_name"): aggregated["official_names"].add(bi["official_name"])
-                
-                # Deduplicate and merge lists
+                if bi.get("official_name"):
+                    aggregated["official_names"].add(bi["official_name"])
+
                 for key in ["persons", "metrics", "financials", "products"]:
                     items = data.get(key, [])
                     if isinstance(items, list):
                         aggregated[key].extend(items)
-            
+
             aggregated["official_names"] = list(aggregated["official_names"])
             return aggregated

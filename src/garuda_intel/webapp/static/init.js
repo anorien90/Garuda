@@ -10,7 +10,7 @@ import { loadPages } from './actions/pages.js';
 import { recorderSearch, recorderRefreshHealth, recorderMark } from './actions/recorder.js';
 import { runCrawl } from './actions/crawl.js';
 import { bindDelegatedEvents } from './events.js';
-import { initEntitiesGraph } from './entities-graph.js'; // NEW
+import { initEntitiesGraph } from './entities-graph.js';
 
 export function init() {
   initTheme();
@@ -30,11 +30,10 @@ export function init() {
     els.chatToggle.onclick = () => els.chatContainer.classList.toggle('hidden');
   }
 
-  // Forms
   if (els.searchForm) els.searchForm.onsubmit = searchIntel;
   if (els.semanticForm) els.semanticForm.onsubmit = semanticSearch;
   if (els.chatForm) els.chatForm.onsubmit = chatAsk;
-  if (els.pagesBtn) els.pagesBtn.onclick = loadPages;
+  if (els.pagesLoad) els.pagesLoad.onclick = loadPages;
   if (els.pagesLimit) els.pagesLimit.onchange = loadPages;
   if (els.pagesSearch) els.pagesSearch.oninput = () => loadPages({ clientOnly: true });
   if (els.recorderSearchForm) els.recorderSearchForm.onsubmit = recorderSearch;
@@ -42,7 +41,6 @@ export function init() {
   if (els.recorderMarkForm) els.recorderMarkForm.onsubmit = recorderMark;
   if (els.crawlForm) els.crawlForm.onsubmit = runCrawl;
 
-  // NEW
   initEntitiesGraph();
 
   bindDelegatedEvents();
