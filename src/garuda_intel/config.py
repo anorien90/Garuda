@@ -36,6 +36,14 @@ class Settings:
     media_processing_enabled: bool = True
     media_crawling_enabled: bool = True
     media_auto_embeddings: bool = True
+    
+    # Media processing methods
+    # Image: "tesseract" (OCR) or "image2text" (AI model)
+    media_image_method: str = "tesseract"
+    # Video: "speech" (audio transcription) or "video2text" (AI model)
+    media_video_method: str = "speech"
+    # Audio: "speech" (speech recognition)
+    media_audio_method: str = "speech"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -61,6 +69,9 @@ class Settings:
             media_processing_enabled=_as_bool(os.environ.get("GARUDA_MEDIA_PROCESSING"), True),
             media_crawling_enabled=_as_bool(os.environ.get("GARUDA_MEDIA_CRAWLING"), True),
             media_auto_embeddings=_as_bool(os.environ.get("GARUDA_MEDIA_EMBEDDINGS"), True),
+            media_image_method=os.environ.get("GARUDA_MEDIA_IMAGE_METHOD", "tesseract"),
+            media_video_method=os.environ.get("GARUDA_MEDIA_VIDEO_METHOD", "speech"),
+            media_audio_method=os.environ.get("GARUDA_MEDIA_AUDIO_METHOD", "speech"),
         )
 
     @property

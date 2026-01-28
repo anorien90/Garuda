@@ -59,7 +59,13 @@ entity_crawler = EntityAwareCrawler(store, llm)
 crawl_learner = CrawlLearner(store)
 gap_analyzer = EntityGapAnalyzer(store)
 adaptive_crawler = AdaptiveCrawlerService(store, llm, crawl_learner)
-media_processor = MediaProcessor(llm, enable_processing=settings.media_processing_enabled)
+media_processor = MediaProcessor(
+    llm, 
+    enable_processing=settings.media_processing_enabled,
+    image_method=settings.media_image_method,
+    video_method=settings.media_video_method,
+    audio_method=settings.media_audio_method,
+)
 
 # Initialize media extractor for crawling integration
 from ..services.media_extractor import MediaExtractor
