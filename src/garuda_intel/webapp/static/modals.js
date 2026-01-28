@@ -8,12 +8,17 @@ function ensureModalRoot() {
   return root;
 }
 
-export function closeModal(id) {
+export function closeModal(id, callback) {
   const el = document.getElementById(id);
-  if (el) el.remove();
+  if (el) {
+    el.remove();
+    if (callback && typeof callback === 'function') {
+      callback();
+    }
+  }
 }
 
-export function showModal({ title = 'Details', content = '', size = 'md' }) {
+export function showModal({ title = 'Details', content = '', size = 'md', onClose = null }) {
   const root = ensureModalRoot();
   const id = `modal-${Date.now()}`;
   const widths = { sm: 'max-w-md', md: 'max-w-3xl', lg: 'max-w-5xl' };
@@ -29,8 +34,9 @@ export function showModal({ title = 'Details', content = '', size = 'md' }) {
       <div class="max-h-[70vh] overflow-y-auto px-4 py-3 text-sm text-slate-800 dark:text-slate-200">${content}</div>
     </div>
   `;
-  wrapper.querySelector('button').onclick = () => closeModal(id);
-  wrapper.onclick = (e) => { if (e.target === wrapper) closeModal(id); };
+  const closeHandler = () => closeModal(id, onClose);
+  wrapper.querySelector('button').onclick = closeHandler;
+  wrapper.onclick = (e) => { if (e.target === wrapper) closeHandler(); };
   root.appendChild(wrapper);
   return id;
 }

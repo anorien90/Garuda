@@ -167,30 +167,13 @@
   </div>
 </div>
 
-<script>
-// Media processing functions
-const API_KEY = localStorage.getItem('api_key') || '';
+<script type="module">
+// Import shared API functions
+import { fetchWithAPIKey } from '/static/api.js';
 
+// Helper to handle API responses
 async function fetchWithAuth(url, options = {}) {
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers
-  };
-  
-  if (API_KEY) {
-    headers['X-API-Key'] = API_KEY;
-  }
-  
-  const response = await fetch(url, {
-    ...options,
-    headers
-  });
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(error.error || response.statusText);
-  }
-  
+  const response = await fetchWithAPIKey(url, options);
   return response.json();
 }
 
