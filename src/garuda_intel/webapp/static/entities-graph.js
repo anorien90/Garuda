@@ -1,6 +1,6 @@
 import { els, val } from './config.js';
 import { pill, collapsible, renderKeyValTable } from './ui.js';
-import { showModal } from './modals.js';
+import { showModal, updateModal } from './modals.js';
 
 // Color maps for node/edge kinds
 const COLORS = {
@@ -42,6 +42,7 @@ let filteredLinks = [];
 let selectedNodeId = null;
 let hoverTimer = null;
 let activeModalNodeId = null;
+let activeModalId = null;
 
 const filterEls = {
   nodeFilters: () => Array.from(document.querySelectorAll('.entities-node-filter')),
@@ -443,27 +444,25 @@ function openNodeModal(node) {
   if (activeModalNodeId === node.id) return;
   
   activeModalNodeId = node.id;
-  showModal({
+  activeModalId = showModal({
     title: node.label || node.id || 'Node detail',
     size: 'lg',
     content: `<div class="text-xs text-slate-500">Loading…</div>`,
     onClose: () => {
       // Clear active modal node when modal is closed
       activeModalNodeId = null;
+      activeModalId = null;
     }
   });
+  
   fetchNodeDetail(node).then((detail) => {
     // Only update if this is still the active modal node
-    if (activeModalNodeId !== node.id) return;
+    if (activeModalNodeId !== node.id || !activeModalId) return;
     const content = renderNodeModalContent(node, filteredLinks, detail || {});
-    showModal({
+    // Update the existing modal instead of creating a new one
+    updateModal(activeModalId, {
       title: node.label || node.id || 'Node detail',
-      size: 'lg',
-      content,
-      onClose: () => {
-        // Clear active modal node when modal is closed
-        activeModalNodeId = null;
-      }
+      content
     });
   });
 }

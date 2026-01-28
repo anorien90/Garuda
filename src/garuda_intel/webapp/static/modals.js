@@ -18,6 +18,23 @@ export function closeModal(id, callback) {
   }
 }
 
+export function updateModal(id, { title, content }) {
+  const el = document.getElementById(id);
+  if (!el) return false;
+  
+  if (title !== undefined) {
+    const titleEl = el.querySelector('h3');
+    if (titleEl) titleEl.textContent = title;
+  }
+  
+  if (content !== undefined) {
+    const contentEl = el.querySelector('.max-h-\\[70vh\\]');
+    if (contentEl) contentEl.innerHTML = content;
+  }
+  
+  return true;
+}
+
 export function showModal({ title = 'Details', content = '', size = 'md', onClose = null }) {
   const root = ensureModalRoot();
   const id = `modal-${Date.now()}`;
