@@ -18,7 +18,7 @@ from collections import defaultdict
 from sqlalchemy import select, func
 
 from .store import PersistenceStore
-from .models import Entity, Relationship
+from .models import Entity, Relationship, BasicDataEntry
 from ..extractor.llm import LLMIntelExtractor
 
 
@@ -359,10 +359,13 @@ Only include relationships where confidence >= {min_confidence}.
         Validate all relationships and optionally fix issues.
         
         Checks for:
-        - Circular relationships (entity relating to itself)
-        - Orphaned relationships (missing source or target entity)
+        - Circular relationships (node relating to itself)
+        - Orphaned relationships (missing source or target node in any table)
         - Invalid confidence scores
         - Missing required fields
+        
+        Note: Validates relationships between ALL node types (Entity, Page, 
+        Intelligence, Seed, etc.), not just Entity↔Entity relationships.
         
         Args:
             fix_invalid: If True, attempts to fix or remove invalid relationships
@@ -419,12 +422,14 @@ Only include relationships where confidence >= {min_confidence}.
                         continue
                     
                     # Check for orphaned relationships
+                    # Check against BasicDataEntry (entries table) to support all node types
+                    # (Entity, Page, Intelligence, Seed, etc.), not just Entity
                     source_exists = session.execute(
-                        select(Entity.id).where(Entity.id == rel.source_id)
+                        select(BasicDataEntry.id).where(BasicDataEntry.id == rel.source_id)
                     ).scalar_one_or_none()
                     
                     target_exists = session.execute(
-                        select(Entity.id).where(Entity.id == rel.target_id)
+                        select(BasicDataEntry.id).where(BasicDataEntry.id == rel.target_id)
                     ).scalar_one_or_none()
                     
                     if not source_exists or not target_exists:
@@ -439,7 +444,7 @@ Only include relationships where confidence >= {min_confidence}.
                         report["issues"].append({
                             "id": str(rel.id),
                             "type": "orphaned",
-                            "message": f"Missing {', '.join(missing)} entity"
+                            "message": f"Missing {', '.join(missing)} node"
                         })
                         
                         if fix_invalid:
