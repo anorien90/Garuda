@@ -5,7 +5,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from garuda_intel.database.engine import SQLAlchemyStore
-from garuda_intel.database.models import Entity, Intelligence
+from garuda_intel.database.models import Entity
 from sqlalchemy.orm.attributes import flag_modified
 import uuid
 
