@@ -8,6 +8,9 @@ const COLORS = {
   org: '#22c55e',
   location: '#a855f7',
   product: '#f97316',
+  event: '#06b6d4',
+  'semantic-snippet': '#fbbf24',
+  seed: '#84cc16',
   entity: '#14b8a6',
   page: '#4366f1',
   intel: '#f43f5e',
@@ -164,8 +167,12 @@ function renderDetailBody(node) {
       ? `
     <div class="space-y-2">
       <div class="text-xs uppercase text-slate-500">Intel</div>
+      ${meta.entity_name ? `<div class="text-xs">Entity: <b>${escapeHtml(meta.entity_name)}</b></div>` : ''}
       ${meta.entity ? `<div class="text-xs">Entity: <b>${escapeHtml(meta.entity)}</b></div>` : ''}
+      ${meta.entity_type ? `<div class="text-xs">Type: <b>${escapeHtml(meta.entity_type)}</b></div>` : ''}
+      ${meta.confidence ? `<div class="text-xs">Confidence: <b>${escapeHtml(meta.confidence)}</b></div>` : ''}
       ${meta.created_at ? `<div class="text-xs text-slate-500">Created: ${escapeHtml(meta.created_at)}</div>` : ''}
+      ${meta.data ? `<details class="text-xs"><summary class="cursor-pointer font-semibold">Intel Data</summary><pre class="mt-1 p-2 bg-slate-900 text-slate-100 rounded text-xs whitespace-pre-wrap">${escapeHtml(JSON.stringify(meta.data, null, 2))}</pre></details>` : ''}
       <details class="text-xs"><summary class="cursor-pointer font-semibold">Raw meta</summary><pre class="mt-1 p-2 bg-slate-900 text-slate-100 rounded text-xs whitespace-pre-wrap">${escapeHtml(
         JSON.stringify(meta, null, 2)
       )}</pre></details>
@@ -387,7 +394,7 @@ function renderNodeModalContent(node, links, detail) {
   }
 
   if (node.type === 'intel' || detail?.type === 'intel') {
-    const payload = detail?.payload || meta.payload_preview;
+    const payload = detail?.payload || detail?.data || meta.data || meta.payload_preview;
     const payloadBlock = payload
       ? `<pre class="p-2 bg-slate-900 text-white rounded text-xs whitespace-pre-wrap max-h-64 overflow-y-auto">${escapeHtml(
           JSON.stringify(payload, null, 2)
@@ -397,7 +404,10 @@ function renderNodeModalContent(node, links, detail) {
       <div class="space-y-3">
         <div class="text-xs uppercase text-slate-500">Intel</div>
         <div class="text-sm font-semibold">${escapeHtml(node.label || node.id)}</div>
+        ${meta.entity_name ? `<div class="text-xs">Entity: <b>${escapeHtml(meta.entity_name)}</b></div>` : ''}
         ${meta.entity ? `<div class="text-xs">Entity: <b>${escapeHtml(meta.entity)}</b></div>` : ''}
+        ${meta.entity_type ? `<div class="text-xs">Type: <b>${escapeHtml(meta.entity_type)}</b></div>` : ''}
+        ${meta.confidence ? `<div class="text-xs">Confidence: <b>${escapeHtml(meta.confidence)}</b></div>` : ''}
         ${meta.created_at ? `<div class="text-xs text-slate-500">Created: ${escapeHtml(meta.created_at)}</div>` : ''}
         ${
           meta.source_url
@@ -407,6 +417,53 @@ function renderNodeModalContent(node, links, detail) {
             : ''
         }
         ${payloadBlock}
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
+          ${metaTable}
+        </div>
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Connections (${connections.length})</div>
+          ${connList}
+        </div>
+      </div>
+    `;
+  }
+
+  if (node.type === 'seed' || detail?.type === 'seed') {
+    return `
+      <div class="space-y-3">
+        <div class="text-xs uppercase text-slate-500">Seed</div>
+        <div class="text-sm font-semibold break-all">${escapeHtml(node.label || node.id)}</div>
+        ${meta.entity_type ? `<div class="text-xs">Entity Type: <b>${escapeHtml(meta.entity_type)}</b></div>` : ''}
+        ${meta.source ? `<div class="text-xs text-slate-500">Source: ${escapeHtml(meta.source)}</div>` : ''}
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
+          ${metaTable}
+        </div>
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Connections (${connections.length})</div>
+          ${connList}
+        </div>
+      </div>
+    `;
+  }
+
+  if (node.type === 'media' || detail?.type === 'media') {
+    const mediaUrl = meta.url || node.label || '';
+    const mediaType = meta.media_type || 'media';
+    const hasValidUrl = mediaUrl && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'));
+    const mediaPreview = (mediaType === 'image' && hasValidUrl)
+      ? `<img src="${escapeHtml(mediaUrl)}" alt="Media" class="w-full max-h-72 object-contain rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">`
+      : '';
+    
+    return `
+      <div class="space-y-3">
+        <div class="text-xs uppercase text-slate-500">Media (${escapeHtml(mediaType)})</div>
+        <div class="text-sm font-semibold break-all">${escapeHtml(node.label || node.id)}</div>
+        ${meta.processed ? `<div class="text-xs text-green-600">✓ Processed</div>` : `<div class="text-xs text-slate-500">⏳ Not processed</div>`}
+        ${meta.extracted_text ? `<div class="text-xs text-slate-600">Extracted text: ${escapeHtml(meta.extracted_text)}</div>` : ''}
+        ${mediaPreview}
+        ${hasValidUrl ? `<div class="text-xs"><a class="text-blue-600 underline" href="${escapeHtml(mediaUrl)}" target="_blank" rel="noreferrer">Open media</a></div>` : ''}
         <div>
           <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
           ${metaTable}
