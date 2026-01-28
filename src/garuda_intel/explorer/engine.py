@@ -460,16 +460,51 @@ class IntelligentExplorer:
             
             # Create relationships between primary entity and other entities found on the page
             if primary_entity_id and entity_id_map:
+                primary_kind = getattr(self.profile.entity_type, "value", str(self.profile.entity_type))
                 for (ent_name, ent_kind), ent_id in entity_id_map.items():
                     # Don't create self-relationship
                     if ent_id != primary_entity_id:
                         try:
+                            # Determine relationship type based on entity kinds
+                            relation_type = "related_entity"
+                            rel_meta = {"page_id": page_uuid, "discovered_together": True}
+                            
+                            # Company/Organization relationships
+                            if primary_kind in ["company", "organization"]:
+                                if ent_kind == "person":
+                                    relation_type = "has_person"
+                                    rel_meta["relationship_context"] = "employment_or_leadership"
+                                elif ent_kind == "product":
+                                    relation_type = "has_product"
+                                    rel_meta["relationship_context"] = "product_ownership"
+                                elif ent_kind == "location":
+                                    relation_type = "has_location"
+                                    rel_meta["relationship_context"] = "office_or_headquarters"
+                                elif ent_kind == "event":
+                                    relation_type = "participated_in_event"
+                            
+                            # Person relationships
+                            elif primary_kind == "person":
+                                if ent_kind in ["company", "organization"]:
+                                    relation_type = "works_at"
+                                elif ent_kind == "location":
+                                    relation_type = "located_at"
+                                elif ent_kind == "event":
+                                    relation_type = "participated_in_event"
+                            
+                            # Product relationships
+                            elif primary_kind == "product":
+                                if ent_kind in ["company", "organization"]:
+                                    relation_type = "produced_by"
+                                elif ent_kind == "person":
+                                    relation_type = "associated_with_person"
+                            
                             # Primary entity is related to other entities on the same page
                             self.store.save_relationship(
                                 from_id=primary_entity_id,
                                 to_id=ent_id,
-                                relation_type="related_entity",
-                                meta={"page_id": page_uuid, "discovered_together": True}
+                                relation_type=relation_type,
+                                meta=rel_meta
                             )
                         except Exception as e:
                             self.logger.debug(f"Failed to create entity-entity relationship: {e}")
@@ -485,6 +520,34 @@ class IntelligentExplorer:
                     entity_name=self.profile.name,
                     entity_type=getattr(self.profile.entity_type, "value", str(self.profile.entity_type)),
                 )
+                
+                # Link Intelligence to all extracted sub-entities (persons, products, locations, events)
+                # This ensures that each sub-entity maintains provenance to the intel that mentioned it
+                if intel_id:
+                    # Extract sub-entities from this specific finding
+                    finding_entities = self.llm_extractor.extract_entities_from_finding(finding) if self.llm_extractor else []
+                    for sub_entity in finding_entities:
+                        sub_entity_name = sub_entity.get("name")
+                        sub_entity_kind = sub_entity.get("kind")
+                        if sub_entity_name and sub_entity_kind:
+                            # Look up the entity ID from the entity_id_map
+                            sub_entity_id = entity_id_map.get((sub_entity_name, sub_entity_kind))
+                            if sub_entity_id:
+                                try:
+                                    # Create Intel→Entity relationship to track which entities are mentioned in this intel
+                                    self.store.save_relationship(
+                                        from_id=intel_id,
+                                        to_id=sub_entity_id,
+                                        relation_type="mentions_entity",
+                                        meta={
+                                            "confidence": conf_score,
+                                            "page_id": page_uuid,
+                                            "entity_type": sub_entity_kind,
+                                        }
+                                    )
+                                except Exception as e:
+                                    self.logger.debug(f"Failed to create Intel→Entity relationship: {e}")
+            
             finding_ids.append((finding, intel_id, primary_entity_id))
 
         # 4) Persist embeddings (page + entities + findings)
