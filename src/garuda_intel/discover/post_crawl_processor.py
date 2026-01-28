@@ -285,6 +285,21 @@ class PostCrawlProcessor:
                 
                 # Ensure sub-entities maintain links to all Intel sources
                 # This tracks which Intel records mention which sub-entities
+                
+                # Batch load all entities and relationships for better performance
+                # Build entity lookup map: (name, kind) -> entity_id
+                entity_lookup = {}
+                for entity in session.execute(select(Entity)).scalars().all():
+                    entity_lookup[(entity.name, entity.kind)] = str(entity.id)
+                
+                # Build relationship lookup: (source_id, target_id, relation_type) -> exists
+                relationship_lookup = set()
+                for rel in session.execute(
+                    select(Relationship).where(Relationship.relation_type == 'mentions_entity')
+                ).scalars().all():
+                    relationship_lookup.add((str(rel.source_id), str(rel.target_id), rel.relation_type))
+                
+                # Now verify all intel-entity relationships using in-memory lookups
                 for intel in all_intel:
                     if not intel.data:
                         continue
@@ -312,7 +327,8 @@ class PostCrawlProcessor:
                                 entity_name = item.get('name')
                                 entity_kind = 'product'
                             elif entity_type == 'locations':
-                                entity_name = item.get('city') or item.get('address') or item.get('country')
+                                # Use same priority order as intel_extractor.py for consistency
+                                entity_name = item.get('address') or item.get('city') or item.get('country')
                                 entity_kind = 'location'
                             elif entity_type == 'events':
                                 entity_name = item.get('title')
@@ -321,31 +337,21 @@ class PostCrawlProcessor:
                             if not entity_name or not entity_kind:
                                 continue
                             
-                            # Find or track the sub-entity
-                            sub_entity = session.execute(
-                                select(Entity).where(
-                                    Entity.name == entity_name,
-                                    Entity.kind == entity_kind
-                                )
-                            ).scalar_one_or_none()
+                            # Look up entity using in-memory map
+                            sub_entity_id = entity_lookup.get((entity_name, entity_kind))
                             
-                            if sub_entity:
-                                # Check if Intel→Entity relationship exists
-                                existing_rel = session.execute(
-                                    select(Relationship).where(
-                                        Relationship.source_id == intel_id,
-                                        Relationship.target_id == str(sub_entity.id),
-                                        Relationship.relation_type == 'mentions_entity'
-                                    )
-                                ).scalar_one_or_none()
+                            if sub_entity_id:
+                                # Check if Intel→Entity relationship exists using in-memory set
+                                rel_key = (intel_id, sub_entity_id, 'mentions_entity')
                                 
                                 # If relationship doesn't exist, it should have been created during extraction
-                                # This is a safety check to ensure consistency
-                                if not existing_rel:
+                                # This is a verification step - log for investigation but don't auto-create
+                                # as that could mask underlying issues in the extraction pipeline
+                                if rel_key not in relationship_lookup:
                                     self.logger.debug(
-                                        f"Intel {intel_id} should have relationship to entity "
-                                        f"{entity_name} ({entity_kind}) but doesn't - this indicates "
-                                        f"the entity was created outside the normal extraction flow"
+                                        f"Intel {intel_id} is missing expected relationship to entity "
+                                        f"{entity_name} ({entity_kind}). This indicates the entity was created "
+                                        f"outside the normal extraction flow or the relationship wasn't created."
                                     )
                                 else:
                                     stats["sub_entities_linked"] += 1

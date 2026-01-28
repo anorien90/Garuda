@@ -255,6 +255,7 @@ class IntelligentExplorer:
         finding_ids: List[Tuple[Dict, Optional[str], Optional[str]]] = []
 
         # 2) LLM extraction + reflection
+        finding_to_entities = {}  # Map findings to their extracted entities
         if self.llm_extractor:
             raw_intel = self.llm_extractor.extract_intelligence(
                 profile=self.profile,
@@ -272,9 +273,10 @@ class IntelligentExplorer:
                         finding.setdefault("basic_info", {})["official_name"] = self.profile.name
                         verified_findings.append(finding)
                         verified_findings_with_scores.append((finding, conf_score))
-                        extracted_entities.extend(
-                            self.llm_extractor.extract_entities_from_finding(finding)
-                        )
+                        # Extract and track entities for this finding
+                        finding_entities = self.llm_extractor.extract_entities_from_finding(finding)
+                        finding_to_entities[id(finding)] = finding_entities  # Use id() to create unique key
+                        extracted_entities.extend(finding_entities)
 
             if not verified_findings and raw_intel:
                 extracted_entities.extend(
@@ -466,38 +468,44 @@ class IntelligentExplorer:
                     if ent_id != primary_entity_id:
                         try:
                             # Determine relationship type based on entity kinds
-                            relation_type = "related_entity"
+                            relation_type = "related-entity"
                             rel_meta = {"page_id": page_uuid, "discovered_together": True}
                             
                             # Company/Organization relationships
                             if primary_kind in ["company", "organization"]:
                                 if ent_kind == "person":
-                                    relation_type = "has_person"
+                                    relation_type = "has-person"
                                     rel_meta["relationship_context"] = "employment_or_leadership"
                                 elif ent_kind == "product":
-                                    relation_type = "has_product"
+                                    relation_type = "has-product"
                                     rel_meta["relationship_context"] = "product_ownership"
                                 elif ent_kind == "location":
-                                    relation_type = "has_location"
+                                    relation_type = "has-location"
                                     rel_meta["relationship_context"] = "office_or_headquarters"
                                 elif ent_kind == "event":
-                                    relation_type = "participated_in_event"
+                                    relation_type = "participated-in-event"
+                                    rel_meta["relationship_context"] = "organizational_event"
                             
                             # Person relationships
                             elif primary_kind == "person":
                                 if ent_kind in ["company", "organization"]:
-                                    relation_type = "works_at"
+                                    relation_type = "works-at"
+                                    rel_meta["relationship_context"] = "employment"
                                 elif ent_kind == "location":
-                                    relation_type = "located_at"
+                                    relation_type = "located-at"
+                                    rel_meta["relationship_context"] = "residence_or_office"
                                 elif ent_kind == "event":
-                                    relation_type = "participated_in_event"
+                                    relation_type = "participated-in-event"
+                                    rel_meta["relationship_context"] = "personal_participation"
                             
                             # Product relationships
                             elif primary_kind == "product":
                                 if ent_kind in ["company", "organization"]:
-                                    relation_type = "produced_by"
+                                    relation_type = "produced-by"
+                                    rel_meta["relationship_context"] = "manufacturer"
                                 elif ent_kind == "person":
-                                    relation_type = "associated_with_person"
+                                    relation_type = "associated-with-person"
+                                    rel_meta["relationship_context"] = "creator_or_contributor"
                             
                             # Primary entity is related to other entities on the same page
                             self.store.save_relationship(
@@ -524,8 +532,8 @@ class IntelligentExplorer:
                 # Link Intelligence to all extracted sub-entities (persons, products, locations, events)
                 # This ensures that each sub-entity maintains provenance to the intel that mentioned it
                 if intel_id:
-                    # Extract sub-entities from this specific finding
-                    finding_entities = self.llm_extractor.extract_entities_from_finding(finding) if self.llm_extractor else []
+                    # Use already-extracted entities from this finding (avoid re-extraction)
+                    finding_entities = finding_to_entities.get(id(finding), [])
                     for sub_entity in finding_entities:
                         sub_entity_name = sub_entity.get("name")
                         sub_entity_kind = sub_entity.get("kind")

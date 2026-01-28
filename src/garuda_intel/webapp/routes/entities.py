@@ -54,7 +54,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
         )
         edge_kind_filters = _parse_list_param(
             request.args.get("edge_kinds"),
-            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet", "seed-entity", "has-person", "has-location", "has-product", "participated_in_event"},
+            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet", "seed-entity", "has-person", "has-location", "has-product", "participated-in-event", "works-at", "located-at", "produced-by", "associated-with-person", "related-entity"},
         )
 
         emit_event(
@@ -203,7 +203,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                     if isinstance(locations, list):
                         for location in locations:
                             if isinstance(location, dict):
-                                location_name = location.get("city") or location.get("address") or location.get("country")
+                                # Use same priority order as intel_extractor.py for consistency
+                                location_name = location.get("address") or location.get("city") or location.get("country")
                                 if location_name:
                                     location_node = upsert_entity(location_name, "location", None, meta={
                                         "type": location.get("type"),
@@ -247,7 +248,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                                         "type": event.get("type")
                                     })
                                     if event_node and primary:
-                                        add_edge(primary, event_node, kind="participated_in_event", weight=1,
+                                        add_edge(primary, event_node, kind="participated-in-event", weight=1,
                                                 meta={"date": event.get("date"), "type": event.get("type")} if include_meta else None)
                                     if event_node:
                                         add_edge(intel_id_str, event_node, kind="intel-mentions", weight=1)
