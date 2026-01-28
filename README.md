@@ -2,12 +2,35 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Status](https://img.shields.io/badge/status-beta-orange)
 <!-- Uncomment and update the following badges if you add CI or coverage configs
 [![CI](https://github.com/anorien90/Garuda/actions/workflows/ci.yml/badge.svg)](https://github.com/anorien90/Garuda/actions)
 [![codecov](https://codecov.io/gh/anorien90/Garuda/branch/main/graph/badge.svg)](https://codecov.io/gh/anorien90/Garuda)
 -->
 
-Garuda is a modular, entity-focused intelligence crawler leveraging LLMs, heuristic extraction, and hybrid search. It offers a web UI, API, and Chrome extension for streamlined open source investigations and research.
+## Overview
+
+**Garuda** is an advanced, entity-focused intelligence gathering and analysis platform that combines **web crawling**, **LLM-powered extraction**, **semantic search**, and **adaptive learning** to build comprehensive knowledge graphs. Named after the mythical eagle with omniscient vision, Garuda provides deep insights into entities (companies, people, organizations, products) through intelligent, gap-aware data collection.
+
+### What Makes Garuda Different?
+
+🧠 **Intelligent & Adaptive**: Unlike traditional crawlers, Garuda analyzes what it already knows and automatically fills knowledge gaps through targeted searches.
+
+🔍 **RAG-First Hybrid Search**: Combines SQL keyword search with semantic vector search, automatically triggering live crawls when needed.
+
+🕸️ **Knowledge Graph**: Tracks entities, relationships, and temporal changes in a unified graph structure with full provenance.
+
+🎬 **Multi-Modal Processing**: Extracts intelligence from text, images (OCR), videos (transcription), and audio files.
+
+🔧 **Production-Ready**: Web UI, REST API, and Chrome extension for flexible integration into existing workflows.
+
+### Primary Use Cases
+
+- **Open Source Intelligence (OSINT)**: Gather structured intelligence on companies, individuals, infrastructure
+- **Corporate Research**: Build entity profiles with automated gap analysis and competitive intelligence
+- **Threat Intelligence**: Track actors, infrastructure, tactics from public sources
+- **Academic Research**: Create domain-specific knowledge graphs from scholarly and news sources
+- **Brand Monitoring**: Monitor mentions, sentiment, and relationships across the web
 
 ---
 
@@ -79,48 +102,422 @@ Garuda is a modular, entity-focused intelligence crawler leveraging LLMs, heuris
 
 ## Architecture Overview
 
-```mermaid
-flowchart TD
-    A1[DuckDuckGo Search Patterns]
-    A2[Manual Seeds]
-    B1[Selenium Browser]
-    B1.1[BeautifulSoup Parser]
-    B2[Mark API or Extension]
-    C1[Heuristic Extractor]
-    C2[LLM Intel Extractor]
-    E1[SQL Database]
-    D1[Create Embeddings]
-    D2[Qdrant Vector Database]
-    F1[User Query RAG Pipelinea]
-    F2[CLI Web API]
-    F3[Extension Popup]
+### High-Level System Architecture
 
-    A1 -->|Seed URLs| B1
-    A2 -->|Seed URLs| B1
-    B1 --> B1.1
-    B1.1 -->|HTML Text Meta| C1
-    B1.1 -->|HTML Text Meta| C2
-    B2 -->|Manual Capture| C1
-    B2 -->|Manual Capture| C2
-    C1 -->|Extracted Intel| E1
-    C2 -->|LLM Entities| E1
-    C2 -->|Entities Docs| D1
-    E1 -->|Persisted Data| D1
-    D1 -->|Embeddings| D2
-    F1 -.->|Text Query| D2
-    F1 -.->|Text Query| E1
-    D2 -->|Relevant entities| F1
-    E1 -->|Factual context data| F1
-    F2 --> F1
-    F3 --> F1
-    F1 -->|Final Results Answer| F2
-    F1 -->|Final Results Answer| F3
+Garuda is built on a **modular, layered architecture** that separates concerns across data acquisition, processing, storage, and presentation layers. The system leverages hybrid search (SQL + vector embeddings), LLM-powered intelligence extraction, and adaptive learning to provide comprehensive entity intelligence gathering.
+
+```mermaid
+flowchart TB
+    subgraph Presentation["🎨 Presentation Layer"]
+        UI[Web UI - Flask]
+        API[REST API]
+        EXT[Chrome Extension]
+    end
+    
+    subgraph Services["🔧 Services Layer"]
+        GapAnalyzer[Entity Gap Analyzer]
+        AdaptiveCrawler[Adaptive Crawler]
+        MediaProcessor[Media Processor]
+        InferenceEngine[Knowledge Inference]
+    end
+    
+    subgraph Business["💼 Business Logic Layer"]
+        Crawler[Intelligent Crawler]
+        Extractor[Intel Extractor]
+        Search[Hybrid Search]
+        RelationMgr[Relationship Manager]
+    end
+    
+    subgraph Data["💾 Data Layer"]
+        SQL[(SQL Database<br/>SQLAlchemy)]
+        Vector[(Vector Store<br/>Qdrant)]
+        Cache[(Cache<br/>Redis/Memory)]
+    end
+    
+    subgraph Infrastructure["⚙️ Infrastructure Layer"]
+        Browser[Selenium Browser]
+        LLM[LLM API<br/>Ollama/OpenAI]
+        Embedding[Embedding Model<br/>SentenceTransformers]
+    end
+    
+    UI --> API
+    EXT --> API
+    API --> Services
+    Services --> Business
+    Business --> Data
+    Business --> Infrastructure
+    Infrastructure --> Data
 ```
 
-- **WebApp**: [`src/webapp/app.py`](src/webapp/app.py)
-- **Database**: [`src/database/`](src/database/)
-- **Search CLI**: [`src/search.py`](src/search.py)
-- **Extension**: [`plugin/chrome/`](plugin/chrome/)
+### Detailed Component Architecture
+
+```mermaid
+flowchart TD
+    subgraph Input["📥 Data Input Sources"]
+        DDG[DuckDuckGo<br/>Search]
+        Manual[Manual<br/>Seeds]
+        Extension[Chrome<br/>Extension]
+        API_In[API<br/>Endpoints]
+    end
+    
+    subgraph Acquisition["🌐 Data Acquisition"]
+        Browser[Selenium<br/>Browser]
+        Parser[BeautifulSoup<br/>Parser]
+        MediaDown[Media<br/>Downloader]
+    end
+    
+    subgraph Processing["⚙️ Processing Pipeline"]
+        TextProc[Text<br/>Processor]
+        IntelExt[LLM Intel<br/>Extractor]
+        MediaProc[Media<br/>Processor]
+        EntityDedupe[Entity<br/>Deduplication]
+    end
+    
+    subgraph Storage["💾 Storage Layer"]
+        SQLStore[(SQL DB<br/>Entities, Intel,<br/>Pages, Relations)]
+        VectorStore[(Vector DB<br/>Embeddings)]
+        MediaStore[(Media<br/>Content)]
+    end
+    
+    subgraph Intelligence["🧠 Intelligence Layer"]
+        GapAnalysis[Gap<br/>Analysis]
+        Inference[Cross-Entity<br/>Inference]
+        Learning[Adaptive<br/>Learning]
+        PostProc[Post-Crawl<br/>Processing]
+    end
+    
+    subgraph Query["🔍 Query & Retrieval"]
+        HybridSearch[Hybrid Search<br/>SQL + Vector]
+        RAG[RAG Pipeline]
+        GraphQuery[Graph<br/>Queries]
+    end
+    
+    subgraph Output["📤 Output & Visualization"]
+        WebUI[Web UI<br/>6 Tabs]
+        ExtUI[Extension<br/>Popup]
+        APIOut[REST API<br/>Responses]
+    end
+    
+    Input --> Acquisition
+    Acquisition --> Processing
+    Processing --> Storage
+    Storage --> Intelligence
+    Intelligence --> Query
+    Query --> Output
+    
+    Intelligence -.->|Targeted Queries| Input
+    Query -.->|Trigger Crawl| Acquisition
+    
+    style Input fill:#e1f5ff
+    style Acquisition fill:#fff4e1
+    style Processing fill:#ffe1e1
+    style Storage fill:#e1ffe1
+    style Intelligence fill:#f0e1ff
+    style Query fill:#ffe1f5
+    style Output fill:#e1f5ff
+```
+
+### Intelligent Crawling Workflow
+
+```mermaid
+flowchart TB
+    Start([User Query:<br/>Entity Name]) --> Check{Entity<br/>Exists?}
+    
+    Check -->|No| Discovery[🔍 DISCOVERY Mode]
+    Check -->|Yes| GapCheck[📊 Analyze Gaps]
+    
+    Discovery --> GenBroad[Generate<br/>Broad Queries]
+    GenBroad --> Search[DuckDuckGo<br/>Search]
+    
+    GapCheck --> CalcScore[Calculate<br/>Completeness Score]
+    CalcScore --> Missing[Identify<br/>Missing Fields]
+    Missing --> GenTarget[Generate<br/>Targeted Queries]
+    GenTarget --> Search
+    
+    Search --> Fetch[Selenium<br/>Browser Fetch]
+    Fetch --> Extract[Multi-layer<br/>Extraction]
+    
+    Extract --> LLM[LLM Intel<br/>Extraction]
+    Extract --> Heuristic[Heuristic<br/>Extraction]
+    Extract --> Media[Media<br/>Processing]
+    
+    LLM --> Combine[Combine &<br/>Deduplicate]
+    Heuristic --> Combine
+    Media --> Combine
+    
+    Combine --> Store[Store to<br/>SQL + Vector]
+    Store --> PostProc[Post-Crawl<br/>Processing]
+    
+    PostProc --> Dedupe[Entity<br/>Deduplication]
+    PostProc --> RelVal[Relationship<br/>Validation]
+    PostProc --> Aggregate[Intelligence<br/>Aggregation]
+    PostProc --> InferMissing[Cross-Entity<br/>Inference]
+    PostProc --> Embeddings[Embedding<br/>Generation]
+    
+    Embeddings --> Learn[Learning<br/>System Update]
+    Learn --> Report[Report<br/>Results]
+    
+    Report --> ReCheck{Gaps<br/>Filled?}
+    ReCheck -->|No & Iterations < Max| GenTarget
+    ReCheck -->|Yes| Complete([Complete])
+    
+    style Start fill:#4CAF50,color:#fff
+    style Complete fill:#4CAF50,color:#fff
+    style Discovery fill:#2196F3,color:#fff
+    style GapCheck fill:#FF9800,color:#fff
+```
+
+### RAG-First Hybrid Search Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant UI as Web UI
+    participant API as Search API
+    participant V as Vector Store
+    participant S as SQL Store
+    participant L as LLM
+    participant C as Crawler
+    
+    U->>UI: Ask Question
+    UI->>API: POST /api/chat
+    
+    API->>API: Embed Query
+    API->>V: Semantic Search (top_k)
+    V-->>API: RAG Results (with scores)
+    
+    API->>API: Filter High Quality<br/>(score >= 0.7)
+    
+    alt High Quality RAG Results >= 2
+        API->>S: Supplement with SQL
+        S-->>API: Keyword Results
+        API->>API: Merge & Rank
+    else Insufficient RAG Results
+        API->>L: Generate Search Queries
+        L-->>API: Targeted Queries
+        API->>C: Trigger Intelligent Crawl
+        C->>C: Fetch → Extract → Store → Embed
+        C-->>API: New Data Available
+        API->>V: Re-query Vector Store
+        V-->>API: Enhanced RAG Results
+    end
+    
+    API->>L: Synthesize Answer<br/>from Context
+    L-->>API: Generated Answer
+    
+    API-->>UI: Answer + Context<br/>+ Metadata
+    UI-->>U: Display Results<br/>with Source Tags
+    
+    Note over U,C: 🧠 Purple: RAG | 📊 Blue: SQL | 🌐 Green: Live Crawl
+```
+
+### Data Model & Relationships
+
+```mermaid
+erDiagram
+    ENTITY ||--o{ INTELLIGENCE : has
+    ENTITY ||--o{ RELATIONSHIP : source
+    ENTITY ||--o{ RELATIONSHIP : target
+    PAGE ||--o{ INTELLIGENCE : extracted_from
+    PAGE ||--o{ MEDIA_CONTENT : contains
+    INTELLIGENCE ||--o{ EMBEDDINGS : generates
+    PAGE ||--o{ EMBEDDINGS : generates
+    
+    ENTITY {
+        uuid id PK
+        string name
+        string kind
+        json data
+        json metadata
+        datetime created_at
+    }
+    
+    INTELLIGENCE {
+        uuid id PK
+        uuid entity_id FK
+        uuid page_id FK
+        json data
+        float confidence
+        datetime extracted_at
+    }
+    
+    RELATIONSHIP {
+        uuid id PK
+        uuid source_id FK
+        uuid target_id FK
+        string type
+        float confidence
+        json metadata
+    }
+    
+    PAGE {
+        uuid id PK
+        string url
+        text html
+        string page_type
+        string crawl_source
+        float confidence
+    }
+    
+    MEDIA_CONTENT {
+        uuid id PK
+        uuid page_id FK
+        string media_url
+        string media_type
+        text extracted_text
+        json entities_mentioned
+        string processing_method
+    }
+    
+    EMBEDDINGS {
+        uuid point_id PK
+        vector embedding
+        json payload
+        uuid entity_id
+        uuid page_id
+    }
+```
+
+### Module Organization
+
+```
+src/garuda_intel/
+├── 🌐 browser/          # Web scraping & automation
+│   ├── selenium.py      # Headless Chrome driver
+│   └── active.py        # Interactive browser sessions
+│
+├── 💾 database/         # Data persistence & ORM
+│   ├── models.py        # SQLAlchemy entities
+│   ├── engine.py        # Database operations
+│   ├── store.py         # Abstraction layer
+│   └── relationship_manager.py  # Graph operations
+│
+├── 🔍 discover/         # Intelligent crawling
+│   ├── crawl_modes.py   # Discovery/Targeting/Expansion
+│   ├── crawl_learner.py # Adaptive learning
+│   └── seeds.py         # URL seed management
+│
+├── ⚙️ extractor/        # Intelligence extraction
+│   ├── intel_extractor.py     # LLM-based extraction
+│   ├── semantic_engine.py     # Embeddings generation
+│   ├── text_processor.py      # Content cleaning
+│   └── llm.py                 # LLM interface
+│
+├── 🧠 services/         # High-level business logic
+│   ├── entity_gap_analyzer.py   # Gap detection
+│   ├── adaptive_crawler.py      # Crawl orchestration
+│   └── media_processor.py       # Media extraction
+│
+├── 🔢 vector/           # Vector database
+│   ├── engine.py        # Qdrant integration
+│   └── base.py          # Abstract interface
+│
+└── 🌐 webapp/           # Web UI & API
+    ├── app.py           # Flask application
+    ├── routes/          # API endpoints
+    └── static/          # Frontend assets
+```
+
+---
+
+### Key Technologies
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| **Backend** | Python 3.10+ | Core application |
+| **Web Framework** | Flask | REST API & UI |
+| **Database** | SQLAlchemy + SQLite/PostgreSQL | Structured data storage |
+| **Vector DB** | Qdrant | Semantic search |
+| **Browser** | Selenium + Chrome | Web scraping |
+| **LLM** | Ollama / OpenAI API | Intelligence extraction |
+| **Embeddings** | SentenceTransformers | Semantic representations |
+| **Media** | Tesseract OCR, Speech Recognition | Media processing |
+| **Frontend** | Vanilla JS, Tailwind CSS | User interface |
+
+---
+
+### Quick Navigation
+
+- **WebApp**: [`src/garuda_intel/webapp/app.py`](src/garuda_intel/webapp/app.py)
+- **Database Models**: [`src/garuda_intel/database/models.py`](src/garuda_intel/database/models.py)
+- **Intelligent Crawler**: [`src/garuda_intel/discover/crawl_modes.py`](src/garuda_intel/discover/crawl_modes.py)
+- **Intel Extraction**: [`src/garuda_intel/extractor/intel_extractor.py`](src/garuda_intel/extractor/intel_extractor.py)
+- **Search API**: [`src/garuda_intel/webapp/routes/search.py`](src/garuda_intel/webapp/routes/search.py)
+- **Chrome Extension**: [`plugin/chrome/`](plugin/chrome/)
+- **V2 Optimization Plan**: [`V2_OPTIMIZATION_PLAN.md`](V2_OPTIMIZATION_PLAN.md)
+
+---
+
+## How It Works
+
+### Core Workflows
+
+#### 1. Intelligent Entity Discovery
+
+When you search for an entity (e.g., "Microsoft"), Garuda:
+
+1. **Checks Existing Knowledge**: Queries the database to see if the entity exists
+2. **Analyzes Gaps**: If entity exists, calculates completeness score (0-100%) and identifies missing critical fields
+3. **Generates Queries**: Uses LLM to create targeted search queries based on gaps
+4. **Crawls Smart**: Fetches relevant pages using Selenium, prioritizing high-authority domains
+5. **Extracts Intelligence**: Multi-layer extraction (heuristics + LLM) to identify facts, relationships, entities
+6. **Learns & Adapts**: Tracks which sources provided valuable data, improving future crawls
+
+#### 2. RAG-First Hybrid Search
+
+When you ask a question:
+
+1. **Semantic Search First**: Embeds your question and searches vector store (Qdrant) for semantically similar content
+2. **Quality Filtering**: Only uses high-quality RAG results (similarity score >= 0.7)
+3. **SQL Supplement**: Adds keyword-based SQL search results to fill gaps
+4. **Auto-Crawl Trigger**: If insufficient high-quality results, automatically triggers targeted web crawl
+5. **Synthesis**: LLM combines context from multiple sources to generate comprehensive answer
+6. **Source Attribution**: Every fact traced back to source URL with confidence scores
+
+#### 3. Knowledge Graph Construction
+
+As data is gathered:
+
+1. **Entity Extraction**: LLM identifies entities (people, companies, locations, products)
+2. **Relationship Detection**: Discovers relationships (works_at, owns, located_in, etc.)
+3. **Deduplication**: Merges duplicate entities using fuzzy matching + embeddings
+4. **Graph Building**: Creates bidirectional relationships with confidence scores
+5. **Inference**: Cross-entity reasoning to fill gaps (e.g., if Person works_at Company in City, infer Person likely in City)
+6. **Visualization**: Interactive graph UI showing entity network
+
+#### 4. Media Intelligence
+
+When processing web pages:
+
+1. **Auto-Detection**: Identifies images with text, videos with speech, audio files
+2. **Method Selection**: Chooses optimal processing (Tesseract for printed text, AI for handwriting)
+3. **Text Extraction**: OCR for images, speech-to-text for audio/video
+4. **Entity Linking**: Connects extracted media text to relevant entities
+5. **Embedding Integration**: Media content becomes searchable in knowledge graph
+
+### Data Flow Example
+
+```
+User Query: "What is Acme Corp's headquarters?"
+    ↓
+[1] Check Database → Entity "Acme Corp" exists, completeness: 45%
+    Missing: headquarters, founding_year, CEO
+    ↓
+[2] Gap Analysis → Generate targeted query: "Acme Corp headquarters address"
+    ↓
+[3] DuckDuckGo Search → Find 5 candidate URLs
+    ↓
+[4] Selenium Crawl → Fetch pages in parallel
+    ↓
+[5] LLM Extraction → Extract: {"headquarters": "123 Main St, SF, CA"}
+    ↓
+[6] Store Intelligence → Save to SQL + generate embedding → store in Qdrant
+    ↓
+[7] Learning Update → Mark source as "reliable for company data"
+    ↓
+[8] Return Answer → "Acme Corp headquarters: 123 Main St, SF, CA" 
+    (Source: acmecorp.com, Confidence: 0.92)
+```
 
 ---
 
@@ -298,12 +695,55 @@ Please provide logs, error messages, and details for faster help!
 
 ## Roadmap
 
-- Enhanced user/account system for multi-user UI
-- Prebuilt Docker & demo compose setup
-- More advanced extractor fingerprints
-- Support for additional vector/LLM providers
-- Live crawl status dashboard in UI
-- Export & report modules
+### Current Status (v2.x)
+✅ Intelligent gap-aware crawling with adaptive learning  
+✅ RAG-first hybrid search (SQL + vector)  
+✅ Complete relationship persistence and entity deduplication  
+✅ Advanced media processing (OCR, speech-to-text, video processing)  
+✅ Chrome extension with recording and search capabilities  
+✅ Web UI with 6 specialized tabs  
+
+### Planned Enhancements (v2.1+)
+
+**See [V2_OPTIMIZATION_PLAN.md](V2_OPTIMIZATION_PLAN.md) for the comprehensive optimization roadmap.**
+
+#### Phase 1: Quick Wins (Weeks 1-2)
+- [ ] Multi-layer caching (embeddings, LLM responses, search results)
+- [ ] Content type detection and specialized processors
+- [ ] Automatic media detection (no manual configuration)
+- [ ] Database query optimization and indexing
+
+#### Phase 2: Core Enhancements (Weeks 3-5)
+- [ ] Dynamic schema discovery (adapt to any entity type)
+- [ ] Adaptive media processing (auto-select best method)
+- [ ] Semantic text chunking (preserve context)
+- [ ] Extraction quality validation and auto-correction
+- [ ] Comprehensive test suite (80%+ coverage)
+
+#### Phase 3: Advanced Features (Weeks 6-8)
+- [ ] Multi-source adapters (PDF, APIs, social media, databases)
+- [ ] Knowledge inference engine (graph-based reasoning)
+- [ ] Media-entity linking and searchability
+- [ ] CI/CD pipeline with automated testing
+
+#### Phase 4: Optimization (Weeks 9-10)
+- [ ] Async crawling architecture (5-10x speed improvement)
+- [ ] Multi-model embedding strategy (domain-specific models)
+- [ ] Prometheus metrics and Grafana dashboards
+- [ ] Automated data quality validation
+
+#### Phase 5: Production Readiness (Weeks 11-12)
+- [ ] Temporal intelligence tracking (version history)
+- [ ] Asynchronous media processing queue
+- [ ] Enhanced user/account system for multi-user deployments
+- [ ] Export and report generation modules
+- [ ] Prebuilt Docker compose setup with demo data
+
+#### Future Considerations
+- Support for additional vector/LLM providers (Weaviate, Pinecone, Claude)
+- Advanced visualization dashboards (live crawl status, analytics)
+- Collaborative features (shared knowledge bases, annotations)
+- Mobile app for on-the-go intelligence gathering
 
 ---
 
