@@ -216,7 +216,11 @@ class ExtractionQualityValidator:
         # Check for duplicate persons
         persons = extracted_intel.get('persons', [])
         if persons:
-            person_names = [p.get('name', '').lower() for p in persons if p.get('name')]
+            person_names = [
+                p.get('name', '').lower() if isinstance(p, dict) else str(p).lower()
+                for p in persons
+                if (isinstance(p, dict) and p.get('name')) or (isinstance(p, str) and p.strip())
+            ]
             if len(person_names) != len(set(person_names)):
                 issues.append(QualityIssue(
                     issue_type=IssueType.DUPLICATE_DATA,
@@ -230,8 +234,9 @@ class ExtractionQualityValidator:
         events = extracted_intel.get('events', [])
         if events:
             event_descs = [
-                e.get('description', '').lower()[:50]
-                for e in events if e.get('description')
+                e.get('description', '').lower()[:50] if isinstance(e, dict) else str(e).lower()[:50]
+                for e in events
+                if (isinstance(e, dict) and e.get('description')) or (isinstance(e, str) and e.strip())
             ]
             if len(event_descs) != len(set(event_descs)):
                 issues.append(QualityIssue(
@@ -246,8 +251,9 @@ class ExtractionQualityValidator:
         locations = extracted_intel.get('locations', [])
         if locations:
             location_names = [
-                loc.get('location', '').lower()
-                for loc in locations if loc.get('location')
+                loc.get('location', '').lower() if isinstance(loc, dict) else str(loc).lower()
+                for loc in locations
+                if (isinstance(loc, dict) and loc.get('location')) or (isinstance(loc, str) and loc.strip())
             ]
             if len(location_names) != len(set(location_names)):
                 issues.append(QualityIssue(
