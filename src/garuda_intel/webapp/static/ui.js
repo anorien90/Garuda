@@ -1,5 +1,6 @@
-export function pill(text) {
-  return `<span class="inline-flex items-center rounded-full bg-brand-100 text-brand-800 dark:bg-brand-900/60 dark:text-brand-100 px-2 py-0.5 text-xs font-medium">${text}</span>`;
+export function pill(text, customClasses = '') {
+  const defaultClasses = customClasses || 'bg-brand-100 text-brand-800 dark:bg-brand-900/60 dark:text-brand-100';
+  return `<span class="inline-flex items-center rounded-full ${defaultClasses} px-2 py-0.5 text-xs font-medium">${text}</span>`;
 }
 
 export function chips(arr = []) {

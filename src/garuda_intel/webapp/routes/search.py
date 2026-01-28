@@ -150,45 +150,127 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         if not question:
             return jsonify({"error": "question required"}), 400
     
-        emit_event("chat", "chat request received", payload={"session_id": session_id})
+        emit_event("chat", "chat request received", payload={"session_id": session_id, "question": question})
     
-        def gather_hits(q: str, limit: int):
-            ctx = store.search_intel(keyword=q, limit=limit)
+        def gather_hits(q: str, limit: int, prioritize_rag: bool = True):
+            """
+            Gather context hits with RAG-first approach.
+            
+            Args:
+                q: Query string
+                limit: Maximum number of results per source
+                prioritize_rag: If True, prioritize semantic (RAG) results over SQL
+            
+            Returns:
+                List of context hits with source information
+            """
             vec_hits = []
+            sql_hits = []
+            
+            # Step 1: Try semantic/vector search first (RAG)
             if vector_store:
+                emit_event("chat", "RAG lookup starting", payload={"query": q})
                 vec = llm.embed_text(q)
                 if vec:
                     try:
-                        res = vector_store.search(vec, top_k=limit)
+                        res = vector_store.search(vec, top_k=limit * 2)  # Get more for better coverage
                         vec_hits = [
                             {
                                 "url": r.payload.get("url"),
                                 "snippet": r.payload.get("text", ""),
                                 "score": r.score,
-                                "source": "vector",
+                                "source": "rag",
+                                "kind": r.payload.get("kind", "unknown"),
+                                "entity": r.payload.get("entity", ""),
                             }
                             for r in res
                         ]
+                        emit_event("chat", f"RAG found {len(vec_hits)} results", 
+                                 payload={"count": len(vec_hits)})
                     except Exception as e:
                         logger.warning(f"Vector chat search failed: {e}")
-                        emit_event("chat", f"vector search failed: {e}", level="warning")
-            return ctx + vec_hits
+                        emit_event("chat", f"RAG search failed: {e}", level="warning")
+                else:
+                    emit_event("chat", "RAG embedding generation failed", level="warning")
+            else:
+                emit_event("chat", "RAG unavailable - vector store not configured", level="warning")
+            
+            # Step 2: Get SQL/keyword results as fallback/supplement
+            try:
+                sql_hits = store.search_intel(keyword=q, limit=limit)
+                for hit in sql_hits:
+                    hit["source"] = "sql"
+                emit_event("chat", f"SQL found {len(sql_hits)} results", 
+                         payload={"count": len(sql_hits)})
+            except Exception as e:
+                logger.warning(f"SQL search failed: {e}")
+                emit_event("chat", f"SQL search failed: {e}", level="warning")
+            
+            # Step 3: Merge and prioritize results
+            if prioritize_rag and vec_hits:
+                # RAG-first: Use semantic results primarily, SQL as supplement
+                merged = vec_hits[:limit]
+                # Add top SQL results if we need more context
+                if len(merged) < limit:
+                    merged.extend(sql_hits[:limit - len(merged)])
+                emit_event("chat", "Using RAG-prioritized results", 
+                         payload={"rag_count": len([h for h in merged if h.get("source") == "rag"]),
+                                "sql_count": len([h for h in merged if h.get("source") == "sql"])})
+            else:
+                # Fallback: Mix both sources
+                merged = vec_hits + sql_hits
+                merged = merged[:limit]
+            
+            return merged
     
-        merged_hits = gather_hits(question, top_k)
+        # Phase 1: Initial RAG lookup with prioritization
+        emit_event("chat", "Phase 1: RAG lookup", payload={"question": question})
+        merged_hits = gather_hits(question, top_k, prioritize_rag=True)
+        
+        # Check if we have enough high-quality RAG results
+        rag_hits = [h for h in merged_hits if h.get("source") == "rag"]
+        rag_quality_threshold = 0.7  # Minimum similarity score for RAG results
+        high_quality_rag = [h for h in rag_hits if h.get("score", 0) >= rag_quality_threshold]
+        
+        emit_event("chat", f"RAG quality check: {len(high_quality_rag)}/{len(rag_hits)} high-quality hits",
+                 payload={"high_quality": len(high_quality_rag), "total_rag": len(rag_hits)})
+        
         answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
         online_triggered = False
         live_urls = []
+        crawl_reason = None
     
+        # Evaluate answer quality and determine if crawling is needed
         is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
-    
+        
+        # Determine crawl trigger reasons
         if not is_sufficient:
+            if not rag_hits:
+                crawl_reason = "No RAG results found"
+            elif len(high_quality_rag) < 2:
+                crawl_reason = f"Insufficient high-quality RAG results ({len(high_quality_rag)})"
+            else:
+                crawl_reason = "Answer insufficient despite RAG results"
+        
+        # Phase 2: Intelligent crawling if needed
+        if not is_sufficient:
+            emit_event("chat", f"Phase 2: Intelligent crawling triggered - {crawl_reason}",
+                     payload={"reason": crawl_reason})
+            
             profile = EntityProfile(name=entity or "General Research", entity_type=EntityType.TOPIC)
             online_triggered = True
     
+            # Generate targeted search queries
             search_queries = llm.generate_seed_queries(question, profile.name)
+            emit_event("chat", f"Generated {len(search_queries)} search queries", 
+                     payload={"queries": search_queries})
+            
             live_urls = collect_candidates_simple(search_queries, limit=5)
+            emit_event("chat", f"Found {len(live_urls)} candidate URLs", 
+                     payload={"urls": live_urls})
     
             if live_urls:
+                # Initialize intelligent crawler with embeddings enabled
                 explorer = IntelligentExplorer(
                     profile=profile,
                     persistence=store,
@@ -200,15 +282,21 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
     
                 browser = None
                 try:
-                    emit_event("chat", "starting crawl", payload={"urls": live_urls})
+                    emit_event("chat", "Starting intelligent crawl with embedding generation",
+                             payload={"urls": live_urls, "max_pages": getattr(settings, "chat_max_pages", 5)})
+                    
                     if getattr(settings, "chat_use_selenium", False):
                         browser = SeleniumBrowser(headless=True)
                         browser._init_driver()
+                    
+                    # Execute crawl - this will generate embeddings automatically
                     explorer.explore(live_urls, browser)
-                    emit_event("chat", "crawl complete", payload={"urls": live_urls})
+                    
+                    emit_event("chat", "Crawl complete - embeddings generated",
+                             payload={"urls": live_urls})
                 except Exception as e:
                     logger.warning(f"Chat crawl failed: {e}")
-                    emit_event("chat", f"crawl failed: {e}", level="warning")
+                    emit_event("chat", f"Crawl failed: {e}", level="error")
                 finally:
                     if browser:
                         try:
@@ -216,9 +304,17 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                         except Exception:
                             pass
     
-                merged_hits = gather_hits(question, top_k)
+                # Phase 3: Re-query with new embeddings
+                emit_event("chat", "Phase 3: Re-querying with newly crawled data")
+                merged_hits = gather_hits(question, top_k, prioritize_rag=True)
                 answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
+                
+                # Check improvement
+                new_rag_hits = [h for h in merged_hits if h.get("source") == "rag"]
+                emit_event("chat", f"After crawl: {len(new_rag_hits)} RAG results available",
+                         payload={"new_rag_count": len(new_rag_hits)})
     
+            # Improve error messages
             answer = answer.replace(
                 "INSUFFICIENT_DATA",
                 "I searched online but still couldn't find a definitive answer.",
@@ -226,7 +322,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             if _looks_like_refusal(answer):
                 answer = "I searched online but still couldn't find a definitive answer."
     
-        emit_event("chat", "chat completed", payload={"session_id": session_id})
+        emit_event("chat", "Chat completed successfully", 
+                 payload={"session_id": session_id, "online_triggered": online_triggered})
+        
         return jsonify(
             {
                 "answer": answer,
@@ -234,6 +332,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 "entity": entity,
                 "online_search_triggered": online_triggered,
                 "live_urls": live_urls,
+                "crawl_reason": crawl_reason,
+                "rag_hits_count": len([h for h in merged_hits if h.get("source") == "rag"]),
+                "sql_hits_count": len([h for h in merged_hits if h.get("source") == "sql"]),
             }
         )
     
