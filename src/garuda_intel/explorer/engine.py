@@ -321,7 +321,8 @@ class IntelligentExplorer:
                 entity_name_to_id[ent_name.lower()] = ent_id
             
             # Track entities that need to be created for relationships
-            missing_entities_to_create = []
+            # Use dict to avoid duplicates: key=(name, kind), value=entity_dict
+            missing_entities_dict = {}
             
             for finding, conf_score in verified_findings_with_scores:
                 relationships = finding.get("relationships", [])
@@ -344,27 +345,31 @@ class IntelligentExplorer:
                             # Auto-create missing entities to ensure relationships are always persisted
                             if not source_id:
                                 # Create entity for source if it doesn't exist
-                                source_entity = {
-                                    "name": source_name,
-                                    "kind": source_type,
-                                    "data": {"auto_created_from_relationship": True},
-                                    "page_id": page_uuid,
-                                }
-                                missing_entities_to_create.append(source_entity)
+                                # Use (name, kind) as key to avoid duplicates
+                                key = (source_name, source_type)
+                                if key not in missing_entities_dict:
+                                    missing_entities_dict[key] = {
+                                        "name": source_name,
+                                        "kind": source_type,
+                                        "data": {"auto_created_from_relationship": True},
+                                        "page_id": page_uuid,
+                                    }
                             
                             if not target_id:
                                 # Create entity for target if it doesn't exist
-                                target_entity = {
-                                    "name": target_name,
-                                    "kind": target_type,
-                                    "data": {"auto_created_from_relationship": True},
-                                    "page_id": page_uuid,
-                                }
-                                missing_entities_to_create.append(target_entity)
+                                key = (target_name, target_type)
+                                if key not in missing_entities_dict:
+                                    missing_entities_dict[key] = {
+                                        "name": target_name,
+                                        "kind": target_type,
+                                        "data": {"auto_created_from_relationship": True},
+                                        "page_id": page_uuid,
+                                    }
             
             # Create any missing entities
-            if missing_entities_to_create:
+            if missing_entities_dict:
                 try:
+                    missing_entities_to_create = list(missing_entities_dict.values())
                     new_entity_map = self.store.save_entities(missing_entities_to_create) or {}
                     # Update entity_id_map and entity_name_to_id with newly created entities
                     entity_id_map.update(new_entity_map)

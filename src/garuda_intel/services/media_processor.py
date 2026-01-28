@@ -228,24 +228,29 @@ class MediaProcessor:
             from moviepy.editor import VideoFileClip
             
             video = VideoFileClip(video_path)
-            audio = video.audio
             
-            if audio is None:
-                logger.warning(f"No audio track found in video: {video_path}")
+            try:
+                audio = video.audio
+                
+                if audio is None:
+                    logger.warning(f"No audio track found in video: {video_path}")
+                    return None
+                
+                # Create output path if not specified
+                if not output_path:
+                    # Use mkstemp for secure temp file creation
+                    fd, output_path = tempfile.mkstemp(suffix='.wav')
+                    os.close(fd)  # Close the file descriptor, we just need the path
+                
+                # Extract audio
+                audio.write_audiofile(output_path, verbose=False, logger=None)
+                
+                logger.info(f"Extracted audio from {video_path} to {output_path}")
+                return output_path
+            finally:
+                # Always close video resource
                 video.close()
-                return None
-            
-            # Create output path if not specified
-            if not output_path:
-                output_path = tempfile.mktemp(suffix='.wav')
-            
-            # Extract audio
-            audio.write_audiofile(output_path, verbose=False, logger=None)
-            video.close()
-            
-            logger.info(f"Extracted audio from {video_path} to {output_path}")
-            return output_path
-            
+                
         except Exception as e:
             logger.error(f"Failed to extract audio from video {video_path}: {e}")
             return None
@@ -281,69 +286,73 @@ class MediaProcessor:
             
             # Extract video metadata
             video = VideoFileClip(video_path)
-            duration = video.duration
-            width, height = video.size
-            fps = video.fps
             
-            metadata = {
-                "duration": duration,
-                "width": width,
-                "height": height,
-                "fps": fps,
-            }
-            
-            # If extract_audio_only is True, just extract audio and return
-            if extract_audio_only:
-                temp_audio_path = self.extract_audio_from_video(video_path)
-                video.close()
+            try:
+                duration = video.duration
+                width, height = video.size
+                fps = video.fps
                 
-                if temp_audio_path:
-                    return {
-                        "extracted_text": None,
-                        "audio_path": temp_audio_path,
-                        "processed": True,
-                        "processing_note": "Audio extracted successfully",
-                        "metadata_json": metadata,
-                        "duration": duration,
-                        "width": width,
-                        "height": height,
-                    }
+                metadata = {
+                    "duration": duration,
+                    "width": width,
+                    "height": height,
+                    "fps": fps,
+                }
+                
+                # If extract_audio_only is True, just extract audio and return
+                if extract_audio_only:
+                    temp_audio_path = self.extract_audio_from_video(video_path)
+                    
+                    if temp_audio_path:
+                        return {
+                            "extracted_text": None,
+                            "audio_path": temp_audio_path,
+                            "processed": True,
+                            "processing_note": "Audio extracted successfully",
+                            "metadata_json": metadata,
+                            "duration": duration,
+                            "width": width,
+                            "height": height,
+                        }
+                    else:
+                        return {
+                            "extracted_text": None,
+                            "processed": False,
+                            "processing_error": "Failed to extract audio",
+                            "metadata_json": metadata,
+                            "duration": duration,
+                            "width": width,
+                            "height": height,
+                        }
+                
+                # Use specified method or default
+                method = method or self.video_method
+                
+                # Process based on method
+                if method == "video2text" and self.llm and hasattr(self.llm, 'video_to_text'):
+                    result = self._process_video_with_ai(video_path, url, metadata, duration, width, height)
+                elif method == "speech" and self.speech_available:
+                    result = self._process_video_with_speech(video_path, url, metadata, duration, width, height)
                 else:
-                    return {
-                        "extracted_text": None,
-                        "processed": False,
-                        "processing_error": "Failed to extract audio",
-                        "metadata_json": metadata,
-                        "duration": duration,
-                        "width": width,
-                        "height": height,
-                    }
-            
-            # Use specified method or default
-            method = method or self.video_method
-            
-            # Close video before processing to avoid resource leaks
-            video.close()
-            
-            # Process based on method
-            if method == "video2text" and self.llm and hasattr(self.llm, 'video_to_text'):
-                return self._process_video_with_ai(video_path, url, metadata, duration, width, height)
-            elif method == "speech" and self.speech_available:
-                return self._process_video_with_speech(video_path, url, metadata, duration, width, height)
-            else:
-                # Fallback to speech recognition if available
-                if self.speech_available:
-                    return self._process_video_with_speech(video_path, url, metadata, duration, width, height)
-                else:
-                    return {
-                        "extracted_text": None,
-                        "processed": False,
-                        "processing_error": f"No video processing method available (requested: {method})",
-                        "metadata_json": metadata,
-                        "duration": duration,
-                        "width": width,
-                        "height": height,
-                    }
+                    # Fallback to speech recognition if available
+                    if self.speech_available:
+                        result = self._process_video_with_speech(video_path, url, metadata, duration, width, height)
+                    else:
+                        result = {
+                            "extracted_text": None,
+                            "processed": False,
+                            "processing_error": f"No video processing method available (requested: {method})",
+                            "metadata_json": metadata,
+                            "duration": duration,
+                            "width": width,
+                            "height": height,
+                        }
+                
+                return result
+                
+            finally:
+                # Always close video resource
+                video.close()
                     
         except Exception as e:
             logger.error(f"Error processing video {url}: {e}")
