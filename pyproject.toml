@@ -34,7 +34,7 @@ dependencies = [
     "sqlalchemy>=1.4",
     "requests",
     "selenium>=4.7",
-    "duckduckgo-search",
+    "ddgs",
     "python-dotenv",
     "qdrant-client",
     "sentence-transformers",

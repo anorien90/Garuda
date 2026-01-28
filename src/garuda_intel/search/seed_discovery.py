@@ -5,7 +5,7 @@ import time
 from typing import List
 from urllib.parse import urlparse
 from sqlalchemy import select
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from ..database.engine import SQLAlchemyStore
 from ..database.models import Link, Page
 
