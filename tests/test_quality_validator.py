@@ -456,3 +456,35 @@ class TestExtractionQualityValidator:
         
         report2 = validator.validate(intel2, "Test")
         assert report2.consistency_score < 0.9
+    
+    def test_handle_string_items_in_lists(self, validator):
+        """Test that validator handles string items in lists that should contain dicts."""
+        intel = {
+            "basic_info": {"description": "Test"},
+            "persons": [
+                "John Doe",  # String instead of dict
+                {"name": "Jane Smith"},  # Normal dict
+                "Bob Johnson"  # Another string
+            ],
+            "events": [
+                "Event description",  # String instead of dict
+                {"description": "Real event"}  # Normal dict
+            ],
+            "locations": [
+                "New York",  # String instead of dict
+                {"location": "Boston"}  # Normal dict
+            ],
+            "metrics": [],
+            "financials": [],
+            "products": [],
+            "jobs": [],
+            "relationships": []
+        }
+        
+        # Should not raise AttributeError
+        report = validator.validate(intel, "Test Company")
+        
+        # Should complete validation without errors
+        assert report is not None
+        assert report.overall_score >= 0.0
+        assert report.consistency_score >= 0.0
