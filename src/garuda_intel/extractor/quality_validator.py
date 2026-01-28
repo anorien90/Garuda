@@ -219,7 +219,7 @@ class ExtractionQualityValidator:
             person_names = [
                 p.get('name', '').lower() if isinstance(p, dict) else str(p).lower()
                 for p in persons
-                if (isinstance(p, dict) and p.get('name')) or (isinstance(p, str) and p)
+                if (isinstance(p, dict) and p.get('name')) or (isinstance(p, str) and p.strip())
             ]
             if len(person_names) != len(set(person_names)):
                 issues.append(QualityIssue(
@@ -236,7 +236,7 @@ class ExtractionQualityValidator:
             event_descs = [
                 e.get('description', '').lower()[:50] if isinstance(e, dict) else str(e).lower()[:50]
                 for e in events
-                if (isinstance(e, dict) and e.get('description')) or (isinstance(e, str) and e)
+                if (isinstance(e, dict) and e.get('description')) or (isinstance(e, str) and e.strip())
             ]
             if len(event_descs) != len(set(event_descs)):
                 issues.append(QualityIssue(
@@ -253,7 +253,7 @@ class ExtractionQualityValidator:
             location_names = [
                 loc.get('location', '').lower() if isinstance(loc, dict) else str(loc).lower()
                 for loc in locations
-                if (isinstance(loc, dict) and loc.get('location')) or (isinstance(loc, str) and loc)
+                if (isinstance(loc, dict) and loc.get('location')) or (isinstance(loc, str) and loc.strip())
             ]
             if len(location_names) != len(set(location_names)):
                 issues.append(QualityIssue(
