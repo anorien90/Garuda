@@ -220,13 +220,17 @@ class PostCrawlProcessor:
         """
         Aggregate intelligence data to remove redundancy and consolidate information.
         Groups similar intelligence items and merges them.
+        
+        Also ensures all sub-entities (persons, products, locations, events) from Intel
+        are properly tracked and linked to all sources.
         """
         stats = {
             "intel_items_aggregated": 0,
+            "sub_entities_linked": 0,
         }
         
         try:
-            from ..database.models import Intelligence, Entity
+            from ..database.models import Intelligence, Entity, Relationship
             from sqlalchemy.orm.attributes import flag_modified
             
             with self.store.Session() as session:
@@ -279,8 +283,82 @@ class PostCrawlProcessor:
                             if data_modified:
                                 flag_modified(best, 'data')
                 
+                # Ensure sub-entities maintain links to all Intel sources
+                # This tracks which Intel records mention which sub-entities
+                
+                # Batch load all entities and relationships for better performance
+                # Build entity lookup map: (name, kind) -> entity_id
+                entity_lookup = {}
+                for entity in session.execute(select(Entity)).scalars().all():
+                    entity_lookup[(entity.name, entity.kind)] = str(entity.id)
+                
+                # Build relationship lookup: (source_id, target_id, relation_type) -> exists
+                relationship_lookup = set()
+                for rel in session.execute(
+                    select(Relationship).where(Relationship.relation_type == 'mentions_entity')
+                ).scalars().all():
+                    relationship_lookup.add((str(rel.source_id), str(rel.target_id), rel.relation_type))
+                
+                # Now verify all intel-entity relationships using in-memory lookups
+                for intel in all_intel:
+                    if not intel.data:
+                        continue
+                    
+                    intel_id = str(intel.id)
+                    
+                    # Process persons, products, locations, events from this intel
+                    for entity_type in ['persons', 'products', 'locations', 'events']:
+                        items = intel.data.get(entity_type, [])
+                        if not isinstance(items, list):
+                            continue
+                        
+                        for item in items:
+                            if not isinstance(item, dict):
+                                continue
+                            
+                            # Determine entity name based on type
+                            entity_name = None
+                            entity_kind = None
+                            
+                            if entity_type == 'persons':
+                                entity_name = item.get('name')
+                                entity_kind = 'person'
+                            elif entity_type == 'products':
+                                entity_name = item.get('name')
+                                entity_kind = 'product'
+                            elif entity_type == 'locations':
+                                # Use same priority order as intel_extractor.py for consistency
+                                entity_name = item.get('address') or item.get('city') or item.get('country')
+                                entity_kind = 'location'
+                            elif entity_type == 'events':
+                                entity_name = item.get('title')
+                                entity_kind = 'event'
+                            
+                            if not entity_name or not entity_kind:
+                                continue
+                            
+                            # Look up entity using in-memory map
+                            sub_entity_id = entity_lookup.get((entity_name, entity_kind))
+                            
+                            if sub_entity_id:
+                                # Check if Intel→Entity relationship exists using in-memory set
+                                rel_key = (intel_id, sub_entity_id, 'mentions_entity')
+                                
+                                # If relationship doesn't exist, it should have been created during extraction
+                                # This is a verification step - log for investigation but don't auto-create
+                                # as that could mask underlying issues in the extraction pipeline
+                                if rel_key not in relationship_lookup:
+                                    self.logger.debug(
+                                        f"Intel {intel_id} is missing expected relationship to entity "
+                                        f"{entity_name} ({entity_kind}). This indicates the entity was created "
+                                        f"outside the normal extraction flow or the relationship wasn't created."
+                                    )
+                                else:
+                                    stats["sub_entities_linked"] += 1
+                
                 session.commit()
                 self.logger.info(f"  Aggregated {stats['intel_items_aggregated']} intelligence data items")
+                self.logger.info(f"  Verified {stats['sub_entities_linked']} sub-entity links to Intel")
             
         except Exception as e:
             self.logger.error(f"  Intelligence aggregation failed: {e}")
