@@ -371,16 +371,16 @@ class PostCrawlProcessor:
                             if existing_entity:
                                 # b) Entity exists - merge new findings with existing data
                                 merged_data = False
-                                if not existing_entity.metadata:
-                                    existing_entity.metadata = {}
+                                if not existing_entity.metadata_json:
+                                    existing_entity.metadata_json = {}
                                 
                                 for key, value in entity_data.items():
-                                    if value and key not in existing_entity.metadata:
-                                        existing_entity.metadata[key] = value
+                                    if value and key not in existing_entity.metadata_json:
+                                        existing_entity.metadata_json[key] = value
                                         merged_data = True
                                 
                                 if merged_data:
-                                    flag_modified(existing_entity, 'metadata')
+                                    flag_modified(existing_entity, 'metadata_json')
                                     stats["entities_merged"] += 1
                                 
                                 sub_entity_id = str(existing_entity.id)
@@ -390,7 +390,7 @@ class PostCrawlProcessor:
                                     id=_uuid4(),
                                     name=entity_name,
                                     kind=entity_kind,
-                                    metadata=entity_data,
+                                    metadata_json=entity_data,
                                     created_at=datetime.now(),
                                 )
                                 session.add(new_entity)
