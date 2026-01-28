@@ -34,7 +34,7 @@ dependencies = [
     "sqlalchemy>=1.4",
     "requests",
     "selenium>=4.7",
-    "duckduckgo-search",
+    "ddgs",
     "python-dotenv",
     "qdrant-client",
     "sentence-transformers",
@@ -106,7 +106,9 @@ target-version = ['py310']
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "--cov=garuda_intel --tb=short -ra -q"
+# Note: --cov option removed to allow running tests without pytest-cov installed
+# To enable coverage: install pytest-cov and add "--cov=garuda_intel" to addopts
+addopts = "--tb=short -ra -q"
 testpaths = ["tests"]
 
 [tool.coverage.run]

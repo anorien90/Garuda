@@ -753,28 +753,37 @@ Garuda is a modular, entity-focused intelligence crawler leveraging LLMs, heuris
 
 ## Key Features
 
-- **Web UI**: Modern Flask-based search, statistics, and API endpoints (`/api/intel`, `/api/intel/semantic`, `/api/status`).
+- **Unified Web UI**: Modern Flask-based interface with reorganized tabs for better usability:
+  - 🔍 **Search**: Unified intel search (SQL + semantic vector search)
+  - 🌐 **Crawler**: Intelligent web crawling with entity-awareness  
+  - 📄 **Data**: Browse pages and recorded content
+  - 🕸️ **Graph**: Interactive entity relationship visualization with unique entities
+  - ✨ **Quality**: Entity gap analysis, deduplication, and data quality tools
+  - 🎬 **Media**: Media processing (images, video, audio to text)
 - **Chrome Extension**: Record pages/elements/images directly in-browser, with fast search, preview, and session handling.
 - **Multi-layer Extraction**: HTML, metadata, images, fingerprints + LLM-powered intel with reflection/verification.
 - **Structured Storage**: SQLAlchemy models and Qdrant vector search integration, with flexible config.
 - **Conversational & Semantic Search**: RAG-style CLI & web chat across database and vectors.
 - **Modular & Extensible**: Python modules organized for easy development and customization.
 - **Strong Security**: API-key protected endpoints, CORS restrictors, and local LLM/vector options.
-- **🧠 NEW: Intelligent Gap-Aware Crawling**: Automatically analyzes entity data, identifies missing fields, and generates targeted crawl strategies.
-- **🎯 NEW: Entity Gap Analysis**: Identifies missing data fields with completeness scoring and prioritized recommendations.
-- **📊 NEW: Adaptive Learning System**: Learns from crawl results to improve future discovery strategies.
+- **🧠 Intelligent Gap-Aware Crawling**: Automatically analyzes entity data, identifies missing fields, and generates targeted crawl strategies.
+- **🎯 Entity Gap Analysis**: Identifies missing data fields with completeness scoring and prioritized recommendations.
+- **📊 Adaptive Learning System**: Learns from crawl results to improve future discovery strategies.
+- **🎬 NEW: Media Processing**: Extract text from images (OCR), videos, and audio files. Convert media into embeddings integrated into the knowledge graph.
+- **🕸️ NEW: Unique Entity Graph**: Entities graph ensures only unique entities with full relations and aggregated details.
 
 ---
 
 ## New in v2.x / Refactored
 
-- 🖥️ **Modern Flask Web App** in [`src/webapp/`](src/webapp): Quick access to search, status, and semantic endpoints.
+- 🖥️ **Reorganized Web UI** in [`src/webapp/`](src/webapp): Simplified tab structure grouping related functionality.
+- 🎬 **Media Processing** in [`src/services/media_processor.py`](src/services/media_processor.py): Optional OCR, speech-to-text, and embedding generation.
+- 🔗 **Unique Entity Graph**: Graph visualization uses canonical entity names and UUID-based deduplication for data quality.
 - 🧩 **Improved Chrome Extension** in [`plugin/chrome/`](plugin/chrome): Multi-tab popup, session-aware marking, Tailwind-powered layout, settings persistence.
 - 📦 **Configurable settings** via `.env` and `src/webapp/config.py`.
 - 🦾 **Cleaner repo structure**: All modules isolated under `src/`, for browser, extractor, vector, database, etc.
 - ⚡ **Enhanced extensibility**: Add new storage, LLM/vector backends, and UI components with ease.
-- ✨ **UI improvements**: Extension features tabbed nav (Record, Search, View, Settings).
-- 🧠 **Dynamic Intelligence Gathering**: Gap-aware crawling, cross-entity inference, and adaptive strategies (see [FEATURES.md](FEATURES.md)).
+- 🧠 **Dynamic Intelligence Gathering**: Gap-aware crawling, cross-entity inference, and adaptive strategies.
 
 ---
 
@@ -851,6 +860,7 @@ pip install -r requirements.txt
 Configure via `.env` (see included sample) or environment variables. Main entries:
 
 ```env
+# Core settings
 GARUDA_DB_URL=sqlite:///crawler.db
 GARUDA_OLLAMA_URL=http://localhost:11434/api/generate
 GARUDA_OLLAMA_MODEL=granite3.1-dense:8b
@@ -858,6 +868,11 @@ GARUDA_QDRANT_URL=http://localhost:6333
 GARUDA_QDRANT_COLLECTION=pages
 GARUDA_UI_API_KEY=changeme
 GARUDA_UI_CORS_ORIGINS=*
+
+# Media processing (optional feature)
+GARUDA_MEDIA_PROCESSING=true     # Enable media text extraction
+GARUDA_MEDIA_CRAWLING=true       # Automatically extract media from pages
+GARUDA_MEDIA_EMBEDDINGS=true     # Generate embeddings from media text
 ```
 
 ---

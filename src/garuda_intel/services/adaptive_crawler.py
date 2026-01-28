@@ -162,8 +162,23 @@ class AdaptiveCrawlerService:
                 for query in queries[:5]:
                     try:
                         candidates = collect_candidates_simple([query], limit=5)
+                        self.logger.debug(f"Received {len(candidates)} candidates for query '{query}'")
+                        
                         for candidate in candidates:
-                            url = candidate.get('href')
+                            # Handle both dict and string candidates defensively
+                            url = None
+                            if isinstance(candidate, dict):
+                                url = candidate.get('href')
+                            elif isinstance(candidate, str):
+                                # Direct URL string
+                                url = candidate
+                            else:
+                                self.logger.debug(
+                                    f"Skipping candidate with unexpected type {type(candidate)} "
+                                    f"for query '{query}'"
+                                )
+                                continue
+                            
                             if url and url not in seed_urls:
                                 seed_urls.append(url)
                                 # Extract domain for official domain detection
