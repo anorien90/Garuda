@@ -102,7 +102,6 @@ class Entity(BasicDataEntry):
 
     __table_args__ = (
         Index('ix_entity_name_kind', 'name', 'kind'),
-        Index('ix_entity_created_at', 'created_at'),
     )
 
     __mapper_args__ = {
@@ -179,7 +178,6 @@ class Page(BasicDataEntry):
 
     __table_args__ = (
         Index('ix_page_entity_type', 'entity_id', 'page_type'),
-        Index('ix_page_created_at', 'created_at'),
     )
 
     __mapper_args__ = {
@@ -297,7 +295,6 @@ class Intelligence(BasicDataEntry):
 
     __table_args__ = (
         Index('ix_intelligence_entity_page', 'entity_id', 'page_id'),
-        Index('ix_intelligence_created_at', 'created_at'),
     )
 
     __mapper_args__ = {
@@ -464,3 +461,55 @@ class MediaItem(BasicDataEntry):
         "polymorphic_identity": "media_item",
         "inherit_condition": id == BasicDataEntry.id,
     }
+
+
+class MediaContent(BasicDataEntry):
+    """Extracted content from processed media with entity linking.
+    
+    Tracks text/data extracted from media (images, videos, audio, PDFs)
+    and links it to mentioned entities for searchable media intelligence.
+    """
+    __tablename__ = "media_content"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    media_url: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    media_type: Mapped[str] = mapped_column(String, nullable=False)  # image, video, audio, pdf
+    extracted_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Source tracking
+    page_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    
+    # Entity mentions - list of entity IDs found in media content
+    entities_mentioned: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    
+    # Processing details
+    processing_method: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # Relationships
+    page: Mapped[Optional["Page"]] = relationship(
+        "Page", foreign_keys=[page_id], back_populates="media_content"
+    )
+
+    __table_args__ = (
+        Index('ix_media_content_page', 'page_id'),
+        Index('ix_media_content_type', 'media_type'),
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "media_content",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+
+# Add back-reference to Page
+Page.media_content = relationship(
+    "MediaContent",
+    back_populates="page",
+    foreign_keys="MediaContent.page_id",
+)
