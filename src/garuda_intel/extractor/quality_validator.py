@@ -7,7 +7,7 @@ with automatic correction of common issues.
 
 import logging
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -154,7 +154,7 @@ class ExtractionQualityValidator:
         self,
         extracted_intel: Dict[str, Any],
         entity_name: str
-    ) -> tuple[float, List[QualityIssue]]:
+    ) -> Tuple[float, List[QualityIssue]]:
         """
         Check completeness of extracted data.
         
@@ -201,7 +201,7 @@ class ExtractionQualityValidator:
         self,
         extracted_intel: Dict[str, Any],
         entity_name: str
-    ) -> tuple[float, List[QualityIssue]]:
+    ) -> Tuple[float, List[QualityIssue]]:
         """
         Check consistency of extracted data.
         
@@ -264,7 +264,7 @@ class ExtractionQualityValidator:
         self,
         extracted_intel: Dict[str, Any],
         entity_type: Optional[str]
-    ) -> tuple[float, List[QualityIssue]]:
+    ) -> Tuple[float, List[QualityIssue]]:
         """
         Check plausibility of extracted values.
         
@@ -443,13 +443,13 @@ class ExtractionQualityValidator:
             multiplier = 1
             if 'b' in cleaned or 'billion' in cleaned:
                 multiplier = 1_000_000_000
-                cleaned = re.sub(r'[b]illion?', '', cleaned)
+                cleaned = re.sub(r'b(?:illion)?', '', cleaned)
             elif 'm' in cleaned or 'million' in cleaned:
                 multiplier = 1_000_000
-                cleaned = re.sub(r'[m]illion?', '', cleaned)
+                cleaned = re.sub(r'm(?:illion)?', '', cleaned)
             elif 'k' in cleaned or 'thousand' in cleaned:
                 multiplier = 1_000
-                cleaned = re.sub(r'[k]|thousand', '', cleaned)
+                cleaned = re.sub(r'k|thousand', '', cleaned)
             
             # Remove commas and other separators
             cleaned = re.sub(r'[,\s]', '', cleaned)

@@ -130,10 +130,11 @@ class IntelExtractor:
 
         # Apply quality validation if enabled
         if self.enable_quality_validation and self.quality_validator:
+            entity_type = str(profile.entity_type.value) if hasattr(profile.entity_type, 'value') else str(profile.entity_type)
             quality_report = self.quality_validator.validate(
                 aggregate,
                 entity_name=profile.name,
-                entity_type=profile.kind
+                entity_type=entity_type
             )
             
             self.logger.info(
