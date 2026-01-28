@@ -48,7 +48,18 @@ Garuda is a modular, entity-focused intelligence crawler leveraging LLMs, heuris
 - **🧠 Intelligent Gap-Aware Crawling**: Automatically analyzes entity data, identifies missing fields, and generates targeted crawl strategies.
 - **🎯 Entity Gap Analysis**: Identifies missing data fields with completeness scoring and prioritized recommendations.
 - **📊 Adaptive Learning System**: Learns from crawl results to improve future discovery strategies.
-- **🎬 NEW: Media Processing**: Extract text from images (OCR), videos, and audio files. Convert media into embeddings integrated into the knowledge graph.
+- **🎬 NEW: Advanced Media Processing**: 
+  - Extract text from images using Tesseract OCR or AI Image2Text models
+  - Extract text from videos using audio transcription or AI Video2Text models
+  - Extract audio from videos for separate processing
+  - Speech-to-text for audio files
+  - Multiple processing backends with configurable methods
+  - Convert media into embeddings integrated into the knowledge graph
+- **🕸️ NEW: Complete Relationship Persistence**: 
+  - Ensures ALL entity relationships are persisted, even for multi-level hierarchies
+  - Auto-creates missing entities referenced in relationships
+  - Tracks full relationship chains: Seed → Page → Intel → Entities
+  - Smart deduplication that preserves mandatory relationships
 - **🕸️ NEW: Unique Entity Graph**: Entities graph ensures only unique entities with full relations and aggregated details.
 
 ---
@@ -152,6 +163,11 @@ GARUDA_UI_CORS_ORIGINS=*
 GARUDA_MEDIA_PROCESSING=true     # Enable media text extraction
 GARUDA_MEDIA_CRAWLING=true       # Automatically extract media from pages
 GARUDA_MEDIA_EMBEDDINGS=true     # Generate embeddings from media text
+
+# Media processing methods (new in v2.1)
+GARUDA_MEDIA_IMAGE_METHOD=tesseract    # Image: "tesseract" (OCR) or "image2text" (AI model)
+GARUDA_MEDIA_VIDEO_METHOD=speech       # Video: "speech" (audio) or "video2text" (AI model)
+GARUDA_MEDIA_AUDIO_METHOD=speech       # Audio: "speech" (speech recognition)
 ```
 
 ---
