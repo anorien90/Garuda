@@ -159,6 +159,8 @@ def _add_relationship_edges(session, ensure_node, add_edge, entry_type_map: dict
     Include explicit Entity->Entity (or other Entry) relationships as edges with metadata.
     
     Includes deduplication to ensure each unique relationship is only added once.
+    Uses "relationship" as the edge kind for filtering, while preserving the specific
+    relation_type in metadata for display.
     
     Note: Currently loads relationships in bulk (limit 20000) to maintain original behavior.
     TODO: For very large datasets (>20K relationships), implement pagination:
@@ -168,27 +170,83 @@ def _add_relationship_edges(session, ensure_node, add_edge, entry_type_map: dict
     """
     seen_edges = set()  # Track (source, target, relation_type) to avoid duplicates
     
+    # Pre-fetch nodes in bulk for better performance
+    # Build lookup maps for getting proper labels
+    node_labels = {}
+    
     for rel in session.query(db_models.Relationship).limit(20000).all():
         sid = str(rel.source_id)
         tid = str(rel.target_id)
-        kind = rel.relation_type or "relationship"
+        relation_type = rel.relation_type or "related"
         
         # Create a normalized edge key for deduplication
-        edge_key = (min(sid, tid), max(sid, tid), kind)
+        edge_key = (min(sid, tid), max(sid, tid), relation_type)
         
         # Skip if we've already added this relationship
         if edge_key in seen_edges:
             continue
         seen_edges.add(edge_key)
         
+        # Get node types and labels
         s_type = entry_type_map.get(sid, "entity")
         t_type = entry_type_map.get(tid, "entity")
-        ensure_node(sid, sid, s_type, meta={"entity_id": sid, "source_id": sid})
-        ensure_node(tid, tid, t_type, meta={"entity_id": tid, "source_id": tid})
+        
+        # Try to get proper labels for nodes if not already fetched
+        if sid not in node_labels:
+            node_labels[sid] = _get_node_label(session, sid, s_type)
+        if tid not in node_labels:
+            node_labels[tid] = _get_node_label(session, tid, t_type)
+        
+        # Create nodes with proper labels
+        ensure_node(sid, node_labels[sid], s_type, meta={"entity_id": sid, "source_id": sid})
+        ensure_node(tid, node_labels[tid], t_type, meta={"entity_id": tid, "source_id": tid})
+        
+        # Use "relationship" as the kind for consistent edge filtering
+        # Preserve the specific relation_type in metadata for tooltips/display
         add_edge(
             sid,
             tid,
-            kind=kind,
+            kind="relationship",
             weight=1,
-            meta={"relation_type": kind, "metadata": rel.metadata_json or {}, "source_id": sid, "target_id": tid},
+            meta={"relation_type": relation_type, "metadata": rel.metadata_json or {}, "source_id": sid, "target_id": tid},
         )
+
+
+def _get_node_label(session, node_id: str, node_type: str) -> str:
+    """
+    Get a human-readable label for a node based on its type and ID.
+    
+    Args:
+        session: Database session
+        node_id: UUID of the node
+        node_type: Type of the node (entity, page, intel, seed, media)
+    
+    Returns:
+        Human-readable label for the node
+    """
+    try:
+        if node_type == "entity":
+            entity = session.query(db_models.Entity).filter_by(id=node_id).first()
+            if entity:
+                return entity.name
+        elif node_type == "page":
+            page = session.query(db_models.Page).filter_by(id=node_id).first()
+            if page:
+                return page.title or page.url or node_id
+        elif node_type == "intel":
+            intel = session.query(db_models.Intelligence).filter_by(id=node_id).first()
+            if intel:
+                return f"Intel: {intel.entity_name or intel.entity_type or 'data'}"
+        elif node_type == "seed":
+            seed = session.query(db_models.Seed).filter_by(id=node_id).first()
+            if seed:
+                return seed.query or node_id
+        elif node_type == "media":
+            media = session.query(db_models.MediaItem).filter_by(id=node_id).first()
+            if media:
+                return media.url.split('/')[-1][:50] if media.url else "media"
+    except Exception:
+        pass
+    
+    # Fallback to node_id if we can't fetch the label
+    return node_id
