@@ -49,11 +49,11 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
         node_type_filters = _parse_list_param(
             request.args.get("node_types"),
-            default={"entity", "person", "org", "organization", "corporation", "location", "product", "page", "intel", "image", "media"},
+            default={"entity", "person", "org", "organization", "corporation", "location", "product", "page", "intel", "image", "media", "event", "semantic-snippet"},
         )
         edge_kind_filters = _parse_list_param(
             request.args.get("edge_kinds"),
-            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media"},
+            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet"},
         )
 
         emit_event(

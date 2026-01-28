@@ -9,6 +9,11 @@ export async function fetchWithAPIKey(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
   const key = getApiKey();
   if (key) headers['X-API-Key'] = key;
+  
+  // Automatically add Content-Type header for JSON requests
+  if (opts.body && typeof opts.body === 'string' && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   try {
     const res = await fetch(url, { ...opts, headers });
