@@ -321,7 +321,8 @@ class ExtractionQualityValidator:
         # Check employee count
         metrics = extracted_intel.get('metrics', [])
         for metric in metrics:
-            if 'employees' in metric.get('type', '').lower():
+            metric_type = metric.get('type') or ''
+            if 'employees' in metric_type.lower():
                 value_str = metric.get('value', '')
                 value = self._extract_number(value_str)
                 
