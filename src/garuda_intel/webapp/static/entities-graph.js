@@ -449,9 +449,10 @@ function renderNodeModalContent(node, links, detail) {
   }
 
   if (node.type === 'media' || detail?.type === 'media') {
-    const mediaUrl = meta.url || node.label;
+    const mediaUrl = meta.url || node.label || '';
     const mediaType = meta.media_type || 'media';
-    const mediaPreview = mediaType === 'image' 
+    const hasValidUrl = mediaUrl && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'));
+    const mediaPreview = (mediaType === 'image' && hasValidUrl)
       ? `<img src="${escapeHtml(mediaUrl)}" alt="Media" class="w-full max-h-72 object-contain rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">`
       : '';
     
@@ -462,7 +463,7 @@ function renderNodeModalContent(node, links, detail) {
         ${meta.processed ? `<div class="text-xs text-green-600">✓ Processed</div>` : `<div class="text-xs text-slate-500">⏳ Not processed</div>`}
         ${meta.extracted_text ? `<div class="text-xs text-slate-600">Extracted text: ${escapeHtml(meta.extracted_text)}</div>` : ''}
         ${mediaPreview}
-        <div class="text-xs"><a class="text-blue-600 underline" href="${escapeHtml(mediaUrl)}" target="_blank" rel="noreferrer">Open media</a></div>
+        ${hasValidUrl ? `<div class="text-xs"><a class="text-blue-600 underline" href="${escapeHtml(mediaUrl)}" target="_blank" rel="noreferrer">Open media</a></div>` : ''}
         <div>
           <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
           ${metaTable}
