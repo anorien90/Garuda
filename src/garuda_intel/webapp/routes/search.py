@@ -1,6 +1,8 @@
 """Search and chat API routes."""
 
 import logging
+from typing import Any
+
 from flask import Blueprint, jsonify, request
 from ..services.event_system import emit_event
 from ..utils.request_helpers import safe_int, safe_float
