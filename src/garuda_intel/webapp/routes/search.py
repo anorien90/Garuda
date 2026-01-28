@@ -3,6 +3,7 @@
 import logging
 from flask import Blueprint, jsonify, request
 from ..services.event_system import emit_event
+from ..utils.request_helpers import safe_int, safe_float
 from ...search import IntelligentExplorer, EntityProfile, EntityType, collect_candidates_simple
 from ...browser.selenium import SeleniumBrowser
 
@@ -32,26 +33,6 @@ def _looks_like_refusal(text: str) -> bool:
 
 def init_routes(api_key_required, settings, store, llm, vector_store):
     """Initialize routes with required dependencies."""
-    
-    def safe_int(value, default=0):
-        """Safely parse integer from request args, handling binary data."""
-        try:
-            if value is None or value == "":
-                return default
-            return int(value)
-        except (ValueError, TypeError):
-            logger.warning(f"Failed to parse int from value: {repr(value)[:100]}")
-            return default
-    
-    def safe_float(value, default=0.0):
-        """Safely parse float from request args, handling binary data."""
-        try:
-            if value is None or value == "":
-                return default
-            return float(value)
-        except (ValueError, TypeError):
-            logger.warning(f"Failed to parse float from value: {repr(value)[:100]}")
-            return default
     
     @bp.get("/intel")
     @api_key_required
@@ -161,17 +142,14 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
     @bp.get("/pages")
     @api_key_required
     def api_pages():
-        limit = int(request.args.get("limit", 200))
+        limit = safe_int(request.args.get("limit"), 200)
         q = (request.args.get("q") or "").strip()
         entity_filter = (request.args.get("entity_type") or "").strip()
         page_type_filter = (request.args.get("page_type") or "").strip()
         min_score = request.args.get("min_score")
         sort_by = (request.args.get("sort") or "fresh").lower()
     
-        try:
-            min_score_val = float(min_score) if min_score not in (None, "",) else None
-        except ValueError:
-            min_score_val = None
+        min_score_val = safe_float(min_score) if min_score not in (None, "",) else None
     
         pages = store.get_all_pages(
             q=q,

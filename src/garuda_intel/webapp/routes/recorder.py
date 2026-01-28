@@ -3,6 +3,7 @@
 import logging
 from flask import Blueprint, jsonify, request
 from ..services.event_system import emit_event
+from ..utils.request_helpers import safe_int
 
 
 bp = Blueprint('recorder', __name__, url_prefix='/api/recorder')
@@ -11,16 +12,6 @@ logger = logging.getLogger(__name__)
 
 def init_routes(api_key_required, store):
     """Initialize routes with required dependencies."""
-    
-    def safe_int(value, default=0):
-        """Safely parse integer from request args, handling binary data."""
-        try:
-            if value is None or value == "":
-                return default
-            return int(value)
-        except (ValueError, TypeError):
-            logger.warning(f"Failed to parse int from value: {repr(value)[:100]}")
-            return default
     
     @bp.get("/search")
     @api_key_required
