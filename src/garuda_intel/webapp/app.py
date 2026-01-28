@@ -46,12 +46,16 @@ llm = LLMIntelExtractor(
 vector_store = None
 if settings.vector_enabled:
     try:
+        logger.info(f"Initializing Qdrant vector store at {settings.qdrant_url}")
         vector_store = QdrantVectorStore(
             url=settings.qdrant_url, collection=settings.qdrant_collection
         )
+        logger.info(f"✓ Vector store initialized successfully")
     except Exception as e:
-        logger.warning(f"Qdrant unavailable: {e}")
+        logger.error(f"✗ Qdrant unavailable - embeddings will NOT be generated: {e}")
         vector_store = None
+else:
+    logger.warning(f"✗ Vector store disabled (vector_enabled=False) - embeddings will NOT be generated")
 
 # Initialize new components for enhanced features
 relationship_manager = RelationshipManager(store, llm)

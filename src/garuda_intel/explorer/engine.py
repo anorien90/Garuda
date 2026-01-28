@@ -490,6 +490,7 @@ class IntelligentExplorer:
         # 4) Persist embeddings (page + entities + findings)
         if self.vector_store and self.llm_extractor:
             try:
+                self.logger.info(f"Generating embeddings for page: {url}")
                 entries = self.llm_extractor.build_embeddings_for_page(
                     url=url,
                     metadata=metadata,
@@ -511,14 +512,21 @@ class IntelligentExplorer:
                             page_uuid=page_uuid,
                         )
                     )
+                
+                self.logger.info(f"Upserting {len(entries)} embeddings to Qdrant for page: {url}")
                 for entry in entries:
                     self.vector_store.upsert(
                         point_id=entry["id"],
                         vector=entry["vector"],
                         payload=entry["payload"],
                     )
+                self.logger.info(f"Successfully stored {len(entries)} embeddings in Qdrant")
             except Exception as e:
-                self.logger.debug(f"embedding persist failed: {e}")
+                self.logger.error(f"Failed to persist embeddings for {url}: {e}", exc_info=True)
+        elif not self.vector_store:
+            self.logger.warning(f"Vector store not available - skipping embedding generation for {url}")
+        elif not self.llm_extractor:
+            self.logger.warning(f"LLM extractor not available - skipping embedding generation for {url}")
 
         return page_record
 

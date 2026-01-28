@@ -1,4 +1,5 @@
 import uuid
+import logging
 from typing import List, Dict, Any, Optional
 
 from .base import VectorStore
@@ -13,15 +14,19 @@ def point_id_for_page(url: str) -> str:
 
 class QdrantVectorStore(VectorStore):
     def __init__(self, url: str = "http://qdrant:6333", collection: str = "pages", vector_size: int = 384):
+        self.logger = logging.getLogger(__name__)
         self.client = QdrantClient(url=url)
         self.collection = collection
         self.vector_size = vector_size
         self._ensure_collection()
+        self.logger.info(f"QdrantVectorStore initialized: url={url}, collection={collection}, vector_size={vector_size}")
 
     def _ensure_collection(self):
         try:
             self.client.get_collection(self.collection)
+            self.logger.info(f"Using existing Qdrant collection: {self.collection}")
         except Exception:
+            self.logger.info(f"Creating new Qdrant collection: {self.collection}")
             self.client.recreate_collection(
                 collection_name=self.collection,
                 vectors_config=qmodels.VectorParams(size=self.vector_size, distance=qmodels.Distance.COSINE),
@@ -43,6 +48,8 @@ class QdrantVectorStore(VectorStore):
                 )
             ],
         )
+        # Log at debug level for individual upserts, info level handled by caller
+        self.logger.debug(f"Upserted embedding to Qdrant: collection={self.collection}, point_id={uid}, payload_type={payload.get('type', 'unknown')}")
 
     def search(self, query_vector: List[float], top_k: int = 10, filter_: Optional[qmodels.Filter] = None):
         response = self.client.query_points(

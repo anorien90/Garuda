@@ -429,8 +429,10 @@ class PostCrawlProcessor:
                                 }
                             )
                             stats["embeddings_generated"] += 1
+                        else:
+                            self.logger.warning(f"  Failed to generate embedding vector for entity {entity.name} (empty vector returned)")
                     except Exception as e:
-                        self.logger.debug(f"  Failed to generate embedding for entity {entity.name}: {e}")
+                        self.logger.warning(f"  Failed to generate embedding for entity {entity.name}: {e}")
                 
                 # Generate embeddings for intelligence items
                 intel_items = session.execute(select(Intelligence)).scalars().all()
@@ -461,8 +463,10 @@ class PostCrawlProcessor:
                                 }
                             )
                             stats["embeddings_generated"] += 1
+                        else:
+                            self.logger.warning(f"  Failed to generate embedding vector for intelligence {intel.id} (empty vector returned)")
                     except Exception as e:
-                        self.logger.debug(f"  Failed to generate embedding for intelligence {intel.id}: {e}")
+                        self.logger.warning(f"  Failed to generate embedding for intelligence {intel.id}: {e}")
                 
                 # Generate embeddings for pages without embeddings
                 pages = session.execute(select(Page)).scalars().all()
@@ -491,8 +495,10 @@ class PostCrawlProcessor:
                                 }
                             )
                             stats["embeddings_generated"] += 1
+                        else:
+                            self.logger.warning(f"  Failed to generate embedding vector for page {page.url} (empty vector returned)")
                     except Exception as e:
-                        self.logger.debug(f"  Failed to generate embedding for page {page.url}: {e}")
+                        self.logger.warning(f"  Failed to generate embedding for page {page.url}: {e}")
                 
                 self.logger.info(f"  Generated {stats['embeddings_generated']} embeddings")
             
