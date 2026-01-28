@@ -93,7 +93,8 @@ class IntelligentExplorer:
             self.post_crawl_processor = PostCrawlProcessor(
                 store=persistence,
                 relationship_manager=self.relationship_manager,
-                llm=llm_extractor
+                llm=llm_extractor,
+                vector_store=vector_store
             )
 
         # URL Scoring Logic

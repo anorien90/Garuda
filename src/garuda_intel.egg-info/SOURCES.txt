@@ -146,6 +146,7 @@ src/garuda_intel/webapp/templates/components/status.html
 src/garuda_intel/webapp/utils/__init__.py
 src/garuda_intel/webapp/utils/helpers.py
 tests/test_adaptive_crawler.py
+tests/test_graph_builder_relationships.py
 tests/test_media_processing.py
 tests/test_multi_node_relationships.py
 tests/test_post_crawl_scenario.py
