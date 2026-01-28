@@ -83,6 +83,17 @@ class EntityGapAnalyzer:
         Returns:
             Dictionary with gap analysis including missing fields, suggestions, queries
         """
+        # Validate entity_id format
+        import uuid as uuid_module
+        try:
+            # Ensure entity_id is a valid UUID string
+            if not entity_id or not isinstance(entity_id, str):
+                return {"error": "Invalid entity_id: must be a non-empty string"}
+            # Try to parse as UUID to validate format
+            uuid_module.UUID(entity_id)
+        except (ValueError, AttributeError, TypeError) as e:
+            return {"error": f"Invalid entity_id format: {entity_id}"}
+        
         with self.store.Session() as session:
             from ..database.models import Entity, Intelligence
             

@@ -165,6 +165,7 @@ class SQLAlchemyStore(PersistenceStore):
     def save_links(self, from_url: str, links: List[Dict]):
         """
         Persist links with optional Page resolution, and avoid duplicates via DB constraint.
+        Also creates Page→Page relationships for links that have both pages resolved.
         """
         if not links:
             return
@@ -186,6 +187,18 @@ class SQLAlchemyStore(PersistenceStore):
                     relation_type="hyperlink",
                 )
                 s.merge(link)
+                
+                # Create Page→Page relationship if both pages exist
+                if from_pid and to_pid:
+                    try:
+                        link_meta = {
+                            "anchor_text": l.get("text", ""),
+                            "score": l.get("score", 0),
+                            "depth": l.get("depth", 0),
+                        }
+                        self._upsert_relationship(s, from_pid, to_pid, "page_link", link_meta)
+                    except Exception as e:
+                        self.logger.debug(f"Failed to create page link relationship: {e}")
             s.commit()
 
     def save_relationship(self, from_id: str, to_id: str, relation_type: str, meta: Optional[Dict] = None) -> Optional[str]:

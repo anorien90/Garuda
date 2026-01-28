@@ -162,13 +162,22 @@ class IntelExtractor:
 
         basic_info = finding.get("basic_info") or {}
         if basic_info.get("official_name"):
-            entities.append(
-                {
-                    "name": basic_info["official_name"],
-                    "kind": "company" if basic_info.get("ticker") or basic_info.get("industry") else "entity",
-                    "attrs": basic_info,
-                }
-            )
+            # Determine entity kind based on available data
+            kind = "entity"
+            if basic_info.get("ticker") or basic_info.get("industry"):
+                kind = "company"
+            elif basic_info.get("entity_type"):
+                kind = basic_info.get("entity_type")
+            
+            # Store all basic info as entity data
+            entity_data = {k: v for k, v in basic_info.items() if v and k != "official_name"}
+            
+            entities.append({
+                "name": basic_info["official_name"],
+                "kind": kind,
+                "data": entity_data,
+                "attrs": basic_info,
+            })
 
         for p in finding.get("persons") or []:
             if not isinstance(p, dict):
@@ -178,7 +187,21 @@ class IntelExtractor:
                     p = {"name": p}
 
             if p.get("name"):
-                entities.append({"name": p["name"], "kind": "person", "attrs": p})
+                # Store all person attributes as entity data
+                entity_data = {
+                    "title": p.get("title"),
+                    "role": p.get("role"),
+                    "bio": p.get("bio"),
+                    "organization": p.get("organization"),
+                }
+                # Remove None values
+                entity_data = {k: v for k, v in entity_data.items() if v}
+                entities.append({
+                    "name": p["name"],
+                    "kind": "person",
+                    "data": entity_data,
+                    "attrs": p
+                })
 
         for prod in finding.get("products") or []:
             if not isinstance(prod, dict):
@@ -188,7 +211,21 @@ class IntelExtractor:
                     prod = {"name": prod}
 
             if prod.get("name"):
-                entities.append({"name": prod["name"], "kind": "product", "attrs": prod})
+                # Store all product attributes as entity data
+                entity_data = {
+                    "description": prod.get("description"),
+                    "status": prod.get("status"),
+                    "category": prod.get("category"),
+                    "manufacturer": prod.get("manufacturer"),
+                }
+                # Remove None values
+                entity_data = {k: v for k, v in entity_data.items() if v}
+                entities.append({
+                    "name": prod["name"],
+                    "kind": "product",
+                    "data": entity_data,
+                    "attrs": prod
+                })
 
         for loc in finding.get("locations") or []:
             if not isinstance(loc, dict):
@@ -197,9 +234,23 @@ class IntelExtractor:
                 except Exception:
                     loc = {"address": loc}
 
-            label = loc.get("address") or loc.get("city") or loc.get("country")
+            label = loc.get("address") or loc.get("city") or loc.get("country") or loc.get("name")
             if label:
-                entities.append({"name": label, "kind": "location", "attrs": loc})
+                # Store all location attributes as entity data
+                entity_data = {
+                    "address": loc.get("address"),
+                    "city": loc.get("city"),
+                    "country": loc.get("country"),
+                    "type": loc.get("type"),
+                }
+                # Remove None values
+                entity_data = {k: v for k, v in entity_data.items() if v}
+                entities.append({
+                    "name": label,
+                    "kind": "location",
+                    "data": entity_data,
+                    "attrs": loc
+                })
 
         for evt in finding.get("events") or []:
             if not isinstance(evt, dict):
@@ -209,7 +260,20 @@ class IntelExtractor:
                     evt = {"title": evt}
 
             if evt.get("title"):
-                entities.append({"name": evt["title"], "kind": "event", "attrs": evt})
+                # Store all event attributes as entity data
+                entity_data = {
+                    "date": evt.get("date"),
+                    "description": evt.get("description"),
+                    "type": evt.get("type"),
+                }
+                # Remove None values
+                entity_data = {k: v for k, v in entity_data.items() if v}
+                entities.append({
+                    "name": evt["title"],
+                    "kind": "event",
+                    "data": entity_data,
+                    "attrs": evt
+                })
 
         return entities
 
