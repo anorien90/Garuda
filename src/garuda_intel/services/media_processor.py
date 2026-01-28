@@ -13,6 +13,12 @@ from datetime import datetime
 from pathlib import Path
 
 from .media_downloader import MediaDownloader
+from .adaptive_media_processor import (
+    AdaptiveMediaProcessor,
+    MediaCharacteristics,
+    MediaType,
+    detect_media_characteristics
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +34,7 @@ class MediaProcessor:
         image_method: str = "tesseract",
         video_method: str = "speech",
         audio_method: str = "speech",
+        use_adaptive_processing: bool = False,
     ):
         """Initialize media processor.
         
@@ -38,6 +45,7 @@ class MediaProcessor:
             image_method: Method for image processing - "tesseract" (OCR) or "image2text" (AI model)
             video_method: Method for video processing - "speech" (audio transcription) or "video2text" (AI model)
             audio_method: Method for audio processing - "speech" (speech recognition)
+            use_adaptive_processing: Whether to use adaptive method selection (Phase 2 feature)
         """
         self.llm = llm_extractor
         self.enabled = enable_processing
@@ -45,6 +53,17 @@ class MediaProcessor:
         self.image_method = image_method
         self.video_method = video_method
         self.audio_method = audio_method
+        self.use_adaptive_processing = use_adaptive_processing
+        
+        # Initialize adaptive processor if enabled
+        if use_adaptive_processing:
+            self.adaptive_processor = AdaptiveMediaProcessor(
+                prefer_speed=False,
+                prefer_quality=True,
+                gpu_available=False
+            )
+        else:
+            self.adaptive_processor = None
         
         # Try to import optional dependencies
         self.ocr_available = False
@@ -79,13 +98,15 @@ class MediaProcessor:
             self.image2text_available = True
             logger.info("Image2Text (LLM) available for image processing")
 
-    def process_image(self, image_path: str, url: str, method: Optional[str] = None) -> Dict[str, Any]:
+    def process_image(self, image_path: str, url: str, method: Optional[str] = None, width: Optional[int] = None, height: Optional[int] = None) -> Dict[str, Any]:
         """Extract text from image using OCR or Image2Text model.
         
         Args:
             image_path: Local path to image file
             url: Original URL of the image
-            method: Processing method - "tesseract", "image2text", or None (use default)
+            method: Processing method - "tesseract", "image2text", or None (use default/adaptive)
+            width: Image width in pixels (for adaptive processing)
+            height: Image height in pixels (for adaptive processing)
             
         Returns:
             Dict with extracted_text, metadata, and processing status
@@ -97,8 +118,20 @@ class MediaProcessor:
                 "processing_error": "Image processing disabled"
             }
         
-        # Use specified method or default
-        method = method or self.image_method
+        # Use adaptive processing if enabled and no specific method requested
+        if self.use_adaptive_processing and self.adaptive_processor and method is None:
+            characteristics = detect_media_characteristics(
+                media_url=url,
+                media_type="image",
+                width=width,
+                height=height
+            )
+            decision = self.adaptive_processor.select_processing_method(characteristics)
+            method = self.adaptive_processor.get_method_for_config(decision)
+            logger.info(f"Adaptive processing selected: {method} - {decision.reasoning}")
+        else:
+            # Use specified method or default
+            method = method or self.image_method
         
         if method == "image2text" and self.image2text_available:
             return self._process_image_with_ai(image_path, url)

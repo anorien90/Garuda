@@ -50,6 +50,23 @@ class Settings:
     embedding_cache_size: int = 10000
     llm_cache_path: str = "/app/data/llm_cache.db"
     llm_cache_ttl_seconds: int = 604800  # 7 days
+    
+    # Phase 2 v2 optimizations
+    # Semantic chunking settings
+    use_semantic_chunking: bool = True  # Use topic-aware chunking instead of fixed-size
+    
+    # Quality validation settings
+    enable_quality_validation: bool = True  # Validate and auto-correct extracted intelligence
+    min_completeness_score: float = 0.3  # Minimum acceptable completeness score
+    
+    # Schema discovery settings
+    enable_schema_discovery: bool = False  # Use LLM to discover relevant fields dynamically
+    cache_discovered_schemas: bool = True  # Cache schemas by entity type
+    
+    # Adaptive media processing settings
+    use_adaptive_media_processing: bool = False  # Automatically select best processing method
+    media_prefer_speed: bool = False  # Prioritize speed over quality
+    media_prefer_quality: bool = True  # Prioritize quality over speed
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -82,6 +99,15 @@ class Settings:
             embedding_cache_size=int(os.environ.get("GARUDA_EMBEDDING_CACHE_SIZE", "10000")),
             llm_cache_path=os.environ.get("GARUDA_LLM_CACHE_PATH", "/app/data/llm_cache.db"),
             llm_cache_ttl_seconds=int(os.environ.get("GARUDA_LLM_CACHE_TTL", "604800")),
+            # Phase 2 optimizations
+            use_semantic_chunking=_as_bool(os.environ.get("GARUDA_USE_SEMANTIC_CHUNKING"), True),
+            enable_quality_validation=_as_bool(os.environ.get("GARUDA_ENABLE_QUALITY_VALIDATION"), True),
+            min_completeness_score=float(os.environ.get("GARUDA_MIN_COMPLETENESS_SCORE", "0.3")),
+            enable_schema_discovery=_as_bool(os.environ.get("GARUDA_ENABLE_SCHEMA_DISCOVERY"), False),
+            cache_discovered_schemas=_as_bool(os.environ.get("GARUDA_CACHE_DISCOVERED_SCHEMAS"), True),
+            use_adaptive_media_processing=_as_bool(os.environ.get("GARUDA_USE_ADAPTIVE_MEDIA"), False),
+            media_prefer_speed=_as_bool(os.environ.get("GARUDA_MEDIA_PREFER_SPEED"), False),
+            media_prefer_quality=_as_bool(os.environ.get("GARUDA_MEDIA_PREFER_QUALITY"), True),
         )
 
     @property
