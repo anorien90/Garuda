@@ -218,6 +218,8 @@ class SemanticEngine:
         self.logger.debug(
             f"Embedding stats for {url}: total={total_embeddings}, sentences={len(sentences)}, windows={len(windows)}, findings={len(findings_with_ids or [])}"
         )
+        if total_embeddings > 0:
+            self.logger.info(f"Built {total_embeddings} embeddings for page {url}")
         return entries
 
     def build_embeddings_for_entities(

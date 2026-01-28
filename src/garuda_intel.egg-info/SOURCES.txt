@@ -151,6 +151,7 @@ tests/test_graph_builder_relationships.py
 tests/test_media_processing.py
 tests/test_multi_node_relationships.py
 tests/test_post_crawl_scenario.py
+tests/test_rag_chat.py
 tests/test_relationship_persistence.py
 tests/test_relationship_type_tracking.py
 tests/test_seed_discovery.py
