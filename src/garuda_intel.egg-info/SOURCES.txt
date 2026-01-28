@@ -148,6 +148,7 @@ src/garuda_intel/webapp/utils/helpers.py
 src/garuda_intel/webapp/utils/request_helpers.py
 tests/test_adaptive_crawler.py
 tests/test_entity_extraction_and_graph.py
+tests/test_gibberish_detection.py
 tests/test_graph_builder_relationships.py
 tests/test_media_processing.py
 tests/test_multi_node_relationships.py

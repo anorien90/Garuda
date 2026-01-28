@@ -223,15 +223,24 @@ class PostCrawlProcessor:
         
         Also ensures all sub-entities (persons, products, locations, events) from Intel
         are properly tracked and linked to all sources.
+        
+        Process:
+        a) Look up if matching entity exists
+        b) If exists, merge new findings with existing data
+        c) If not, create new entity with findings
+        d) Create relationships between entity and source page/root entity
         """
         stats = {
             "intel_items_aggregated": 0,
             "sub_entities_linked": 0,
+            "entities_created": 0,
+            "entities_merged": 0,
         }
         
         try:
-            from ..database.models import Intelligence, Entity, Relationship
+            from ..database.models import Intelligence, Entity, Relationship, Page
             from sqlalchemy.orm.attributes import flag_modified
+            from ..database.helpers import uuid4 as _uuid4
             
             with self.store.Session() as session:
                 # Group intelligence by entity
@@ -283,28 +292,28 @@ class PostCrawlProcessor:
                             if data_modified:
                                 flag_modified(best, 'data')
                 
-                # Ensure sub-entities maintain links to all Intel sources
-                # This tracks which Intel records mention which sub-entities
-                
-                # Batch load all entities and relationships for better performance
-                # Build entity lookup map: (name, kind) -> entity_id
+                # Extract and create/merge entities from intelligence data
+                # Build entity lookup map: (name_lower, kind) -> entity for fast lookup
                 entity_lookup = {}
+                entity_by_id = {}
                 for entity in session.execute(select(Entity)).scalars().all():
-                    entity_lookup[(entity.name, entity.kind)] = str(entity.id)
+                    key = (entity.name.lower().strip() if entity.name else "", entity.kind)
+                    entity_lookup[key] = entity
+                    entity_by_id[str(entity.id)] = entity
                 
-                # Build relationship lookup: (source_id, target_id, relation_type) -> exists
+                # Build relationship lookup for deduplication
                 relationship_lookup = set()
-                for rel in session.execute(
-                    select(Relationship).where(Relationship.relation_type == 'mentions_entity')
-                ).scalars().all():
+                for rel in session.execute(select(Relationship)).scalars().all():
                     relationship_lookup.add((str(rel.source_id), str(rel.target_id), rel.relation_type))
                 
-                # Now verify all intel-entity relationships using in-memory lookups
+                # Process each intelligence item to extract sub-entities
                 for intel in all_intel:
                     if not intel.data:
                         continue
                     
                     intel_id = str(intel.id)
+                    page_id = str(intel.page_id) if intel.page_id else None
+                    root_entity_id = str(intel.entity_id) if intel.entity_id else None
                     
                     # Process persons, products, locations, events from this intel
                     for entity_type in ['persons', 'products', 'locations', 'events']:
@@ -316,54 +325,165 @@ class PostCrawlProcessor:
                             if not isinstance(item, dict):
                                 continue
                             
-                            # Determine entity name based on type
+                            # Determine entity name and kind
                             entity_name = None
                             entity_kind = None
+                            entity_data = {}
                             
                             if entity_type == 'persons':
                                 entity_name = item.get('name')
                                 entity_kind = 'person'
+                                entity_data = {
+                                    'role': item.get('role'),
+                                    'title': item.get('title'),
+                                    'description': item.get('description'),
+                                }
                             elif entity_type == 'products':
                                 entity_name = item.get('name')
                                 entity_kind = 'product'
+                                entity_data = {
+                                    'description': item.get('description'),
+                                    'category': item.get('category'),
+                                }
                             elif entity_type == 'locations':
-                                # Use same priority order as intel_extractor.py for consistency
                                 entity_name = item.get('address') or item.get('city') or item.get('country')
                                 entity_kind = 'location'
+                                entity_data = {
+                                    'address': item.get('address'),
+                                    'city': item.get('city'),
+                                    'country': item.get('country'),
+                                }
                             elif entity_type == 'events':
                                 entity_name = item.get('title')
                                 entity_kind = 'event'
+                                entity_data = {
+                                    'date': item.get('date'),
+                                    'description': item.get('description'),
+                                }
                             
                             if not entity_name or not entity_kind:
                                 continue
                             
-                            # Look up entity using in-memory map
-                            sub_entity_id = entity_lookup.get((entity_name, entity_kind))
+                            # a) Look up if matching entity exists
+                            entity_key = (entity_name.lower().strip(), entity_kind)
+                            existing_entity = entity_lookup.get(entity_key)
                             
-                            if sub_entity_id:
-                                # Check if Intel→Entity relationship exists using in-memory set
-                                rel_key = (intel_id, sub_entity_id, 'mentions_entity')
+                            if existing_entity:
+                                # b) Entity exists - merge new findings with existing data
+                                merged_data = False
+                                if not existing_entity.metadata:
+                                    existing_entity.metadata = {}
                                 
-                                # If relationship doesn't exist, it should have been created during extraction
-                                # This is a verification step - log for investigation but don't auto-create
-                                # as that could mask underlying issues in the extraction pipeline
+                                for key, value in entity_data.items():
+                                    if value and key not in existing_entity.metadata:
+                                        existing_entity.metadata[key] = value
+                                        merged_data = True
+                                
+                                if merged_data:
+                                    flag_modified(existing_entity, 'metadata')
+                                    stats["entities_merged"] += 1
+                                
+                                sub_entity_id = str(existing_entity.id)
+                            else:
+                                # c) Entity doesn't exist - create new entity with findings
+                                new_entity = Entity(
+                                    id=_uuid4(),
+                                    name=entity_name,
+                                    kind=entity_kind,
+                                    metadata=entity_data,
+                                    created_at=datetime.now(),
+                                )
+                                session.add(new_entity)
+                                session.flush()  # Get the ID
+                                
+                                sub_entity_id = str(new_entity.id)
+                                entity_lookup[entity_key] = new_entity
+                                entity_by_id[sub_entity_id] = new_entity
+                                stats["entities_created"] += 1
+                            
+                            # d) Create relationships between entity and sources
+                            # 1. Intel → Entity relationship
+                            rel_key = (intel_id, sub_entity_id, 'mentions_entity')
+                            if rel_key not in relationship_lookup:
+                                new_rel = Relationship(
+                                    id=_uuid4(),
+                                    source_id=intel_id,
+                                    target_id=sub_entity_id,
+                                    relation_type='mentions_entity',
+                                    created_at=datetime.now(),
+                                )
+                                session.add(new_rel)
+                                relationship_lookup.add(rel_key)
+                                stats["sub_entities_linked"] += 1
+                            
+                            # 2. Page → Entity relationship (if page exists)
+                            if page_id:
+                                rel_key = (page_id, sub_entity_id, 'page_mentions_entity')
                                 if rel_key not in relationship_lookup:
-                                    self.logger.debug(
-                                        f"Intel {intel_id} is missing expected relationship to entity "
-                                        f"{entity_name} ({entity_kind}). This indicates the entity was created "
-                                        f"outside the normal extraction flow or the relationship wasn't created."
+                                    new_rel = Relationship(
+                                        id=_uuid4(),
+                                        source_id=page_id,
+                                        target_id=sub_entity_id,
+                                        relation_type='page_mentions_entity',
+                                        created_at=datetime.now(),
                                     )
-                                else:
-                                    stats["sub_entities_linked"] += 1
+                                    session.add(new_rel)
+                                    relationship_lookup.add(rel_key)
+                            
+                            # 3. Root Entity → Sub-Entity relationship (if root entity exists)
+                            if root_entity_id and root_entity_id != sub_entity_id:
+                                # Determine appropriate relation type based on entity types
+                                relation_type = self._determine_relation_type(
+                                    entity_by_id.get(root_entity_id),
+                                    entity_by_id.get(sub_entity_id)
+                                )
+                                
+                                rel_key = (root_entity_id, sub_entity_id, relation_type)
+                                if rel_key not in relationship_lookup:
+                                    new_rel = Relationship(
+                                        id=_uuid4(),
+                                        source_id=root_entity_id,
+                                        target_id=sub_entity_id,
+                                        relation_type=relation_type,
+                                        created_at=datetime.now(),
+                                    )
+                                    session.add(new_rel)
+                                    relationship_lookup.add(rel_key)
                 
                 session.commit()
                 self.logger.info(f"  Aggregated {stats['intel_items_aggregated']} intelligence data items")
-                self.logger.info(f"  Verified {stats['sub_entities_linked']} sub-entity links to Intel")
+                self.logger.info(f"  Created {stats['entities_created']} new entities from intel")
+                self.logger.info(f"  Merged data into {stats['entities_merged']} existing entities")
+                self.logger.info(f"  Linked {stats['sub_entities_linked']} sub-entity relationships")
             
         except Exception as e:
-            self.logger.error(f"  Intelligence aggregation failed: {e}")
+            self.logger.error(f"  Intelligence aggregation failed: {e}", exc_info=True)
             
         return stats
+    
+    def _determine_relation_type(self, source_entity: Optional[Any], target_entity: Optional[Any]) -> str:
+        """Determine appropriate relation type based on entity types."""
+        if not source_entity or not target_entity:
+            return 'related_to'
+        
+        source_kind = source_entity.kind if hasattr(source_entity, 'kind') else None
+        target_kind = target_entity.kind if hasattr(target_entity, 'kind') else None
+        
+        # Define specific relation types based on entity kind combinations
+        if source_kind in ['organization', 'company'] and target_kind == 'person':
+            return 'has_person'
+        elif source_kind in ['organization', 'company'] and target_kind == 'location':
+            return 'has_location'
+        elif source_kind in ['organization', 'company'] and target_kind == 'product':
+            return 'produces'
+        elif source_kind == 'person' and target_kind in ['organization', 'company']:
+            return 'works_at'
+        elif source_kind == 'person' and target_kind == 'event':
+            return 'participated_in'
+        elif target_kind == 'event':
+            return 'associated_with_event'
+        else:
+            return 'related_to'
         
     def _cross_entity_inference(self) -> Dict[str, int]:
         """
