@@ -152,7 +152,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
     
         emit_event("chat", "chat request received", payload={"session_id": session_id, "question": question})
     
-        def gather_hits(q: str, limit: int, prioritize_rag: bool = True):
+        def gather_hits(q: str, limit: int, prioritize_rag: bool = True) -> list[dict[str, Any]]:
             """
             Gather context hits with RAG-first approach.
             
@@ -164,6 +164,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             Returns:
                 List of context hits with source information
             """
+            # Cap the maximum results to prevent resource exhaustion
+            MAX_VECTOR_RESULTS = 100
             vec_hits = []
             sql_hits = []
             
@@ -173,7 +175,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 vec = llm.embed_text(q)
                 if vec:
                     try:
-                        res = vector_store.search(vec, top_k=limit * 2)  # Get more for better coverage
+                        # Cap vector search to prevent excessive resource usage
+                        vector_limit = min(limit * 2, MAX_VECTOR_RESULTS)
+                        vector_results = vector_store.search(vec, top_k=vector_limit)
                         vec_hits = [
                             {
                                 "url": r.payload.get("url"),
@@ -183,7 +187,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                                 "kind": r.payload.get("kind", "unknown"),
                                 "entity": r.payload.get("entity", ""),
                             }
-                            for r in res
+                            for r in vector_results
                         ]
                         emit_event("chat", f"RAG found {len(vec_hits)} results", 
                                  payload={"count": len(vec_hits)})
@@ -243,17 +247,16 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         # Evaluate answer quality and determine if crawling is needed
         is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
         
-        # Determine crawl trigger reasons
+        # Phase 2: Intelligent crawling if needed
         if not is_sufficient:
+            # Determine crawl trigger reasons
             if not rag_hits:
                 crawl_reason = "No RAG results found"
             elif len(high_quality_rag) < 2:
                 crawl_reason = f"Insufficient high-quality RAG results ({len(high_quality_rag)})"
             else:
                 crawl_reason = "Answer insufficient despite RAG results"
-        
-        # Phase 2: Intelligent crawling if needed
-        if not is_sufficient:
+            
             emit_event("chat", f"Phase 2: Intelligent crawling triggered - {crawl_reason}",
                      payload={"reason": crawl_reason})
             
@@ -296,7 +299,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                              payload={"urls": live_urls})
                 except Exception as e:
                     logger.warning(f"Chat crawl failed: {e}")
-                    emit_event("chat", f"Crawl failed: {e}", level="error")
+                    emit_event("chat", f"Crawl failed: {e}", level="warning")
                 finally:
                     if browser:
                         try:

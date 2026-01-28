@@ -243,7 +243,7 @@ pytest tests/test_post_crawl_scenario.py -v
 **Solutions**:
 1. Run a crawl to generate embeddings
 2. Check embedding model is loaded: Check `/api/status` endpoint
-3. Verify vector store has data: Check Qdrant dashboard
+3. Verify vector store has data: Use Qdrant REST API `curl http://localhost:6333/collections/pages`
 
 ### Crawling Always Triggers
 **Cause**: RAG quality threshold too high or embeddings not matching queries well
@@ -287,4 +287,4 @@ pytest tests/test_post_crawl_scenario.py -v
 
 - [Qdrant Documentation](https://qdrant.tech/documentation/)
 - [Sentence Transformers](https://www.sbert.net/)
-- [RAG Pattern Guide](https://www.anthropic.com/research/retrieval-augmented-generation)
+- [RAG Pattern - Original Paper](https://arxiv.org/abs/2005.11401) - Lewis et al., "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
