@@ -106,6 +106,8 @@ target-version = ['py310']
 
 [tool.pytest.ini_options]
 minversion = "6.0"
+# Note: --cov option removed to allow running tests without pytest-cov installed
+# To enable coverage: install pytest-cov and add "--cov=garuda_intel" to addopts
 addopts = "--tb=short -ra -q"
 testpaths = ["tests"]
 

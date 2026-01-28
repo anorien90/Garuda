@@ -7,14 +7,18 @@ from search providers without crashing with "'str' object has no attribute 'get'
 """
 
 import sys
+import os
 import logging
 from unittest.mock import Mock, MagicMock, patch
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
-# Add src to path for direct execution
-sys.path.insert(0, '/home/runner/work/Garuda/Garuda/src')
+# Add src to path for direct execution (relative to script location)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(script_dir, 'src')
+if os.path.exists(src_path):
+    sys.path.insert(0, src_path)
 
 from garuda_intel.services.adaptive_crawler import AdaptiveCrawlerService
 
