@@ -3,6 +3,7 @@
 import logging
 from flask import Blueprint, jsonify, request
 from ..services.event_system import emit_event
+from ..utils.request_helpers import safe_int, safe_float
 from ...search import IntelligentExplorer, EntityProfile, EntityType, collect_candidates_simple
 from ...browser.selenium import SeleniumBrowser
 
@@ -38,8 +39,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
     def api_intel():
         q = request.args.get("q", "")
         entity = request.args.get("entity")
-        min_conf = float(request.args.get("min_conf", 0))
-        limit = int(request.args.get("limit", 50))
+        min_conf = safe_float(request.args.get("min_conf"), 0)
+        limit = safe_int(request.args.get("limit"), 50)
         emit_event("intel", "intel request received", payload={"q": q, "entity": entity})
         if q:
             rows = store.search_intelligence_data(q)
@@ -51,51 +52,104 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
     @bp.get("/intel/semantic")
     @api_key_required
     def api_intel_semantic():
-        if not vector_store:
-            return jsonify({"error": "semantic search unavailable"}), 503
+        """
+        Combined semantic and SQL search with graceful degradation.
+        Returns both semantic (vector) and SQL results for comprehensive coverage.
+        """
         query = request.args.get("q", "").strip()
-        top_k = int(request.args.get("top_k", 10))
+        top_k = safe_int(request.args.get("top_k"), 10)
         if not query:
             return jsonify({"error": "q required"}), 400
-        vec = llm.embed_text(query)
-        if not vec:
-            return jsonify({"error": "embedding unavailable"}), 503
+        
         emit_event("semantic_search", "start", payload={"q": query, "top_k": top_k})
+        
+        # Initialize result containers
+        semantic_hits = []
+        sql_hits = []
+        
+        # Try semantic/vector search if available
+        if vector_store:
+            try:
+                vec = llm.embed_text(query)
+                if vec:
+                    results = vector_store.search(vec, top_k=top_k)
+                    semantic_hits = [
+                        {
+                            "score": r.score,
+                            "url": r.payload.get("url"),
+                            "kind": r.payload.get("kind"),
+                            "page_type": r.payload.get("page_type"),
+                            "entity": r.payload.get("entity"),
+                            "entity_type": r.payload.get("entity_type"),
+                            "entity_kind": r.payload.get("entity_kind"),
+                            "text": r.payload.get("text"),
+                            "snippet": r.payload.get("text"),
+                            "data": r.payload.get("data"),
+                            "sql_page_id": r.payload.get("page_id"),
+                            "sql_entity_id": r.payload.get("entity_id"),
+                            "sql_intel_id": r.payload.get("intel_id"),
+                        }
+                        for r in results
+                    ]
+                    emit_event("semantic_search", f"vector search found {len(semantic_hits)} results")
+                else:
+                    emit_event("semantic_search", "embedding generation failed", level="warning")
+            except Exception as e:
+                emit_event("semantic_search", f"vector search failed: {e}", level="warning")
+                logger.warning(f"Vector search failed: {e}")
+        else:
+            emit_event("semantic_search", "vector store not available", level="warning")
+        
+        # Always include SQL search results as fallback/supplement
         try:
-            results = vector_store.search(vec, top_k=top_k)
+            sql_results = store.search_intelligence_data(query)
+            if sql_results:
+                sql_hits = [
+                    {
+                        "score": r.get("confidence", r.get("score", 0)),
+                        "url": r.get("url", ""),
+                        "kind": "intel",
+                        "page_type": r.get("page_type", ""),
+                        "entity": r.get("entity", r.get("entity_name", "")),
+                        "entity_type": r.get("entity_type", ""),
+                        "entity_kind": r.get("entity_type", ""),
+                        "text": str(r.get("data", "")),
+                        "snippet": str(r.get("data", "")),
+                        "data": r.get("data", {}),
+                        "sql_intel_id": r.get("id", ""),
+                        "sql_entity_id": r.get("entity_id", ""),
+                    }
+                    for r in sql_results[:top_k]
+                ]
+                emit_event("semantic_search", f"SQL search found {len(sql_hits)} results")
         except Exception as e:
-            emit_event("semantic_search", f"vector search failed: {e}", level="error")
-            return jsonify({"error": f"vector search failed: {e}"}), 502
-        hits = [
-            {
-                "score": r.score,
-                "url": r.payload.get("url"),
-                "kind": r.payload.get("kind"),
-                "page_type": r.payload.get("page_type"),
-                "entity": r.payload.get("entity"),
-                "entity_type": r.payload.get("entity_type"),
-                "text": r.payload.get("text"),
-                "data": r.payload.get("data"),
-            }
-            for r in results
-        ]
-        emit_event("semantic_search", "done", payload={"returned": len(hits)})
-        return jsonify({"semantic": hits})
+            emit_event("semantic_search", f"SQL search failed: {e}", level="warning")
+            logger.warning(f"SQL search failed: {e}")
+        
+        emit_event("semantic_search", "done", payload={
+            "semantic_count": len(semantic_hits),
+            "sql_count": len(sql_hits),
+            "total": len(semantic_hits) + len(sql_hits)
+        })
+        
+        # Return combined results with semantic results first
+        return jsonify({
+            "semantic": semantic_hits + sql_hits,
+            "semantic_count": len(semantic_hits),
+            "sql_count": len(sql_hits)
+        })
     
     @bp.get("/pages")
     @api_key_required
     def api_pages():
-        limit = int(request.args.get("limit", 200))
+        limit = safe_int(request.args.get("limit"), 200)
         q = (request.args.get("q") or "").strip()
         entity_filter = (request.args.get("entity_type") or "").strip()
         page_type_filter = (request.args.get("page_type") or "").strip()
         min_score = request.args.get("min_score")
         sort_by = (request.args.get("sort") or "fresh").lower()
     
-        try:
-            min_score_val = float(min_score) if min_score not in (None, "",) else None
-        except ValueError:
-            min_score_val = None
+        min_score_val = safe_float(min_score) if min_score not in (None, "",) else None
     
         pages = store.get_all_pages(
             q=q,
@@ -145,7 +199,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         body = request.get_json(silent=True) or {}
         question = body.get("question") or request.args.get("q")
         entity = body.get("entity") or request.args.get("entity")
-        top_k = int(body.get("top_k") or request.args.get("top_k") or 6)
+        top_k = safe_int(body.get("top_k") or request.args.get("top_k"), 6)
         session_id = body.get("session_id") or request.args.get("session_id")
         if not question:
             return jsonify({"error": "question required"}), 400

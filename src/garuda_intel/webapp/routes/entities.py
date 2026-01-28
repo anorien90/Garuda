@@ -7,6 +7,7 @@ from collections import Counter
 from flask import Blueprint, jsonify, request
 from sqlalchemy.orm import joinedload
 from ..services.event_system import emit_event
+from ..utils.request_helpers import safe_int, safe_float
 from ..services.graph_builder import (
     _collect_entities_from_json,
     _collect_relationships_from_json,
@@ -42,9 +43,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
         q = (request.args.get("query") or "").strip().lower()
         type_filter_raw = request.args.get("type")
         type_filter = _norm_kind(type_filter_raw) or ""
-        min_score = float(request.args.get("min_score", 0) or 0)
-        limit = min(int(request.args.get("limit", 100) or 100), 500)
-        depth_limit = int(request.args.get("depth", 1) or 1)
+        min_score = safe_float(request.args.get("min_score"), 0)
+        limit = min(safe_int(request.args.get("limit"), 100), 500)
+        depth_limit = safe_int(request.args.get("depth"), 1)
         include_meta = (request.args.get("include_meta") or "1").strip() != "0"
 
         node_type_filters = _parse_list_param(
@@ -53,7 +54,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
         )
         edge_kind_filters = _parse_list_param(
             request.args.get("edge_kinds"),
-            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet", "seed-entity"},
+            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet", "seed-entity", "has-person", "has-location", "has-product"},
         )
 
         emit_event(
@@ -159,37 +160,102 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 semantic_entity_hints = _qdrant_semantic_entity_hints(q, vector_store, llm) if q else set()
 
                 for row in session.query(db_models.Intelligence).limit(5000).all():
-                    ents_from_json = _collect_entities_from_json(row.data or {})
-                    rels_from_json = _collect_relationships_from_json(row.data or {})
+                    intel_data = row.data or {}
+                    intel_id_str = str(row.id)
                     
-                    if ents_from_json and row.entity_name:
-                        primary = upsert_entity(row.entity_name, row.entity_type, row.confidence)
-                        if primary and rels_from_json:
-                            _add_semantic_relationship_edges(
-                                rels_from_json,
-                                upsert_entity,
-                                add_edge,
-                                include_meta,
-                                context_meta={"intel_id": str(row.id)} if include_meta else None
-                            )
-
+                    # Create primary entity node once
+                    primary = upsert_entity(row.entity_name, row.entity_type, row.confidence) if row.entity_name else None
+                    
+                    # Extract entities and relationships from JSON
+                    ents_from_json = _collect_entities_from_json(intel_data)
+                    rels_from_json = _collect_relationships_from_json(intel_data)
+                    
+                    # Process semantic relationships
+                    if primary and rels_from_json:
+                        _add_semantic_relationship_edges(
+                            rels_from_json,
+                            upsert_entity,
+                            add_edge,
+                            include_meta,
+                            context_meta={"intel_id": intel_id_str} if include_meta else None
+                        )
+                    
+                    # Extract and persist Persons as unique entities
+                    persons = intel_data.get("persons", [])
+                    if isinstance(persons, list):
+                        for person in persons:
+                            if isinstance(person, dict):
+                                person_name = person.get("name")
+                                if person_name:
+                                    person_node = upsert_entity(person_name, "person", None, meta={
+                                        "role": person.get("role"),
+                                        "title": person.get("title"),
+                                        "bio": person.get("bio")
+                                    })
+                                    if person_node and primary:
+                                        add_edge(primary, person_node, kind="has-person", weight=1,
+                                                meta={"role": person.get("role"), "title": person.get("title")} if include_meta else None)
+                                    if person_node:
+                                        add_edge(intel_id_str, person_node, kind="intel-mentions", weight=1)
+                    
+                    # Extract Locations as unique entities
+                    locations = intel_data.get("locations", [])
+                    if isinstance(locations, list):
+                        for location in locations:
+                            if isinstance(location, dict):
+                                location_name = location.get("city") or location.get("address") or location.get("country")
+                                if location_name:
+                                    location_node = upsert_entity(location_name, "location", None, meta={
+                                        "type": location.get("type"),
+                                        "city": location.get("city"),
+                                        "country": location.get("country"),
+                                        "address": location.get("address")
+                                    })
+                                    if location_node and primary:
+                                        add_edge(primary, location_node, kind="has-location", weight=1,
+                                                meta={"type": location.get("type")} if include_meta else None)
+                                    if location_node:
+                                        add_edge(intel_id_str, location_node, kind="intel-mentions", weight=1)
+                    
+                    # Extract Products as unique entities
+                    products = intel_data.get("products", [])
+                    if isinstance(products, list):
+                        for product in products:
+                            if isinstance(product, dict):
+                                product_name = product.get("name")
+                                if product_name:
+                                    product_node = upsert_entity(product_name, "product", None, meta={
+                                        "status": product.get("status"),
+                                        "description": product.get("description")
+                                    })
+                                    if product_node and primary:
+                                        add_edge(primary, product_node, kind="has-product", weight=1,
+                                                meta={"status": product.get("status")} if include_meta else None)
+                                    if product_node:
+                                        add_edge(intel_id_str, product_node, kind="intel-mentions", weight=1)
+                    
+                    # Process entities from JSON structure
                     if row.entity_name and ents_from_json:
-                        primary = upsert_entity(row.entity_name, row.entity_type, row.confidence)
                         for ent in ents_from_json:
                             other_id = upsert_entity(ent["name"], ent.get("kind"), None)
                             if primary and other_id and other_id != primary:
                                 add_edge(primary, other_id, kind="intel-mentions", weight=1)
-
-                        intel_id_str = str(row.id)
-                        ensure_node(intel_id_str, f"Intel: {row.entity_type or 'data'}", "intel", score=row.confidence,
-                                    meta={"intel_id": intel_id_str, "source_id": intel_id_str})
-                        entry_type_map[intel_id_str] = "intel"
-                        if primary:
-                            add_edge(intel_id_str, primary, kind="intel-primary", weight=1)
-                        for ent in ents_from_json:
-                            other_id = upsert_entity(ent["name"], ent.get("kind"), None)
-                            if other_id:
-                                add_edge(intel_id_str, other_id, kind="intel-mentions", weight=1)
+                    
+                    # Create Intel node
+                    ensure_node(intel_id_str, f"Intel: {row.entity_type or 'data'}", "intel", score=row.confidence,
+                                meta={"intel_id": intel_id_str, "source_id": intel_id_str, "confidence": row.confidence,
+                                      "entity_name": row.entity_name, "entity_type": row.entity_type, "data": intel_data})
+                    entry_type_map[intel_id_str] = "intel"
+                    
+                    # Link Intel node to primary entity
+                    if primary:
+                        add_edge(intel_id_str, primary, kind="intel-primary", weight=1)
+                    
+                    # Link Intel node to all extracted entities
+                    for ent in ents_from_json:
+                        other_id = upsert_entity(ent["name"], ent.get("kind"), None)
+                        if other_id:
+                            add_edge(intel_id_str, other_id, kind="intel-mentions", weight=1)
 
                 for row in session.query(db_models.Page).options(joinedload(db_models.Page.content)).limit(3000).all():
                     page_id = _page_id_from_row(row)

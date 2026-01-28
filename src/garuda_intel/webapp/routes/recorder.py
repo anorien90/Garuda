@@ -3,6 +3,7 @@
 import logging
 from flask import Blueprint, jsonify, request
 from ..services.event_system import emit_event
+from ..utils.request_helpers import safe_int
 
 
 bp = Blueprint('recorder', __name__, url_prefix='/api/recorder')
@@ -18,7 +19,7 @@ def init_routes(api_key_required, store):
         q = request.args.get("q", "").strip()
         if not q:
             return jsonify({"error": "q required"}), 400
-        limit = min(int(request.args.get("limit", 20)), 100)
+        limit = min(safe_int(request.args.get("limit"), 20), 100)
         entity_type = request.args.get("entity_type")
         page_type = request.args.get("page_type")
         emit_event("recorder", "search", payload={"q": q, "limit": limit})
