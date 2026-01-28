@@ -18,7 +18,7 @@ from collections import defaultdict
 from sqlalchemy import select, func
 
 from .store import PersistenceStore
-from .models import Entity, Relationship
+from .models import Entity, Relationship, BasicDataEntry
 from ..extractor.llm import LLMIntelExtractor
 
 
@@ -359,10 +359,13 @@ Only include relationships where confidence >= {min_confidence}.
         Validate all relationships and optionally fix issues.
         
         Checks for:
-        - Circular relationships (entity relating to itself)
-        - Orphaned relationships (missing source or target entity)
+        - Circular relationships (node relating to itself)
+        - Orphaned relationships (missing source or target node in any table)
         - Invalid confidence scores
         - Missing required fields
+        
+        Note: Validates relationships between ALL node types (Entity, Page, 
+        Intelligence, Seed, etc.), not just Entity↔Entity relationships.
         
         Args:
             fix_invalid: If True, attempts to fix or remove invalid relationships
@@ -410,7 +413,7 @@ Only include relationships where confidence >= {min_confidence}.
                         report["issues"].append({
                             "id": str(rel.id),
                             "type": "circular",
-                            "message": f"Entity {rel.source_id} relates to itself"
+                            "message": f"Node {rel.source_id} relates to itself"
                         })
                         
                         if fix_invalid:
@@ -419,12 +422,14 @@ Only include relationships where confidence >= {min_confidence}.
                         continue
                     
                     # Check for orphaned relationships
+                    # Check against BasicDataEntry (entries table) to support all node types
+                    # (Entity, Page, Intelligence, Seed, etc.), not just Entity
                     source_exists = session.execute(
-                        select(Entity.id).where(Entity.id == rel.source_id)
+                        select(BasicDataEntry.id).where(BasicDataEntry.id == rel.source_id)
                     ).scalar_one_or_none()
                     
                     target_exists = session.execute(
-                        select(Entity.id).where(Entity.id == rel.target_id)
+                        select(BasicDataEntry.id).where(BasicDataEntry.id == rel.target_id)
                     ).scalar_one_or_none()
                     
                     if not source_exists or not target_exists:
@@ -439,7 +444,7 @@ Only include relationships where confidence >= {min_confidence}.
                         report["issues"].append({
                             "id": str(rel.id),
                             "type": "orphaned",
-                            "message": f"Missing {', '.join(missing)} entity"
+                            "message": f"Missing {', '.join(missing)} node"
                         })
                         
                         if fix_invalid:
@@ -478,6 +483,78 @@ Only include relationships where confidence >= {min_confidence}.
             self.logger.error(f"Validation failed: {e}")
         
         return report
+    
+    def backfill_relationship_types(self) -> int:
+        """
+        Backfill source_type and target_type for existing relationships.
+        
+        This is useful for migrating old relationships that were created before
+        the type fields were added. Queries the entries table to determine the
+        actual type of each source/target node.
+        
+        Returns:
+            Number of relationships updated with type information
+            
+        Example:
+            >>> # Backfill types for all existing relationships
+            >>> updated = manager.backfill_relationship_types()
+            >>> print(f"Updated {updated} relationships with type information")
+        """
+        updated_count = 0
+        
+        try:
+            with self.store.Session() as session:
+                # Get only relationships that are missing type information
+                # This is more efficient than checking all relationships
+                relationships = session.execute(
+                    select(Relationship).where(
+                        (Relationship.source_type.is_(None)) | 
+                        (Relationship.target_type.is_(None))
+                    )
+                ).scalars().all()
+                
+                if not relationships:
+                    self.logger.info("No relationships need type backfill")
+                    return 0
+                
+                for rel in relationships:
+                    needs_update = False
+                    
+                    # Check if source_type is missing
+                    if not rel.source_type:
+                        source_entry = session.execute(
+                            select(BasicDataEntry.entry_type).where(
+                                BasicDataEntry.id == rel.source_id
+                            )
+                        ).scalar_one_or_none()
+                        
+                        if source_entry:
+                            rel.source_type = source_entry
+                            needs_update = True
+                    
+                    # Check if target_type is missing
+                    if not rel.target_type:
+                        target_entry = session.execute(
+                            select(BasicDataEntry.entry_type).where(
+                                BasicDataEntry.id == rel.target_id
+                            )
+                        ).scalar_one_or_none()
+                        
+                        if target_entry:
+                            rel.target_type = target_entry
+                            needs_update = True
+                    
+                    if needs_update:
+                        updated_count += 1
+                
+                if updated_count > 0:
+                    session.commit()
+                    self.logger.info(f"Backfilled types for {updated_count} relationships")
+        
+        except Exception as e:
+            self.logger.error(f"Type backfill failed: {e}")
+        
+        return updated_count
     
     def infer_missing_fields(self) -> int:
         """

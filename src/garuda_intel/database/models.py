@@ -110,8 +110,16 @@ class Relationship(BasicDataEntry):
         GUID(), ForeignKey("entries.id", ondelete="CASCADE"), nullable=False
     )
     relation_type: Mapped[str] = mapped_column(String, nullable=False)
+    # Type information for source and target nodes (e.g., "entity", "page", "intelligence")
+    # These are optional for backward compatibility with existing data
+    source_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    target_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
+    # Legacy Entity-specific relationship mappings for backward compatibility
+    # These are maintained for existing code that expects Entity relationships,
+    # but should not be used for non-Entity relationships (Page, Intelligence, etc.)
+    # Use source_id/target_id directly for multi-node type relationships
     source_entity: Mapped["Entity"] = relationship(
         "Entity", foreign_keys=[source_id], back_populates="outgoing_relationships"
     )

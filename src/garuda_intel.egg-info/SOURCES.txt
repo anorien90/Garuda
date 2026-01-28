@@ -63,6 +63,8 @@ src/garuda_intel/search/utils.py
 src/garuda_intel/services/__init__.py
 src/garuda_intel/services/adaptive_crawler.py
 src/garuda_intel/services/entity_gap_analyzer.py
+src/garuda_intel/services/media_downloader.py
+src/garuda_intel/services/media_extractor.py
 src/garuda_intel/services/media_processor.py
 src/garuda_intel/templates/__init__.py
 src/garuda_intel/templates/extraction.py
@@ -144,4 +146,6 @@ src/garuda_intel/webapp/templates/components/status.html
 src/garuda_intel/webapp/utils/__init__.py
 src/garuda_intel/webapp/utils/helpers.py
 tests/test_adaptive_crawler.py
+tests/test_media_processing.py
+tests/test_relationship_persistence.py
 tests/test_seed_discovery.py
