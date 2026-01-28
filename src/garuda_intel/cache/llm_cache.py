@@ -77,16 +77,15 @@ class LLMCache:
         prompt_hash = self._hash_prompt(prompt)
         current_time = int(time.time())
         
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT response FROM llm_cache 
-            WHERE prompt_hash = ? AND expires_at > ?
-        """, (prompt_hash, current_time))
-        
-        result = cursor.fetchone()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT response FROM llm_cache 
+                WHERE prompt_hash = ? AND expires_at > ?
+            """, (prompt_hash, current_time))
+            
+            result = cursor.fetchone()
         
         if result:
             self.logger.debug(f"LLM cache hit for hash {prompt_hash[:8]}...")
@@ -107,18 +106,17 @@ class LLMCache:
         current_time = int(time.time())
         expires_at = current_time + self.ttl_seconds
         
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Use INSERT OR REPLACE to update existing entries
-        cursor.execute("""
-            INSERT OR REPLACE INTO llm_cache 
-            (prompt_hash, prompt, response, created_at, expires_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (prompt_hash, prompt, response, current_time, expires_at))
-        
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # Use INSERT OR REPLACE to update existing entries
+            cursor.execute("""
+                INSERT OR REPLACE INTO llm_cache 
+                (prompt_hash, prompt, response, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (prompt_hash, prompt, response, current_time, expires_at))
+            
+            conn.commit()
         
         self.logger.debug(f"Cached LLM response for hash {prompt_hash[:8]}...")
 
@@ -131,14 +129,13 @@ class LLMCache:
         """
         current_time = int(time.time())
         
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("DELETE FROM llm_cache WHERE expires_at <= ?", (current_time,))
-        deleted_count = cursor.rowcount
-        
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM llm_cache WHERE expires_at <= ?", (current_time,))
+            deleted_count = cursor.rowcount
+            
+            conn.commit()
         
         if deleted_count > 0:
             self.logger.info(f"Cleaned up {deleted_count} expired LLM cache entries")
@@ -147,13 +144,12 @@ class LLMCache:
 
     def clear(self) -> None:
         """Clear all cached responses."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("DELETE FROM llm_cache")
-        
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM llm_cache")
+            
+            conn.commit()
         
         self.logger.info("LLM cache cleared")
 
@@ -164,17 +160,15 @@ class LLMCache:
         Returns:
             Dictionary with cache size and other metrics
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT COUNT(*) FROM llm_cache")
-        total_count = cursor.fetchone()[0]
-        
-        current_time = int(time.time())
-        cursor.execute("SELECT COUNT(*) FROM llm_cache WHERE expires_at > ?", (current_time,))
-        valid_count = cursor.fetchone()[0]
-        
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) FROM llm_cache")
+            total_count = cursor.fetchone()[0]
+            
+            current_time = int(time.time())
+            cursor.execute("SELECT COUNT(*) FROM llm_cache WHERE expires_at > ?", (current_time,))
+            valid_count = cursor.fetchone()[0]
         
         return {
             "total_entries": total_count,

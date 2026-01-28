@@ -296,22 +296,13 @@ class MediaDetector:
         Returns:
             True if media should be processed
         """
-        # Check score threshold
-        if media.score < self.min_image_score:
-            return False
-        
-        # Check file extension
-        url_lower = media.url.lower()
-        
         # Skip common non-processable formats
+        url_lower = media.url.lower()
         if any(ext in url_lower for ext in ['.css', '.js', '.woff', '.ttf', '.eot']):
             return False
         
         # Accept if score is high enough
-        if media.score >= self.min_image_score:
-            return True
-        
-        return False
+        return media.score >= self.min_image_score
 
     def get_processing_priority(self, media_items: List[MediaItem]) -> List[MediaItem]:
         """

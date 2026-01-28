@@ -4,7 +4,7 @@ LRU-based in-memory cache for embeddings to avoid redundant generation.
 
 import hashlib
 import logging
-from functools import lru_cache
+from collections import OrderedDict
 from typing import Optional, List
 
 
@@ -23,8 +23,8 @@ class EmbeddingCache:
         """
         self.maxsize = maxsize
         self.logger = logging.getLogger(__name__)
-        # Use dict for simple cache implementation with hash-based lookup
-        self._cache: dict[str, List[float]] = {}
+        # Use OrderedDict for proper LRU behavior
+        self._cache: OrderedDict[str, List[float]] = OrderedDict()
         self._hits = 0
         self._misses = 0
         self.logger.info(f"EmbeddingCache initialized with maxsize={maxsize}")
@@ -48,6 +48,8 @@ class EmbeddingCache:
         if text_hash in self._cache:
             self._hits += 1
             self.logger.debug(f"Embedding cache hit for hash {text_hash[:8]}...")
+            # Move to end to mark as recently used (LRU)
+            self._cache.move_to_end(text_hash)
             return self._cache[text_hash]
         
         self._misses += 1
@@ -64,13 +66,18 @@ class EmbeddingCache:
         """
         text_hash = self._hash_text(text)
         
-        # Simple LRU: remove oldest if at capacity
-        if len(self._cache) >= self.maxsize:
-            # Remove first item (oldest in insertion order for Python 3.7+)
-            oldest_key = next(iter(self._cache))
-            del self._cache[oldest_key]
-            
+        # If key exists, remove it first so we can re-insert at end
+        if text_hash in self._cache:
+            del self._cache[text_hash]
+        
+        # Add to end (most recently used)
         self._cache[text_hash] = embedding
+        
+        # Evict oldest if at capacity
+        if len(self._cache) > self.maxsize:
+            # Remove first item (least recently used)
+            self._cache.popitem(last=False)
+            
         self.logger.debug(f"Cached embedding for hash {text_hash[:8]}...")
 
     def clear(self) -> None:

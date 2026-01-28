@@ -44,6 +44,12 @@ class Settings:
     media_video_method: str = "speech"
     # Audio: "speech" (speech recognition)
     media_audio_method: str = "speech"
+    
+    # Caching settings (v2 optimization)
+    cache_enabled: bool = True
+    embedding_cache_size: int = 10000
+    llm_cache_path: str = "/app/data/llm_cache.db"
+    llm_cache_ttl_seconds: int = 604800  # 7 days
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -72,6 +78,10 @@ class Settings:
             media_image_method=os.environ.get("GARUDA_MEDIA_IMAGE_METHOD", "tesseract"),
             media_video_method=os.environ.get("GARUDA_MEDIA_VIDEO_METHOD", "speech"),
             media_audio_method=os.environ.get("GARUDA_MEDIA_AUDIO_METHOD", "speech"),
+            cache_enabled=_as_bool(os.environ.get("GARUDA_CACHE_ENABLED"), True),
+            embedding_cache_size=int(os.environ.get("GARUDA_EMBEDDING_CACHE_SIZE", "10000")),
+            llm_cache_path=os.environ.get("GARUDA_LLM_CACHE_PATH", "/app/data/llm_cache.db"),
+            llm_cache_ttl_seconds=int(os.environ.get("GARUDA_LLM_CACHE_TTL", "604800")),
         )
 
     @property
