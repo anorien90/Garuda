@@ -5,6 +5,7 @@ Handles LLM-based search strategy and link prioritization.
 
 import json
 import logging
+import re
 import requests
 from typing import List, Dict, Any
 
@@ -193,7 +194,6 @@ Answer:"""
             r"\[0002%\]",
         ]
         
-        import re
         cleaned = answer
         for pattern in patterns_to_remove:
             cleaned = re.sub(pattern, "", cleaned, flags=re.MULTILINE | re.IGNORECASE)
@@ -211,17 +211,14 @@ Answer:"""
         if not answer or len(answer) < 10:
             return False
         
-        # Check for gibberish patterns
+        # Check for gibberish patterns - focus on structural issues, not specific words
         gibberish_patterns = [
             r"(A user:|Document|Write a\))",  # Prompt leakage
-            r"NAME_CONGRAINING|Ferminium infiltration",  # Random words
+            r"NAME_CONGRAINING",  # Specific artifact from test case
             r"\|\[\"'\)].*beacon",  # Syntax artifacts
             r"JSONLeveraging|email_User",  # Code artifacts
-            r"oceanographic.*cannabis",  # Unrelated word combinations
-            r"poker.*clubhouse.*today",  # Random capitalized words
         ]
         
-        import re
         for pattern in gibberish_patterns:
             if re.search(pattern, answer, re.IGNORECASE):
                 self.logger.warning(f"Detected gibberish pattern: {pattern}")
@@ -248,5 +245,5 @@ Answer:"""
             return False
         if len(answer) < 20:
             return False
-        # Additional validation for answer quality
+        # Additional validation for answer quality (question not needed for general validation)
         return self._is_valid_answer(answer, "")

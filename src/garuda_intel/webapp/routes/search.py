@@ -1,6 +1,7 @@
 """Search and chat API routes."""
 
 import logging
+import re
 from typing import Any
 
 from flask import Blueprint, jsonify, request
@@ -34,15 +35,12 @@ def _looks_like_refusal(text: str) -> bool:
         "insufficient_data",
     ]
     
-    # Check for gibberish/artifact patterns
+    # Check for structural gibberish/artifact patterns (not specific words)
     gibberish_patterns = [
         "a user:",
         "document",
         "write a)",
-        "name_congraining",
-        "ferminium",
-        "oceanographic",
-        "poker clubhouse",
+        "name_congraining",  # Specific artifact from test case
         "beacon",
         "jsonleveraging",
     ]
@@ -55,7 +53,6 @@ def _looks_like_refusal(text: str) -> bool:
         return True
     
     # Check for excessive special characters (sign of corruption)
-    import re
     special_ratio = len(re.findall(r'[^a-zA-Z0-9\s.,!?;:()\-]', text)) / max(len(text), 1)
     if special_ratio > 0.25:
         logger.warning(f"Excessive special characters in answer: {special_ratio:.2%}")

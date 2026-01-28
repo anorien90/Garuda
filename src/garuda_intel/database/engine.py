@@ -27,6 +27,9 @@ from .repositories.page_repository import PageRepository
 
 
 class SQLAlchemyStore(PersistenceStore):
+    # Constants for graph traversal
+    MAX_RECURSION_DEPTH = 10  # Maximum depth to prevent infinite loops in graph traversal
+    
     def __init__(self, url: str = "sqlite:///crawler.db"):
         self.engine = create_engine(url, future=True)
         self.logger = logging.getLogger(__name__)
@@ -1133,7 +1136,7 @@ class SQLAlchemyStore(PersistenceStore):
                 
                 if entity:
                     visit_key = (str(entity.id), "entity")
-                    if visit_key not in visited and current_depth < 10:  # Prevent infinite recursion
+                    if visit_key not in visited and current_depth < self.MAX_RECURSION_DEPTH:
                         entity_info = {
                             "id": str(entity.id),
                             "type": "entity",
