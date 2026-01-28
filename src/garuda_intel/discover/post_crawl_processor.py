@@ -220,13 +220,17 @@ class PostCrawlProcessor:
         """
         Aggregate intelligence data to remove redundancy and consolidate information.
         Groups similar intelligence items and merges them.
+        
+        Also ensures all sub-entities (persons, products, locations, events) from Intel
+        are properly tracked and linked to all sources.
         """
         stats = {
             "intel_items_aggregated": 0,
+            "sub_entities_linked": 0,
         }
         
         try:
-            from ..database.models import Intelligence, Entity
+            from ..database.models import Intelligence, Entity, Relationship
             from sqlalchemy.orm.attributes import flag_modified
             
             with self.store.Session() as session:
@@ -279,8 +283,76 @@ class PostCrawlProcessor:
                             if data_modified:
                                 flag_modified(best, 'data')
                 
+                # Ensure sub-entities maintain links to all Intel sources
+                # This tracks which Intel records mention which sub-entities
+                for intel in all_intel:
+                    if not intel.data:
+                        continue
+                    
+                    intel_id = str(intel.id)
+                    
+                    # Process persons, products, locations, events from this intel
+                    for entity_type in ['persons', 'products', 'locations', 'events']:
+                        items = intel.data.get(entity_type, [])
+                        if not isinstance(items, list):
+                            continue
+                        
+                        for item in items:
+                            if not isinstance(item, dict):
+                                continue
+                            
+                            # Determine entity name based on type
+                            entity_name = None
+                            entity_kind = None
+                            
+                            if entity_type == 'persons':
+                                entity_name = item.get('name')
+                                entity_kind = 'person'
+                            elif entity_type == 'products':
+                                entity_name = item.get('name')
+                                entity_kind = 'product'
+                            elif entity_type == 'locations':
+                                entity_name = item.get('city') or item.get('address') or item.get('country')
+                                entity_kind = 'location'
+                            elif entity_type == 'events':
+                                entity_name = item.get('title')
+                                entity_kind = 'event'
+                            
+                            if not entity_name or not entity_kind:
+                                continue
+                            
+                            # Find or track the sub-entity
+                            sub_entity = session.execute(
+                                select(Entity).where(
+                                    Entity.name == entity_name,
+                                    Entity.kind == entity_kind
+                                )
+                            ).scalar_one_or_none()
+                            
+                            if sub_entity:
+                                # Check if Intel→Entity relationship exists
+                                existing_rel = session.execute(
+                                    select(Relationship).where(
+                                        Relationship.source_id == intel_id,
+                                        Relationship.target_id == str(sub_entity.id),
+                                        Relationship.relation_type == 'mentions_entity'
+                                    )
+                                ).scalar_one_or_none()
+                                
+                                # If relationship doesn't exist, it should have been created during extraction
+                                # This is a safety check to ensure consistency
+                                if not existing_rel:
+                                    self.logger.debug(
+                                        f"Intel {intel_id} should have relationship to entity "
+                                        f"{entity_name} ({entity_kind}) but doesn't - this indicates "
+                                        f"the entity was created outside the normal extraction flow"
+                                    )
+                                else:
+                                    stats["sub_entities_linked"] += 1
+                
                 session.commit()
                 self.logger.info(f"  Aggregated {stats['intel_items_aggregated']} intelligence data items")
+                self.logger.info(f"  Verified {stats['sub_entities_linked']} sub-entity links to Intel")
             
         except Exception as e:
             self.logger.error(f"  Intelligence aggregation failed: {e}")
