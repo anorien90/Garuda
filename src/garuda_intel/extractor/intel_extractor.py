@@ -12,6 +12,9 @@ from typing import List, Dict, Any, Optional
 from ..types.entity import EntityProfile
 from .text_processor import TextProcessor
 from ..cache import CacheManager
+from .semantic_chunker import SemanticChunker
+from .quality_validator import ExtractionQualityValidator
+from .schema_discovery import DynamicSchemaDiscoverer
 
 
 class IntelExtractor:
@@ -25,6 +28,9 @@ class IntelExtractor:
         max_chunks: int = 20,
         extract_timeout: int = 120,
         cache_manager: Optional[CacheManager] = None,
+        use_semantic_chunking: bool = True,
+        enable_quality_validation: bool = True,
+        enable_schema_discovery: bool = False,
     ):
         self.ollama_url = ollama_url
         self.model = model
@@ -34,6 +40,30 @@ class IntelExtractor:
         self.logger = logging.getLogger(__name__)
         self.text_processor = TextProcessor()
         self.cache_manager = cache_manager
+        self.use_semantic_chunking = use_semantic_chunking
+        self.enable_quality_validation = enable_quality_validation
+        self.enable_schema_discovery = enable_schema_discovery
+        
+        # Initialize Phase 2 enhancements
+        if use_semantic_chunking:
+            self.semantic_chunker = SemanticChunker()
+        else:
+            self.semantic_chunker = None
+            
+        if enable_quality_validation:
+            self.quality_validator = ExtractionQualityValidator(
+                enable_auto_correction=True
+            )
+        else:
+            self.quality_validator = None
+            
+        if enable_schema_discovery:
+            self.schema_discoverer = DynamicSchemaDiscoverer(
+                ollama_url=ollama_url,
+                model=model
+            )
+        else:
+            self.schema_discoverer = None
 
     def extract_intelligence(
         self,
@@ -50,7 +80,16 @@ class IntelExtractor:
         cleaned_text = self.text_processor.clean_text(text)
         cleaned_text = self.text_processor.pretrim_irrelevant_sections(cleaned_text, profile.name)
 
-        chunks = self.text_processor.chunk_text(cleaned_text, self.extraction_chunk_chars, self.max_chunks)
+        # Use semantic chunking if enabled, otherwise use simple chunking
+        if self.use_semantic_chunking and self.semantic_chunker:
+            chunk_objects = self.semantic_chunker.chunk_by_topic(
+                cleaned_text, 
+                max_chunk_size=self.extraction_chunk_chars,
+                preserve_paragraphs=True
+            )
+            chunks = [chunk.text for chunk in chunk_objects[:self.max_chunks]]
+        else:
+            chunks = self.text_processor.chunk_text(cleaned_text, self.extraction_chunk_chars, self.max_chunks)
 
         # Drop chunks that do not mention the entity name at all (reduces junk/prompt bleed).
         name_l = profile.name.lower().strip() if profile.name else ""
@@ -88,6 +127,23 @@ class IntelExtractor:
             bool(aggregate.get("relationships")),
         ]):
             return self._rule_based_intel(profile, cleaned_text, url, page_type)
+
+        # Apply quality validation if enabled
+        if self.enable_quality_validation and self.quality_validator:
+            quality_report = self.quality_validator.validate(
+                aggregate,
+                entity_name=profile.name,
+                entity_type=profile.kind
+            )
+            
+            self.logger.info(
+                f"Quality validation: score={quality_report.overall_score:.2f}, "
+                f"issues={len(quality_report.issues)}"
+            )
+            
+            # Auto-correct issues if any
+            if quality_report.issues:
+                aggregate = self.quality_validator.auto_correct(aggregate, quality_report.issues)
 
         return aggregate
 

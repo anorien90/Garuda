@@ -90,7 +90,7 @@ class DynamicSchemaDiscoverer:
         Returns:
             List of discovered fields with importance and descriptions
         """
-        entity_type = entity_profile.kind or "Unknown"
+        entity_type = str(entity_profile.entity_type.value) if hasattr(entity_profile.entity_type, 'value') else str(entity_profile.entity_type)
         
         # Check cache first
         if self.cache_schemas and entity_type in self._schema_cache:
