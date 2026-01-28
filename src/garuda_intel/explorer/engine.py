@@ -320,6 +320,60 @@ class IntelligentExplorer:
             for (ent_name, ent_kind), ent_id in entity_id_map.items():
                 entity_name_to_id[ent_name.lower()] = ent_id
             
+            # Track entities that need to be created for relationships
+            missing_entities_to_create = []
+            
+            for finding, conf_score in verified_findings_with_scores:
+                relationships = finding.get("relationships", [])
+                if relationships and isinstance(relationships, list):
+                    for rel in relationships:
+                        if not isinstance(rel, dict):
+                            continue
+                        source_name = rel.get("source")
+                        target_name = rel.get("target")
+                        relation_type = rel.get("relation_type") or "related"
+                        description = rel.get("description", "")
+                        source_type = rel.get("source_type", "entity")
+                        target_type = rel.get("target_type", "entity")
+                        
+                        if source_name and target_name:
+                            # Look up entity IDs using lowercase name lookup
+                            source_id = entity_name_to_id.get(source_name.lower())
+                            target_id = entity_name_to_id.get(target_name.lower())
+                            
+                            # Auto-create missing entities to ensure relationships are always persisted
+                            if not source_id:
+                                # Create entity for source if it doesn't exist
+                                source_entity = {
+                                    "name": source_name,
+                                    "kind": source_type,
+                                    "data": {"auto_created_from_relationship": True},
+                                    "page_id": page_uuid,
+                                }
+                                missing_entities_to_create.append(source_entity)
+                            
+                            if not target_id:
+                                # Create entity for target if it doesn't exist
+                                target_entity = {
+                                    "name": target_name,
+                                    "kind": target_type,
+                                    "data": {"auto_created_from_relationship": True},
+                                    "page_id": page_uuid,
+                                }
+                                missing_entities_to_create.append(target_entity)
+            
+            # Create any missing entities
+            if missing_entities_to_create:
+                try:
+                    new_entity_map = self.store.save_entities(missing_entities_to_create) or {}
+                    # Update entity_id_map and entity_name_to_id with newly created entities
+                    entity_id_map.update(new_entity_map)
+                    for (ent_name, ent_kind), ent_id in new_entity_map.items():
+                        entity_name_to_id[ent_name.lower()] = ent_id
+                except Exception as e:
+                    self.logger.warning(f"Failed to create missing entities for relationships: {e}")
+            
+            # Now save all relationships (all entities should exist)
             for finding, conf_score in verified_findings_with_scores:
                 relationships = finding.get("relationships", [])
                 if relationships and isinstance(relationships, list):
@@ -332,11 +386,11 @@ class IntelligentExplorer:
                         description = rel.get("description", "")
                         
                         if source_name and target_name:
-                            # Look up entity IDs using lowercase name lookup
+                            # Look up entity IDs (should now all exist)
                             source_id = entity_name_to_id.get(source_name.lower())
                             target_id = entity_name_to_id.get(target_name.lower())
                             
-                            # If both entities found, save relationship
+                            # Save relationship
                             if source_id and target_id:
                                 try:
                                     # Build metadata, excluding None values
@@ -355,6 +409,12 @@ class IntelligentExplorer:
                                     )
                                 except Exception as e:
                                     self.logger.debug(f"save_relationship failed: {e}")
+                            else:
+                                # Log if we still couldn't find entities (shouldn't happen)
+                                self.logger.warning(
+                                    f"Unable to persist relationship {source_name} -> {target_name} "
+                                    f"({relation_type}): entities not found"
+                                )
 
             if links:
                 try:
