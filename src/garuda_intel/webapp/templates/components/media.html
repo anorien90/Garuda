@@ -87,11 +87,11 @@
         <option value="error">Errors</option>
       </select>
       
-      <button onclick="loadMediaItems()" class="btn-primary">
+      <button onclick="window.loadMediaItems()" class="btn-primary">
         Refresh
       </button>
       
-      <button onclick="processPendingMedia()" class="btn-secondary">
+      <button onclick="window.processPendingMedia()" class="btn-secondary">
         Process Pending (10)
       </button>
     </div>
@@ -167,30 +167,13 @@
   </div>
 </div>
 
-<script>
-// Media processing functions
-const API_KEY = localStorage.getItem('api_key') || '';
+<script type="module">
+// Import shared API functions
+import { fetchWithAPIKey } from '/static/api.js';
 
+// Helper to handle API responses
 async function fetchWithAuth(url, options = {}) {
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers
-  };
-  
-  if (API_KEY) {
-    headers['X-API-Key'] = API_KEY;
-  }
-  
-  const response = await fetch(url, {
-    ...options,
-    headers
-  });
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(error.error || response.statusText);
-  }
-  
+  const response = await fetchWithAPIKey(url, options);
   return response.json();
 }
 
@@ -347,6 +330,10 @@ document.getElementById('manual-media-process-form')?.addEventListener('submit',
     submitBtn.innerHTML = '<svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>Process Media';
   }
 });
+
+// Expose functions to global scope for inline onclick handlers
+window.loadMediaItems = loadMediaItems;
+window.processPendingMedia = processPendingMedia;
 
 // Load stats on page load
 document.addEventListener('DOMContentLoaded', () => {

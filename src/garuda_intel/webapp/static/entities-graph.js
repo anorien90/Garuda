@@ -1,6 +1,6 @@
 import { els, val } from './config.js';
 import { pill, collapsible, renderKeyValTable } from './ui.js';
-import { showModal } from './modals.js';
+import { showModal, updateModal } from './modals.js';
 
 // Color maps for node/edge kinds
 const COLORS = {
@@ -12,6 +12,7 @@ const COLORS = {
   page: '#4366f1',
   intel: '#f43f5e',
   image: '#facc15',
+  media: '#ec4899',
   unknown: '#94a3b8',
 };
 
@@ -21,6 +22,8 @@ const EDGE_COLORS = {
   'intel-mentions': 'rgba(244,63,94,0.32)',
   'intel-primary': 'rgba(244,63,94,0.38)',
   'page-image': 'rgba(250,204,21,0.30)',
+  'page-media': 'rgba(236,72,153,0.30)',
+  'entity-media': 'rgba(236,72,153,0.35)',
   link: 'rgba(99,102,241,0.28)',
   default: 'rgba(148,163,184,0.18)',
 };
@@ -39,6 +42,7 @@ let filteredLinks = [];
 let selectedNodeId = null;
 let hoverTimer = null;
 let activeModalNodeId = null;
+let activeModalId = null;
 
 const filterEls = {
   nodeFilters: () => Array.from(document.querySelectorAll('.entities-node-filter')),
@@ -436,30 +440,42 @@ function renderNodeModalContent(node, links, detail) {
 
 function openNodeModal(node) {
   if (!node) return;
+  // Prevent opening multiple modals for the same node
+  if (activeModalNodeId === node.id) return;
+  
   activeModalNodeId = node.id;
-  showModal({
+  activeModalId = showModal({
     title: node.label || node.id || 'Node detail',
     size: 'lg',
     content: `<div class="text-xs text-slate-500">Loading…</div>`,
+    onClose: () => {
+      // Clear active modal node when modal is closed
+      activeModalNodeId = null;
+      activeModalId = null;
+    }
   });
+  
   fetchNodeDetail(node).then((detail) => {
-    if (activeModalNodeId !== node.id) return;
+    // Only update if this is still the active modal node
+    if (activeModalNodeId !== node.id || !activeModalId) return;
     const content = renderNodeModalContent(node, filteredLinks, detail || {});
-    showModal({
+    // Update the existing modal instead of creating a new one
+    updateModal(activeModalId, {
       title: node.label || node.id || 'Node detail',
-      size: 'lg',
-      content,
+      content
     });
   });
 }
 
 function wireHoverModal(graph) {
   graph.onNodeHover((n) => {
+    // Clear any existing hover timer
     if (hoverTimer) {
       clearTimeout(hoverTimer);
       hoverTimer = null;
     }
-    if (!n) return;
+    // Don't set hover timer if no node or if modal is already open for this node
+    if (!n || activeModalNodeId === n.id) return;
     hoverTimer = setTimeout(() => openNodeModal(n), HOVER_MODAL_DELAY);
   });
   if (els.entitiesGraphCanvas) {
