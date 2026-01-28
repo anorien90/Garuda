@@ -7,8 +7,10 @@ This module handles:
 3. Intelligence data aggregation
 4. Cross-entity inference
 5. Data quality improvements
+6. Embedding generation for semantic search
 """
 
+import json
 import logging
 from typing import Dict, List, Set, Tuple, Optional, Any
 from collections import defaultdict
@@ -19,6 +21,7 @@ from sqlalchemy import select
 from ..database.store import PersistenceStore
 from ..database.relationship_manager import RelationshipManager
 from ..extractor.llm import LLMIntelExtractor
+from ..vector.base import VectorStore
 
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,7 @@ class PostCrawlProcessor:
     - Aggregated (combine related information)
     - Validated (ensure data quality and consistency)
     - Complete (fill gaps through inference where possible)
+    - Indexed (generate embeddings for semantic search)
     """
     
     def __init__(
@@ -38,7 +42,7 @@ class PostCrawlProcessor:
         store: PersistenceStore,
         relationship_manager: Optional[RelationshipManager] = None,
         llm: Optional[LLMIntelExtractor] = None,
-        vector_store = None
+        vector_store: Optional[VectorStore] = None
     ):
         self.store = store
         self.relationship_manager = relationship_manager
@@ -374,6 +378,12 @@ class PostCrawlProcessor:
         """
         Generate embeddings for entities, intelligence, and pages that don't have them.
         This enables semantic search and similarity matching across all data types.
+        
+        Note: This currently regenerates embeddings for all items on each run using upsert,
+        which relies on the vector store to handle duplicates efficiently. For very large
+        datasets (>10K items), consider implementing a tracking mechanism to skip items
+        that already have embeddings (e.g., checking vector store before generating or
+        adding a has_embedding flag to the database models).
         """
         stats = {
             "embeddings_generated": 0,
@@ -385,7 +395,6 @@ class PostCrawlProcessor:
             
         try:
             from ..database.models import Entity, Intelligence, Page
-            import uuid as uuid_module
             
             with self.store.Session() as session:
                 # Generate embeddings for entities
@@ -432,7 +441,6 @@ class PostCrawlProcessor:
                         intel_text = f"{intel.entity_name or ''} {intel.entity_type or ''}"
                         if intel.data:
                             # Add intelligence findings to embedding text
-                            import json
                             data_str = json.dumps(intel.data, ensure_ascii=False)
                             intel_text += f" {data_str[:500]}"  # Limit to avoid too long text
                         
