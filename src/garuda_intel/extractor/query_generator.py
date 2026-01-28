@@ -142,14 +142,22 @@ class QueryGenerator:
             [f"Source: {h.get('url', 'Unknown')}\nSnippet: {h.get('snippet', '')}" for h in context_hits]
         )
 
-        prompt = f"""
-        Answer the question using ONLY the context below.
-        If the context is empty or irrelevant, say "INSUFFICIENT_DATA".
+        prompt = f"""You are a helpful assistant that answers questions based on provided context.
 
-        Question: {question}
-        Context:
-        {context_str}
-        """
+Question: {question}
+
+Context:
+{context_str}
+
+Instructions:
+1. Answer the question using ONLY information from the context above
+2. Provide a clear, coherent, and well-structured answer
+3. If the context doesn't contain relevant information, respond with exactly: "INSUFFICIENT_DATA"
+4. Do NOT make up information or provide unrelated content
+5. Do NOT include instructions, metadata, or formatting artifacts in your answer
+6. Ensure your answer directly addresses the question
+
+Answer:"""
 
         payload = {"model": self.model, "prompt": prompt, "stream": False}
 
@@ -157,11 +165,88 @@ class QueryGenerator:
             resp = requests.post(self.ollama_url, json=payload, timeout=120)
             resp.raise_for_status()
             ans = resp.json().get("response", "").strip()
+            
+            # Clean up any potential artifacts
+            ans = self._clean_answer(ans)
+            
+            # Validate answer quality
+            if not self._is_valid_answer(ans, question):
+                self.logger.warning(f"Generated answer failed validation: {ans[:100]}")
+                return "INSUFFICIENT_DATA"
+            
             return ans if ans else "INSUFFICIENT_DATA"
         except Exception as e:
             self.logger.error(f"Synthesis error: {e}")
             return f"Error: {e}"
 
+    def _clean_answer(self, answer: str) -> str:
+        """Clean up answer text from common LLM artifacts."""
+        if not answer:
+            return ""
+        
+        # Remove common prompt/instruction artifacts
+        patterns_to_remove = [
+            r"^(Answer|Response|Here's the answer|Based on the context):\s*",
+            r"^(A user:|Document|Write|Instructions|NAME_CONGRAINING|#+ Asked as part).*$",
+            r"\|[\"')].*?beacon.*",
+            r"JSONLeveraging.*",
+            r"\[0002%\]",
+        ]
+        
+        import re
+        cleaned = answer
+        for pattern in patterns_to_remove:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.MULTILINE | re.IGNORECASE)
+        
+        # Remove markdown artifacts if they look like noise
+        cleaned = re.sub(r'^#+\s*', '', cleaned, flags=re.MULTILINE)
+        
+        return cleaned.strip()
+    
+    def _is_valid_answer(self, answer: str, question: str) -> bool:
+        """
+        Validate that answer is coherent and relevant.
+        Returns False if answer appears to be gibberish or unrelated.
+        """
+        if not answer or len(answer) < 10:
+            return False
+        
+        # Check for gibberish patterns
+        gibberish_patterns = [
+            r"(A user:|Document|Write a\))",  # Prompt leakage
+            r"NAME_CONGRAINING|Ferminium infiltration",  # Random words
+            r"\|\[\"'\)].*beacon",  # Syntax artifacts
+            r"JSONLeveraging|email_User",  # Code artifacts
+            r"oceanographic.*cannabis",  # Unrelated word combinations
+            r"poker.*clubhouse.*today",  # Random capitalized words
+        ]
+        
+        import re
+        for pattern in gibberish_patterns:
+            if re.search(pattern, answer, re.IGNORECASE):
+                self.logger.warning(f"Detected gibberish pattern: {pattern}")
+                return False
+        
+        # Check for excessive special characters or formatting noise
+        special_char_ratio = len(re.findall(r'[^a-zA-Z0-9\s.,!?;:()\-]', answer)) / max(len(answer), 1)
+        if special_char_ratio > 0.3:  # More than 30% special characters
+            self.logger.warning(f"Excessive special characters: {special_char_ratio:.2%}")
+            return False
+        
+        # Check for reasonable sentence structure
+        sentences = answer.split('.')
+        valid_sentences = [s for s in sentences if len(s.strip()) > 5 and ' ' in s.strip()]
+        if len(valid_sentences) == 0 and len(answer) > 50:
+            self.logger.warning("No valid sentences found in long answer")
+            return False
+        
+        return True
+
     def evaluate_sufficiency(self, answer: str) -> bool:
-        """Checks if the LLM flagged the data as missing."""
-        return "INSUFFICIENT_DATA" not in answer and len(answer) > 20
+        """Checks if the LLM flagged the data as missing or answer is invalid."""
+        if "INSUFFICIENT_DATA" in answer:
+            return False
+        if len(answer) < 20:
+            return False
+        # Additional validation for answer quality
+        return self._is_valid_answer(answer, "")

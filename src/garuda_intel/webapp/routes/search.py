@@ -15,11 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 def _looks_like_refusal(text: str) -> bool:
-    """Check if LLM response looks like a refusal."""
+    """Check if LLM response looks like a refusal or gibberish."""
     if not text:
         return True
     t = text.lower()
-    patterns = [
+    
+    # Check for refusal patterns
+    refusal_patterns = [
         "no information",
         "not have information",
         "unable to find",
@@ -29,8 +31,37 @@ def _looks_like_refusal(text: str) -> bool:
         "no data",
         "insufficient context",
         "based solely on the given data",
+        "insufficient_data",
     ]
-    return any(p in t for p in patterns)
+    
+    # Check for gibberish/artifact patterns
+    gibberish_patterns = [
+        "a user:",
+        "document",
+        "write a)",
+        "name_congraining",
+        "ferminium",
+        "oceanographic",
+        "poker clubhouse",
+        "beacon",
+        "jsonleveraging",
+    ]
+    
+    if any(p in t for p in refusal_patterns):
+        return True
+    
+    if any(p in t for p in gibberish_patterns):
+        logger.warning(f"Detected gibberish in answer: {text[:200]}")
+        return True
+    
+    # Check for excessive special characters (sign of corruption)
+    import re
+    special_ratio = len(re.findall(r'[^a-zA-Z0-9\s.,!?;:()\-]', text)) / max(len(text), 1)
+    if special_ratio > 0.25:
+        logger.warning(f"Excessive special characters in answer: {special_ratio:.2%}")
+        return True
+    
+    return False
 
 
 def init_routes(api_key_required, settings, store, llm, vector_store):

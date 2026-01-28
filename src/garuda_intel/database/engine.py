@@ -408,32 +408,170 @@ class SQLAlchemyStore(PersistenceStore):
             ]
 
     def get_aggregated_entity_data(self, entity_name: str) -> Dict[str, Any]:
-        """Aggregates all Intelligence records for an entity into one JSON structure."""
+        """
+        Aggregates all Intelligence records for an entity into one comprehensive JSON structure.
+        
+        This method:
+        1. Finds all entities matching the name (case-insensitive)
+        2. Merges all intelligence data from all matching entities
+        3. Returns a consolidated view of the entity with all information
+        
+        Args:
+            entity_name: Name of the entity to aggregate
+            
+        Returns:
+            Dictionary with aggregated entity information including:
+            - entities: List of matching entity records
+            - official_names: Set of all official names found
+            - persons: Merged list of all persons
+            - metrics: Merged list of all metrics
+            - financials: Merged list of all financials
+            - products: Merged list of all products
+            - locations: Merged list of all locations
+            - events: Merged list of all events
+            - relationships: Merged list of all relationships
+            - sources_count: Number of intelligence sources
+            - pages: List of pages mentioning this entity
+        """
         with self.Session() as s:
-            stmt = select(Intelligence).where(
-                func.cast(Intelligence.data, String).ilike(f"%{entity_name}%")
-            )
+            # Find all entities matching the name (case-insensitive)
+            entities = s.execute(
+                select(Entity).where(
+                    func.lower(Entity.name).like(f"%{entity_name.lower()}%")
+                )
+            ).scalars().all()
+            
+            if not entities:
+                return {
+                    "entities": [],
+                    "official_names": [],
+                    "persons": [],
+                    "metrics": [],
+                    "financials": [],
+                    "products": [],
+                    "locations": [],
+                    "events": [],
+                    "relationships": [],
+                    "sources_count": 0,
+                    "pages": [],
+                }
+            
+            entity_ids = [str(e.id) for e in entities]
+            
+            # Get all intelligence for these entities
+            stmt = select(Intelligence).where(Intelligence.entity_id.in_(entity_ids))
             records = s.execute(stmt).scalars().all()
 
             aggregated = {
+                "entities": [
+                    {
+                        "id": str(e.id),
+                        "name": e.name,
+                        "kind": e.kind,
+                        "metadata": _as_dict(e.metadata) if hasattr(e, 'metadata') else {},
+                    }
+                    for e in entities
+                ],
                 "official_names": set(),
                 "persons": [],
                 "metrics": [],
                 "financials": [],
                 "products": [],
+                "locations": [],
+                "events": [],
+                "relationships": [],
                 "sources_count": len(records),
+                "pages": [],
             }
+
+            # Track unique items by key to avoid duplicates
+            seen_persons = set()
+            seen_products = set()
+            seen_locations = set()
+            seen_events = set()
+            seen_metrics = set()
+            seen_financials = set()
+            seen_relationships = set()
+            seen_pages = set()
 
             for r in records:
                 data = _as_dict(r.data)
+                
+                # Extract basic info
                 bi = data.get("basic_info", {})
                 if bi.get("official_name"):
                     aggregated["official_names"].add(bi["official_name"])
 
-                for key in ["persons", "metrics", "financials", "products"]:
-                    items = data.get(key, [])
-                    if isinstance(items, list):
-                        aggregated[key].extend(items)
+                # Merge persons (deduplicate by name)
+                for person in data.get("persons", []):
+                    if isinstance(person, dict) and person.get("name"):
+                        person_key = person["name"].lower()
+                        if person_key not in seen_persons:
+                            seen_persons.add(person_key)
+                            aggregated["persons"].append(person)
+
+                # Merge products (deduplicate by name)
+                for product in data.get("products", []):
+                    if isinstance(product, dict) and product.get("name"):
+                        product_key = product["name"].lower()
+                        if product_key not in seen_products:
+                            seen_products.add(product_key)
+                            aggregated["products"].append(product)
+
+                # Merge locations (deduplicate by address/city/country combination)
+                for location in data.get("locations", []):
+                    if isinstance(location, dict):
+                        location_key = f"{location.get('address', '')}-{location.get('city', '')}-{location.get('country', '')}".lower()
+                        if location_key not in seen_locations and location_key != "--":
+                            seen_locations.add(location_key)
+                            aggregated["locations"].append(location)
+
+                # Merge events (deduplicate by title+date)
+                for event in data.get("events", []):
+                    if isinstance(event, dict) and event.get("title"):
+                        event_key = f"{event.get('title', '')}-{event.get('date', '')}".lower()
+                        if event_key not in seen_events:
+                            seen_events.add(event_key)
+                            aggregated["events"].append(event)
+
+                # Merge metrics (deduplicate by metric+value)
+                for metric in data.get("metrics", []):
+                    if isinstance(metric, dict):
+                        metric_key = f"{metric.get('metric', '')}-{metric.get('value', '')}".lower()
+                        if metric_key not in seen_metrics and metric_key != "-":
+                            seen_metrics.add(metric_key)
+                            aggregated["metrics"].append(metric)
+
+                # Merge financials (deduplicate by year+type)
+                for financial in data.get("financials", []):
+                    if isinstance(financial, dict):
+                        financial_key = f"{financial.get('year', '')}-{financial.get('type', '')}".lower()
+                        if financial_key not in seen_financials and financial_key != "-":
+                            seen_financials.add(financial_key)
+                            aggregated["financials"].append(financial)
+
+                # Merge relationships
+                for relationship in data.get("relationships", []):
+                    if isinstance(relationship, dict):
+                        rel_key = f"{relationship.get('entity', '')}-{relationship.get('relation', '')}".lower()
+                        if rel_key not in seen_relationships and rel_key != "-":
+                            seen_relationships.add(rel_key)
+                            aggregated["relationships"].append(relationship)
+
+                # Get page information
+                if r.page_id:
+                    page_id = str(r.page_id)
+                    if page_id not in seen_pages:
+                        seen_pages.add(page_id)
+                        page = s.execute(select(Page).where(Page.id == r.page_id)).scalar_one_or_none()
+                        if page:
+                            aggregated["pages"].append({
+                                "id": str(page.id),
+                                "url": page.url,
+                                "title": page.title if hasattr(page, 'title') else None,
+                                "page_type": page.page_type if hasattr(page, 'page_type') else None,
+                                "score": page.score if hasattr(page, 'score') else None,
+                            })
 
             aggregated["official_names"] = list(aggregated["official_names"])
             return aggregated
@@ -671,90 +809,341 @@ class SQLAlchemyStore(PersistenceStore):
         entity_id: str, 
         direction: str = "both", 
         max_depth: int = 1,
+        include_pages: bool = True,
+        include_intel: bool = True,
     ) -> Dict:
         """
-        Traverse relationship graph bidirectionally.
+        Traverse relationship graph bidirectionally with full context.
+        
+        This method builds a complete picture showing:
+        - Entity → Pages (where entity is mentioned)
+        - Page → Intel (intelligence extracted from pages)
+        - Intel → Sub-Entities (persons, locations, products mentioned in intel)
+        - Entity → Entity relationships (direct connections)
         
         Args:
             entity_id: Starting entity UUID
             direction: "outgoing", "incoming", or "both"
             max_depth: Maximum traversal depth (default 1)
+            include_pages: Include pages connected to entities
+            include_intel: Include intelligence items connected to entities/pages
             
         Returns:
             Dictionary containing:
             - entity: The root entity info
             - outgoing: List of outgoing relationships
             - incoming: List of incoming relationships
+            - pages: List of pages mentioning this entity
+            - intelligence: List of intelligence items about this entity
             - depth: Current depth
         """
-        def _traverse(eid: str, current_depth: int, visited: set) -> Dict:
-            if current_depth > max_depth or eid in visited:
-                return {"entity_id": eid, "outgoing": [], "incoming": [], "depth": current_depth}
+        def _traverse(eid: str, eid_type: str, current_depth: int, visited: set) -> Dict:
+            """
+            Traverse from any entry (Entity, Page, or Intelligence).
             
-            visited.add(eid)
+            Args:
+                eid: Entity/Page/Intelligence ID
+                eid_type: Type of entry ("entity", "page", "intel")
+                current_depth: Current traversal depth
+                visited: Set of visited (id, type) tuples
+            """
+            visit_key = (eid, eid_type)
+            if current_depth > max_depth or visit_key in visited:
+                return {"id": eid, "type": eid_type, "depth": current_depth}
+            
+            visited.add(visit_key)
             
             with self.Session() as s:
-                entity = s.execute(select(Entity).where(Entity.id == eid)).scalar_one_or_none()
-                if not entity:
-                    return {"entity_id": eid, "outgoing": [], "incoming": [], "depth": current_depth}
+                if eid_type == "entity":
+                    return self._traverse_entity(s, eid, current_depth, visited, direction, include_pages, include_intel)
+                elif eid_type == "page":
+                    return self._traverse_page(s, eid, current_depth, visited, include_intel)
+                elif eid_type == "intel":
+                    return self._traverse_intel(s, eid, current_depth, visited)
+                else:
+                    return {"id": eid, "type": eid_type, "depth": current_depth}
+        
+        return _traverse(entity_id, "entity", 0, set())
+    
+    def _traverse_entity(self, session, entity_id: str, current_depth: int, visited: set, 
+                        direction: str, include_pages: bool, include_intel: bool) -> Dict:
+        """Traverse from an Entity node."""
+        entity = session.execute(select(Entity).where(Entity.id == entity_id)).scalar_one_or_none()
+        if not entity:
+            return {"id": entity_id, "type": "entity", "depth": current_depth}
+        
+        result = {
+            "id": str(entity.id),
+            "type": "entity",
+            "name": entity.name,
+            "kind": entity.kind,
+            "metadata": _as_dict(entity.metadata) if hasattr(entity, 'metadata') else {},
+            "depth": current_depth,
+            "outgoing": [],
+            "incoming": [],
+            "pages": [],
+            "intelligence": [],
+        }
+        
+        # Get Entity → Entity relationships
+        if direction in ["outgoing", "both"]:
+            outgoing = session.execute(
+                select(Relationship).where(Relationship.source_id == entity_id)
+            ).scalars().all()
+            
+            for rel in outgoing:
+                target = session.execute(
+                    select(Entity).where(Entity.id == rel.target_id)
+                ).scalar_one_or_none()
                 
-                result = {
-                    "entity_id": str(entity.id),
-                    "name": entity.name,
-                    "kind": entity.kind,
-                    "data": _as_dict(entity.data),
-                    "depth": current_depth,
-                    "outgoing": [],
-                    "incoming": [],
+                if target:
+                    rel_info = {
+                        "relation_type": rel.relation_type,
+                        "target_id": str(rel.target_id),
+                        "target_name": target.name,
+                        "target_kind": target.kind,
+                        "metadata": _as_dict(rel.metadata_json) if hasattr(rel, 'metadata_json') else {},
+                    }
+                    
+                    # Recursive traversal if depth allows
+                    if current_depth < max_depth:
+                        visit_key = (str(rel.target_id), "entity")
+                        if visit_key not in visited:
+                            rel_info["nested"] = self._traverse_entity(
+                                session, str(rel.target_id), current_depth + 1, visited,
+                                direction, include_pages, include_intel
+                            )
+                    
+                    result["outgoing"].append(rel_info)
+        
+        if direction in ["incoming", "both"]:
+            incoming = session.execute(
+                select(Relationship).where(Relationship.target_id == entity_id)
+            ).scalars().all()
+            
+            for rel in incoming:
+                source = session.execute(
+                    select(Entity).where(Entity.id == rel.source_id)
+                ).scalar_one_or_none()
+                
+                if source:
+                    rel_info = {
+                        "relation_type": rel.relation_type,
+                        "source_id": str(rel.source_id),
+                        "source_name": source.name,
+                        "source_kind": source.kind,
+                        "metadata": _as_dict(rel.metadata_json) if hasattr(rel, 'metadata_json') else {},
+                    }
+                    
+                    # Recursive traversal if depth allows
+                    if current_depth < max_depth:
+                        visit_key = (str(rel.source_id), "entity")
+                        if visit_key not in visited:
+                            rel_info["nested"] = self._traverse_entity(
+                                session, str(rel.source_id), current_depth + 1, visited,
+                                direction, include_pages, include_intel
+                            )
+                    
+                    result["incoming"].append(rel_info)
+        
+        # Get pages mentioning this entity
+        if include_pages and current_depth < max_depth:
+            # Find relationships where Page → Entity
+            page_rels = session.execute(
+                select(Relationship).where(
+                    Relationship.target_id == entity_id,
+                    Relationship.relation_type.in_(['page_mentions_entity', 'page-entity'])
+                )
+            ).scalars().all()
+            
+            for rel in page_rels:
+                page = session.execute(select(Page).where(Page.id == rel.source_id)).scalar_one_or_none()
+                if page:
+                    page_info = {
+                        "id": str(page.id),
+                        "type": "page",
+                        "url": page.url,
+                        "title": page.title if hasattr(page, 'title') else None,
+                        "page_type": page.page_type if hasattr(page, 'page_type') else None,
+                        "score": page.score if hasattr(page, 'score') else None,
+                    }
+                    
+                    # Traverse page to get its intel
+                    if include_intel:
+                        visit_key = (str(page.id), "page")
+                        if visit_key not in visited:
+                            page_info["details"] = self._traverse_page(
+                                session, str(page.id), current_depth + 1, visited, include_intel
+                            )
+                    
+                    result["pages"].append(page_info)
+        
+        # Get intelligence about this entity
+        if include_intel:
+            intel_items = session.execute(
+                select(Intelligence).where(Intelligence.entity_id == entity_id)
+            ).scalars().all()
+            
+            for intel in intel_items:
+                intel_info = {
+                    "id": str(intel.id),
+                    "type": "intel",
+                    "confidence": intel.confidence if hasattr(intel, 'confidence') else None,
+                    "data": _as_dict(intel.data) if intel.data else {},
+                    "page_id": str(intel.page_id) if intel.page_id else None,
                 }
                 
-                # Get outgoing relationships
-                if direction in ["outgoing", "both"]:
-                    outgoing = s.execute(
-                        select(Relationship).where(Relationship.source_id == eid)
-                    ).scalars().all()
-                    
-                    for rel in outgoing:
-                        target = s.execute(select(Entity).where(Entity.id == rel.target_id)).scalar_one_or_none()
-                        rel_info = {
-                            "relation_type": rel.relation_type,
-                            "target_id": str(rel.target_id),
-                            "target_name": target.name if target else None,
-                            "target_kind": target.kind if target else None,
-                            "metadata": _as_dict(rel.metadata_json),
-                        }
-                        
-                        # Recursive traversal if depth allows
-                        if current_depth < max_depth:
-                            rel_info["nested"] = _traverse(str(rel.target_id), current_depth + 1, visited)
-                        
-                        result["outgoing"].append(rel_info)
+                # Extract sub-entities from intel if depth allows
+                if current_depth < max_depth:
+                    visit_key = (str(intel.id), "intel")
+                    if visit_key not in visited:
+                        intel_info["sub_entities"] = self._extract_sub_entities_from_intel(
+                            session, intel, current_depth + 1, visited
+                        )
                 
-                # Get incoming relationships
-                if direction in ["incoming", "both"]:
-                    incoming = s.execute(
-                        select(Relationship).where(Relationship.target_id == eid)
-                    ).scalars().all()
-                    
-                    for rel in incoming:
-                        source = s.execute(select(Entity).where(Entity.id == rel.source_id)).scalar_one_or_none()
-                        rel_info = {
-                            "relation_type": rel.relation_type,
-                            "source_id": str(rel.source_id),
-                            "source_name": source.name if source else None,
-                            "source_kind": source.kind if source else None,
-                            "metadata": _as_dict(rel.metadata_json),
-                        }
-                        
-                        # Recursive traversal if depth allows
-                        if current_depth < max_depth:
-                            rel_info["nested"] = _traverse(str(rel.source_id), current_depth + 1, visited)
-                        
-                        result["incoming"].append(rel_info)
-                
-                return result
+                result["intelligence"].append(intel_info)
         
-        return _traverse(entity_id, 0, set())
+        return result
+    
+    def _traverse_page(self, session, page_id: str, current_depth: int, visited: set, include_intel: bool) -> Dict:
+        """Traverse from a Page node."""
+        page = session.execute(select(Page).where(Page.id == page_id)).scalar_one_or_none()
+        if not page:
+            return {"id": page_id, "type": "page", "depth": current_depth}
+        
+        result = {
+            "id": str(page.id),
+            "type": "page",
+            "url": page.url,
+            "title": page.title if hasattr(page, 'title') else None,
+            "page_type": page.page_type if hasattr(page, 'page_type') else None,
+            "depth": current_depth,
+            "intelligence": [],
+            "linked_pages": [],
+        }
+        
+        # Get intelligence extracted from this page
+        if include_intel:
+            intel_items = session.execute(
+                select(Intelligence).where(Intelligence.page_id == page_id)
+            ).scalars().all()
+            
+            for intel in intel_items:
+                intel_info = {
+                    "id": str(intel.id),
+                    "type": "intel",
+                    "confidence": intel.confidence if hasattr(intel, 'confidence') else None,
+                    "data": _as_dict(intel.data) if intel.data else {},
+                }
+                
+                # Extract sub-entities from intel if depth allows
+                if current_depth < max_depth:
+                    visit_key = (str(intel.id), "intel")
+                    if visit_key not in visited:
+                        intel_info["sub_entities"] = self._extract_sub_entities_from_intel(
+                            session, intel, current_depth + 1, visited
+                        )
+                
+                result["intelligence"].append(intel_info)
+        
+        # Get links from this page to other pages
+        if current_depth < max_depth:
+            links = session.execute(
+                select(Link).where(Link.from_page == page.url).limit(10)
+            ).scalars().all()
+            
+            for link in links:
+                linked_page = session.execute(
+                    select(Page).where(Page.url == link.to_url)
+                ).scalar_one_or_none()
+                
+                if linked_page:
+                    result["linked_pages"].append({
+                        "id": str(linked_page.id),
+                        "url": linked_page.url,
+                        "title": linked_page.title if hasattr(linked_page, 'title') else None,
+                    })
+        
+        return result
+    
+    def _traverse_intel(self, session, intel_id: str, current_depth: int, visited: set) -> Dict:
+        """Traverse from an Intelligence node."""
+        intel = session.execute(select(Intelligence).where(Intelligence.id == intel_id)).scalar_one_or_none()
+        if not intel:
+            return {"id": intel_id, "type": "intel", "depth": current_depth}
+        
+        result = {
+            "id": str(intel.id),
+            "type": "intel",
+            "confidence": intel.confidence if hasattr(intel, 'confidence') else None,
+            "data": _as_dict(intel.data) if intel.data else {},
+            "page_id": str(intel.page_id) if intel.page_id else None,
+            "entity_id": str(intel.entity_id) if intel.entity_id else None,
+            "depth": current_depth,
+            "sub_entities": [],
+        }
+        
+        # Extract sub-entities from intel
+        if current_depth < max_depth:
+            result["sub_entities"] = self._extract_sub_entities_from_intel(
+                session, intel, current_depth + 1, visited
+            )
+        
+        return result
+    
+    def _extract_sub_entities_from_intel(self, session, intel: Intelligence, current_depth: int, visited: set) -> List[Dict]:
+        """Extract and traverse sub-entities mentioned in intelligence data."""
+        sub_entities = []
+        
+        if not intel.data:
+            return sub_entities
+        
+        # Process persons, products, locations, events
+        for entity_type in ['persons', 'products', 'locations', 'events']:
+            items = intel.data.get(entity_type, [])
+            if not isinstance(items, list):
+                continue
+            
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                
+                # Get entity name
+                entity_name = None
+                if entity_type == 'persons':
+                    entity_name = item.get('name')
+                elif entity_type == 'products':
+                    entity_name = item.get('name')
+                elif entity_type == 'locations':
+                    entity_name = item.get('address') or item.get('city') or item.get('country')
+                elif entity_type == 'events':
+                    entity_name = item.get('title')
+                
+                if not entity_name:
+                    continue
+                
+                # Look up entity
+                entity_kind = entity_type.rstrip('s')  # persons -> person, etc.
+                entity = session.execute(
+                    select(Entity).where(
+                        func.lower(Entity.name) == entity_name.lower(),
+                        Entity.kind == entity_kind
+                    )
+                ).scalar_one_or_none()
+                
+                if entity:
+                    visit_key = (str(entity.id), "entity")
+                    if visit_key not in visited and current_depth < 10:  # Prevent infinite recursion
+                        entity_info = {
+                            "id": str(entity.id),
+                            "type": "entity",
+                            "name": entity.name,
+                            "kind": entity.kind,
+                            "data_from_intel": item,
+                        }
+                        sub_entities.append(entity_info)
+        
+        return sub_entities
 
     def deduplicate_entities(self, threshold: float = 0.85, embedder=None) -> Dict[str, str]:
         """
