@@ -143,3 +143,5 @@ src/garuda_intel/webapp/templates/components/settings.html
 src/garuda_intel/webapp/templates/components/status.html
 src/garuda_intel/webapp/utils/__init__.py
 src/garuda_intel/webapp/utils/helpers.py
+tests/test_adaptive_crawler.py
+tests/test_seed_discovery.py

@@ -5,7 +5,7 @@ import time
 from typing import List
 from urllib.parse import urlparse
 from sqlalchemy import select
-from ddgs import DDGS
+from duckduckgo_search import DDGS
 from ..database.engine import SQLAlchemyStore
 from ..database.models import Link, Page
 
@@ -31,17 +31,40 @@ def collect_candidates(queries, seed_limit) -> list:
 
 
 def collect_candidates_simple(queries, limit=5) -> list:
-    """Helper to actually fetch URLs from DuckDuckGo."""
+    """
+    Fetch candidate URLs from DuckDuckGo.
+    
+    Returns:
+        List of dicts with 'href' key and optional 'title'/'body' keys.
+    """
     logger = logging.getLogger(__name__)
     candidates = []
     with DDGS() as ddgs:
         for q in queries:
             try:
                 results = list(ddgs.text(q, max_results=3))
-                candidates.extend([r["href"] for r in results if "href" in r])
+                # Return full result dicts, not just hrefs
+                for r in results:
+                    if isinstance(r, dict) and "href" in r:
+                        candidates.append(r)
+                    elif isinstance(r, str):
+                        # Handle case where result is a string (URL)
+                        candidates.append({"href": r})
+                    else:
+                        logger.debug(f"Skipping non-dict, non-string result: {type(r)}")
             except Exception as e:
-                logger.warning(f"Search failed for '{q}': {e}")
-    return list(set(candidates))[:limit]
+                logger.warning(f"Search failed for query '{q}': {e}")
+    
+    # Deduplicate by href
+    seen = set()
+    deduped = []
+    for c in candidates:
+        href = c.get("href")
+        if href and href not in seen:
+            seen.add(href)
+            deduped.append(c)
+    
+    return deduped[:limit]
 
 
 def load_seeds_from_db(store: SQLAlchemyStore, from_links: bool, from_pages: bool, domains, patterns, min_score, limit):

@@ -106,7 +106,7 @@ target-version = ['py310']
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "--cov=garuda_intel --tb=short -ra -q"
+addopts = "--tb=short -ra -q"
 testpaths = ["tests"]
 
 [tool.coverage.run]
