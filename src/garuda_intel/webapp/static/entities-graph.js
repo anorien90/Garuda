@@ -28,6 +28,9 @@ const EDGE_COLORS = {
   'page-media': 'rgba(236,72,153,0.30)',
   'entity-media': 'rgba(236,72,153,0.35)',
   link: 'rgba(99,102,241,0.28)',
+  relationship: 'rgba(139,92,246,0.35)',
+  'seed-entity': 'rgba(132,204,22,0.30)',
+  'semantic-hit': 'rgba(251,191,36,0.30)',
   default: 'rgba(148,163,184,0.18)',
 };
 
@@ -798,14 +801,21 @@ async function renderGraph() {
     .linkDirectionalParticleWidth((l) => Math.max(PARTICLE_WIDTH_BASE, (l.weight || 1) * 0.6))
     .linkDirectionalParticleSpeed(() => PARTICLE_SPEED)
     .linkLabel(
-      (l) =>
-        `${l.kind || 'link'}${l.weight ? ` (w:${l.weight})` : ''}${
+      (l) => {
+        // For relationship edges, show the specific relation_type from metadata
+        const displayKind = l.kind === 'relationship' && l.meta?.relation_type 
+          ? l.meta.relation_type 
+          : l.kind || 'link';
+        
+        return `${displayKind}${l.weight ? ` (w:${l.weight})` : ''}${
           l.meta && Object.keys(l.meta).length
             ? `\n${Object.entries(l.meta)
+                .filter(([k]) => k !== 'relation_type') // Don't duplicate relation_type
                 .map(([k, v]) => `${k}: ${fmt(v)}`)
                 .join('\n')}`
             : ''
-        }`
+        }`;
+      }
     )
     .onNodeClick((n) => {
       selectedNodeId = n.id;
