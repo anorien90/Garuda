@@ -10,6 +10,7 @@ const COLORS = {
   product: '#f97316',
   event: '#06b6d4',
   'semantic-snippet': '#fbbf24',
+  seed: '#84cc16',
   entity: '#14b8a6',
   page: '#4366f1',
   intel: '#f43f5e',

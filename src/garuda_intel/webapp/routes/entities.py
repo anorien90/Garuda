@@ -49,11 +49,11 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
         node_type_filters = _parse_list_param(
             request.args.get("node_types"),
-            default={"entity", "person", "org", "organization", "corporation", "location", "product", "page", "intel", "image", "media", "event", "semantic-snippet"},
+            default={"entity", "person", "org", "organization", "corporation", "location", "product", "page", "intel", "image", "media", "event", "semantic-snippet", "seed"},
         )
         edge_kind_filters = _parse_list_param(
             request.args.get("edge_kinds"),
-            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet"},
+            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet", "seed-entity"},
         )
 
         emit_event(
@@ -255,6 +255,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                             "source_id": media_id
                         }
                         ensure_node(media_id, media_label, "media", meta=media_meta)
+                        entry_type_map[media_id] = "media"
                         
                         # Link to source page
                         if media_row.source_page_id:
@@ -265,6 +266,28 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                         if media_row.entity_id:
                             entity_id = str(media_row.entity_id)
                             add_edge(entity_id, media_id, kind="entity-media", weight=1)
+                
+                # Add seed nodes to the graph (if Seed model exists)
+                if hasattr(db_models, 'Seed'):
+                    for seed_row in session.query(db_models.Seed).limit(500).all():
+                        seed_id = str(seed_row.id)
+                        seed_label = seed_row.query[:50] if seed_row.query else "seed"
+                        seed_meta = {
+                            "query": seed_row.query,
+                            "entity_type": seed_row.entity_type,
+                            "source": seed_row.source,
+                            "source_id": seed_id
+                        }
+                        ensure_node(seed_id, seed_label, "seed", meta=seed_meta)
+                        entry_type_map[seed_id] = "seed"
+                        
+                        # If the seed has an associated entity_type, try to link to matching entities
+                        if seed_row.entity_type and seed_row.query:
+                            # Look for entities that match the seed query
+                            seed_canon = _canonical(seed_row.query)
+                            if seed_canon in entity_ids:
+                                entity_id = entity_ids[seed_canon]
+                                add_edge(seed_id, entity_id, kind="seed-entity", weight=1)
 
                 for r in _qdrant_semantic_page_hits(q, vector_store, llm):
                     p = r.payload or {}
