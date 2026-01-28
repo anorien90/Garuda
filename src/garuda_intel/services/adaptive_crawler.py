@@ -38,7 +38,8 @@ class AdaptiveCrawlerService:
         self, 
         store: PersistenceStore,
         llm: LLMIntelExtractor,
-        crawl_learner: CrawlLearner
+        crawl_learner: CrawlLearner,
+        vector_store=None
     ):
         """
         Initialize the adaptive crawler.
@@ -47,10 +48,12 @@ class AdaptiveCrawlerService:
             store: Database store
             llm: LLM extractor for intelligence gathering
             crawl_learner: Learner tracking crawl patterns
+            vector_store: Optional vector store for embeddings
         """
         self.store = store
         self.llm = llm
         self.crawl_learner = crawl_learner
+        self.vector_store = vector_store
         self.gap_analyzer = EntityGapAnalyzer(store)
         self.crawler = EntityAwareCrawler(store, llm)
         self.logger = logging.getLogger(__name__)
@@ -217,7 +220,7 @@ class AdaptiveCrawlerService:
                 max_depth=max_depth,
                 score_threshold=30.0,  # Moderate threshold
                 persistence=self.store,
-                vector_store=None,  # Vector store not needed for basic crawl
+                vector_store=self.vector_store,  # Use the vector store for embeddings
                 llm_extractor=self.llm,
                 enable_llm_link_rank=False  # Disable for speed
             )

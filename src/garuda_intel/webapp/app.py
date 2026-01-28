@@ -69,7 +69,7 @@ relationship_manager = RelationshipManager(store, llm)
 entity_crawler = EntityAwareCrawler(store, llm)
 crawl_learner = CrawlLearner(store)
 gap_analyzer = EntityGapAnalyzer(store)
-adaptive_crawler = AdaptiveCrawlerService(store, llm, crawl_learner)
+adaptive_crawler = AdaptiveCrawlerService(store, llm, crawl_learner, vector_store)
 media_processor = MediaProcessor(
     llm, 
     enable_processing=settings.media_processing_enabled,
