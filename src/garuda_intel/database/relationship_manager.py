@@ -413,7 +413,7 @@ Only include relationships where confidence >= {min_confidence}.
                         report["issues"].append({
                             "id": str(rel.id),
                             "type": "circular",
-                            "message": f"Entity {rel.source_id} relates to itself"
+                            "message": f"Node {rel.source_id} relates to itself"
                         })
                         
                         if fix_invalid:
@@ -504,10 +504,18 @@ Only include relationships where confidence >= {min_confidence}.
         
         try:
             with self.store.Session() as session:
-                # Get all relationships that are missing type information
+                # Get only relationships that are missing type information
+                # This is more efficient than checking all relationships
                 relationships = session.execute(
-                    select(Relationship)
+                    select(Relationship).where(
+                        (Relationship.source_type.is_(None)) | 
+                        (Relationship.target_type.is_(None))
+                    )
                 ).scalars().all()
+                
+                if not relationships:
+                    self.logger.info("No relationships need type backfill")
+                    return 0
                 
                 for rel in relationships:
                     needs_update = False

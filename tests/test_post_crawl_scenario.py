@@ -305,6 +305,7 @@ def test_post_crawl_with_actual_orphans():
     
     print(f"✓ Orphan detection works: {validation_report['orphaned']} orphans removed")
     print(f"✓ Final relationship count: {final_count}")
+    print(f"  Note: Circular relationship also removed, so final count is 0 (1 circular + 2 orphaned = 3 removed)")
 
 
 if __name__ == "__main__":

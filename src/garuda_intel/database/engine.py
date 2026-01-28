@@ -448,7 +448,9 @@ class SQLAlchemyStore(PersistenceStore):
                 target_type = target_entry
         except Exception as e:
             # If we can't determine the type, continue without it for backward compatibility
-            pass
+            # This allows relationships to be created even if type lookup fails
+            import logging
+            logging.getLogger(__name__).debug(f"Could not determine relationship types: {e}")
         
         rel = Relationship(
             id=_uuid4(),

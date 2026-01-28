@@ -96,7 +96,7 @@ def test_type_tracking_mixed_nodes():
     # Create relationships between different node types
     rel1_id = store.save_relationship(page_id, entity_id, "mentions")
     rel2_id = store.save_relationship(seed_id, page_id, "discovered")
-    rel3_id = store.save_relationship(entity_id, entity_id, "same_as")  # Self-reference (should be circular)
+    rel3_id = store.save_relationship(entity_id, entity_id, "same_as")  # Self-reference (circular - will be flagged)
     
     print(f"✓ Created 3 relationships with mixed types")
     
