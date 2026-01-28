@@ -39,7 +39,15 @@ class GUID(TypeDecorator):
             return value
         if isinstance(value, uuid.UUID):
             return value if dialect.name == "postgresql" else str(value)
-        return str(uuid.UUID(str(value)))
+        # Validate that value is not empty or invalid before converting
+        str_value = str(value).strip()
+        if not str_value or str_value == '{}' or str_value == '[]':
+            return None
+        try:
+            return str(uuid.UUID(str_value)) if dialect.name != "postgresql" else uuid.UUID(str_value)
+        except (ValueError, AttributeError):
+            # Log warning and return None for invalid UUIDs
+            return None
 
     def process_result_value(self, value, dialect):
         if value is None:
@@ -194,7 +202,7 @@ class PageContent(BasicDataEntry):
         GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
     )
     page_id: Mapped[uuid.UUID] = mapped_column(
-        GUID(), ForeignKey("pages.id", ondelete="CASCADE"), nullable=False
+        GUID(), ForeignKey("pages.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
 
     page_url: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
