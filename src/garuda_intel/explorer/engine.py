@@ -53,6 +53,7 @@ class IntelligentExplorer:
         scorer_patterns: List[Dict] = None,
         scorer_domains: List[Dict] = None,
         enable_llm_link_rank: bool = True,
+        media_extractor = None,
     ):
         self.profile = profile
         self.use_selenium = use_selenium
@@ -66,6 +67,7 @@ class IntelligentExplorer:
         self.llm_extractor = llm_extractor
         self.store = persistence
         self.vector_store = vector_store
+        self.media_extractor = media_extractor
         
         # Relationship Management (Phase 3)
         self.relationship_manager = None
@@ -295,6 +297,19 @@ class IntelligentExplorer:
         if self.store:
             page_uuid = self.store.save_page(page_record)
             page_record["id"] = page_uuid
+            
+            # Extract media from page if media extractor is available
+            if self.media_extractor and html:
+                try:
+                    import uuid
+                    # Convert page_uuid string to UUID if needed
+                    if isinstance(page_uuid, str):
+                        page_uuid_obj = uuid.UUID(page_uuid)
+                    else:
+                        page_uuid_obj = page_uuid
+                    self.media_extractor.extract_media_from_page(page_uuid_obj, url, html)
+                except Exception as e:
+                    logging.getLogger(__name__).warning(f"Media extraction failed for {url}: {e}")
 
             if extracted_entities:
                 entity_id_map = self.store.save_entities(extracted_entities) or {}
