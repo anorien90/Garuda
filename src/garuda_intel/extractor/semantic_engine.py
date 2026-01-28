@@ -12,6 +12,7 @@ from sentence_transformers import SentenceTransformer
 
 from ..types.entity import EntityType
 from .text_processor import TextProcessor
+from ..cache import CacheManager
 
 
 class SemanticEngine:
@@ -26,6 +27,7 @@ class SemanticEngine:
         max_window_embeddings: int = 200,
         max_total_embeddings: int = 1200,
         min_text_length_for_embedding: int = 10,
+        cache_manager: Optional[CacheManager] = None,
     ):
         self.logger = logging.getLogger(__name__)
         self.embedding_model_name = embedding_model
@@ -37,6 +39,7 @@ class SemanticEngine:
         self.max_total_embeddings = max_total_embeddings
         self.min_text_length_for_embedding = min_text_length_for_embedding
         self.text_processor = TextProcessor()
+        self.cache_manager = cache_manager
 
         if SentenceTransformer:
             try:
@@ -51,8 +54,21 @@ class SemanticEngine:
         """Generate embedding vector for text."""
         if not self._embedder or not text or len(text) < self.min_text_length_for_embedding:
             return []
+        
+        # Check cache first
+        if self.cache_manager:
+            cached_embedding = self.cache_manager.get_embedding(text)
+            if cached_embedding is not None:
+                return cached_embedding
+        
         try:
-            return self._embedder.encode(text, normalize_embeddings=True).tolist()
+            embedding = self._embedder.encode(text, normalize_embeddings=True).tolist()
+            
+            # Cache the generated embedding
+            if self.cache_manager and embedding:
+                self.cache_manager.cache_embedding(text, embedding)
+            
+            return embedding
         except Exception as e:
             self.logger.error(f"Embedding generation failed: {e}")
             return []
