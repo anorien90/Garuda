@@ -280,6 +280,31 @@ class TestExtractionQualityValidator:
         ]
         assert len(plausibility_issues) > 0
     
+    def test_handle_none_metric_type(self, validator):
+        """Test that None type values in metrics don't cause AttributeError."""
+        intel = {
+            "basic_info": {"description": "Test"},
+            "persons": [],
+            "locations": [],
+            "metrics": [
+                {"type": None, "value": "100"},  # None type should not crash
+                {"type": "employees", "value": "500"},  # Valid metric
+                {"value": "200"}  # Missing type key
+            ],
+            "financials": [],
+            "products": [],
+            "events": [],
+            "jobs": [],
+            "relationships": []
+        }
+        
+        # Should not raise AttributeError
+        report = validator.validate(intel, "Test Company")
+        
+        # Should complete validation without errors
+        assert report is not None
+        assert report.overall_score >= 0.0
+    
     def test_auto_correct_missing_field(self, validator):
         """Test auto-correction of missing fields."""
         intel = {
