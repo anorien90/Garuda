@@ -112,12 +112,15 @@ class IntelligentExplorer:
     def explore(self, start_urls: List[str], browser: Optional[SeleniumBrowser] = None) -> Dict[str, dict]:
         """Main loop orchestrating the full intelligence pipeline."""
         frontier = Frontier()
+        seed_ids = []  # Track seed IDs to create relationships later
+        
         if self.store:
             for url in start_urls:
                 try:
-                    self.store.save_seed(query=self.profile.name, entity_type=self.profile.entity_type.value, source="explorer")
-                except Exception:
-                    pass
+                    seed_id = self.store.save_seed(query=self.profile.name, entity_type=self.profile.entity_type.value, source="explorer")
+                    seed_ids.append((seed_id, url))
+                except Exception as e:
+                    self.logger.debug(f"Failed to save seed: {e}")
 
         for url in start_urls:
             score, _ = self.url_scorer.score_url(url, "", 0)
@@ -136,6 +139,9 @@ class IntelligentExplorer:
                 self.use_selenium = False
 
         try:
+            # Track seed-to-url mapping for relationship creation
+            seed_url_map = {url: seed_id for seed_id, url in seed_ids}
+            
             while len(frontier) and pages_explored < self.max_total_pages:
                 current = frontier.pop()
                 if not current:
@@ -164,6 +170,18 @@ class IntelligentExplorer:
                 page_record = self._run_intelligence_pipeline(url, html, depth, score)
                 if not page_record:
                     continue  # Likely skipped due to semantic redundancy
+
+                # Create Seed→Page relationship if this URL came from a seed
+                if url in seed_url_map and self.store and page_record.get("id"):
+                    try:
+                        self.store.save_relationship(
+                            from_id=seed_url_map[url],
+                            to_id=page_record["id"],
+                            relation_type="seed_page",
+                            meta={"depth": depth}
+                        )
+                    except Exception as e:
+                        self.logger.debug(f"Failed to create seed→page relationship: {e}")
 
                 self.explored_data[url] = page_record
                 pages_explored += 1
