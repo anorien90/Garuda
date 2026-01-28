@@ -6,7 +6,6 @@ import hashlib
 import logging
 from functools import lru_cache
 from typing import Optional, List
-import numpy as np
 
 
 class EmbeddingCache:

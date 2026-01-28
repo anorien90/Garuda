@@ -13,6 +13,10 @@ src/garuda_intel.egg-info/top_level.txt
 src/garuda_intel/browser/__init__.py
 src/garuda_intel/browser/active.py
 src/garuda_intel/browser/selenium.py
+src/garuda_intel/cache/__init__.py
+src/garuda_intel/cache/cache_manager.py
+src/garuda_intel/cache/embedding_cache.py
+src/garuda_intel/cache/llm_cache.py
 src/garuda_intel/database/__init__.py
 src/garuda_intel/database/engine.py
 src/garuda_intel/database/helpers.py
@@ -36,6 +40,8 @@ src/garuda_intel/explorer/__init__.py
 src/garuda_intel/explorer/engine.py
 src/garuda_intel/explorer/scorer.py
 src/garuda_intel/extractor/__init__.py
+src/garuda_intel/extractor/content_classifier.py
+src/garuda_intel/extractor/content_router.py
 src/garuda_intel/extractor/engine.py
 src/garuda_intel/extractor/filter.py
 src/garuda_intel/extractor/intel_extractor.py
@@ -63,6 +69,7 @@ src/garuda_intel/search/utils.py
 src/garuda_intel/services/__init__.py
 src/garuda_intel/services/adaptive_crawler.py
 src/garuda_intel/services/entity_gap_analyzer.py
+src/garuda_intel/services/media_detector.py
 src/garuda_intel/services/media_downloader.py
 src/garuda_intel/services/media_extractor.py
 src/garuda_intel/services/media_processor.py
@@ -147,7 +154,9 @@ src/garuda_intel/webapp/utils/__init__.py
 src/garuda_intel/webapp/utils/helpers.py
 src/garuda_intel/webapp/utils/request_helpers.py
 tests/test_adaptive_crawler.py
+tests/test_caching.py
 tests/test_entity_extraction_and_graph.py
+tests/test_entity_extraction_post_processing.py
 tests/test_gibberish_detection.py
 tests/test_graph_builder_relationships.py
 tests/test_media_processing.py
