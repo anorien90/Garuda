@@ -484,6 +484,70 @@ Only include relationships where confidence >= {min_confidence}.
         
         return report
     
+    def backfill_relationship_types(self) -> int:
+        """
+        Backfill source_type and target_type for existing relationships.
+        
+        This is useful for migrating old relationships that were created before
+        the type fields were added. Queries the entries table to determine the
+        actual type of each source/target node.
+        
+        Returns:
+            Number of relationships updated with type information
+            
+        Example:
+            >>> # Backfill types for all existing relationships
+            >>> updated = manager.backfill_relationship_types()
+            >>> print(f"Updated {updated} relationships with type information")
+        """
+        updated_count = 0
+        
+        try:
+            with self.store.Session() as session:
+                # Get all relationships that are missing type information
+                relationships = session.execute(
+                    select(Relationship)
+                ).scalars().all()
+                
+                for rel in relationships:
+                    needs_update = False
+                    
+                    # Check if source_type is missing
+                    if not rel.source_type:
+                        source_entry = session.execute(
+                            select(BasicDataEntry.entry_type).where(
+                                BasicDataEntry.id == rel.source_id
+                            )
+                        ).scalar_one_or_none()
+                        
+                        if source_entry:
+                            rel.source_type = source_entry
+                            needs_update = True
+                    
+                    # Check if target_type is missing
+                    if not rel.target_type:
+                        target_entry = session.execute(
+                            select(BasicDataEntry.entry_type).where(
+                                BasicDataEntry.id == rel.target_id
+                            )
+                        ).scalar_one_or_none()
+                        
+                        if target_entry:
+                            rel.target_type = target_entry
+                            needs_update = True
+                    
+                    if needs_update:
+                        updated_count += 1
+                
+                if updated_count > 0:
+                    session.commit()
+                    self.logger.info(f"Backfilled types for {updated_count} relationships")
+        
+        except Exception as e:
+            self.logger.error(f"Type backfill failed: {e}")
+        
+        return updated_count
+    
     def infer_missing_fields(self) -> int:
         """
         Infer missing entity fields from related entities through relationships.

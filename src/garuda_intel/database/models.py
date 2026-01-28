@@ -110,6 +110,10 @@ class Relationship(BasicDataEntry):
         GUID(), ForeignKey("entries.id", ondelete="CASCADE"), nullable=False
     )
     relation_type: Mapped[str] = mapped_column(String, nullable=False)
+    # Type information for source and target nodes (e.g., "entity", "page", "intelligence")
+    # These are optional for backward compatibility with existing data
+    source_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    target_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     source_entity: Mapped["Entity"] = relationship(

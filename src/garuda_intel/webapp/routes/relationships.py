@@ -101,6 +101,30 @@ def init_routes(api_key_required, relationship_manager):
             logger.exception("Relationship deduplication failed")
             return jsonify({"error": str(e)}), 500
     
+    @bp.post("/backfill-types")
+    @api_key_required
+    def api_backfill_relationship_types():
+        """Backfill source_type and target_type for existing relationships.
+        
+        This endpoint is useful for migrating old relationships that were created
+        before the type tracking feature was added. It queries the entries table
+        to determine the actual type of each source/target node and updates the
+        relationship records.
+        """
+        emit_event("backfill_relationship_types", "backfilling relationship types")
+        
+        try:
+            updated = relationship_manager.backfill_relationship_types()
+            emit_event("backfill_relationship_types", f"updated {updated} relationships")
+            return jsonify({
+                "updated_count": updated,
+                "message": f"Successfully backfilled types for {updated} relationships"
+            })
+        except Exception as e:
+            emit_event("backfill_relationship_types", f"failed: {e}", level="error")
+            logger.exception("Relationship type backfill failed")
+            return jsonify({"error": str(e)}), 500
+    
     @bp.get("/clusters")
     @api_key_required
     def api_relationship_clusters():

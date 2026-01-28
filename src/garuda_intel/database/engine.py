@@ -428,11 +428,35 @@ class SQLAlchemyStore(PersistenceStore):
     def _upsert_relationship(self, session, from_id: str, to_id: str, relation_type: str, meta: Optional[Dict] = None) -> Optional[Relationship]:
         if not from_id or not to_id or not relation_type:
             return None
+        
+        # Determine source and target types by querying the entries table
+        from .models import BasicDataEntry
+        source_type = None
+        target_type = None
+        
+        try:
+            source_entry = session.execute(
+                select(BasicDataEntry.entry_type).where(BasicDataEntry.id == from_id)
+            ).scalar_one_or_none()
+            if source_entry:
+                source_type = source_entry
+                
+            target_entry = session.execute(
+                select(BasicDataEntry.entry_type).where(BasicDataEntry.id == to_id)
+            ).scalar_one_or_none()
+            if target_entry:
+                target_type = target_entry
+        except Exception as e:
+            # If we can't determine the type, continue without it for backward compatibility
+            pass
+        
         rel = Relationship(
             id=_uuid4(),
             source_id=from_id,
             target_id=to_id,
             relation_type=relation_type,
+            source_type=source_type,
+            target_type=target_type,
             metadata_json=meta or {},
         )
         session.merge(rel)
