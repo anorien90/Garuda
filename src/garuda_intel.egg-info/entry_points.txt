@@ -1,6 +1,0 @@
-[console_scripts]
-garuda-docker = garuda_intel.docker.tool:main
-garuda-intel-recorder = garuda_intel.recorder.app:main
-garuda-intel-search = garuda_intel.search:main
-garuda-intel-webapp = garuda_intel.webapp.app:main
-garuda-search = garuda_intel.search:main
