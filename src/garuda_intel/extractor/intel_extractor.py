@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 
 from ..types.entity import EntityProfile
 from .text_processor import TextProcessor
+from ..cache import CacheManager
 
 
 class IntelExtractor:
@@ -23,6 +24,7 @@ class IntelExtractor:
         extraction_chunk_chars: int = 4000,
         max_chunks: int = 20,
         extract_timeout: int = 120,
+        cache_manager: Optional[CacheManager] = None,
     ):
         self.ollama_url = ollama_url
         self.model = model
@@ -31,6 +33,7 @@ class IntelExtractor:
         self.extract_timeout = extract_timeout
         self.logger = logging.getLogger(__name__)
         self.text_processor = TextProcessor()
+        self.cache_manager = cache_manager
 
     def extract_intelligence(
         self,
@@ -139,12 +142,24 @@ class IntelExtractor:
         Examples: {{"source":"Company A","target":"Person B","relation_type":"employs","description":"B is CEO of A"}}
         """
 
+        # Check LLM cache first
+        if self.cache_manager:
+            cached_response = self.cache_manager.get_llm_response(prompt)
+            if cached_response:
+                self.logger.debug("Using cached LLM response for extraction")
+                return self.text_processor.safe_json_loads(cached_response, fallback={})
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 payload = {"model": self.model, "prompt": prompt, "stream": False, "format": "json"}
                 response = requests.post(self.ollama_url, json=payload, timeout=self.extract_timeout)
                 result_raw = response.json().get("response", "{}")
+                
+                # Cache the LLM response
+                if self.cache_manager and result_raw:
+                    self.cache_manager.cache_llm_response(prompt, result_raw)
+                
                 return self.text_processor.safe_json_loads(result_raw, fallback={})
             except Exception as e:
                 if attempt < max_retries - 1:

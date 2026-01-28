@@ -14,6 +14,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator, CHAR
@@ -99,6 +100,11 @@ class Entity(BasicDataEntry):
         cascade="all, delete-orphan",
     )
 
+    __table_args__ = (
+        Index('ix_entity_name_kind', 'name', 'kind'),
+        Index('ix_entity_created_at', 'created_at'),
+    )
+
     __mapper_args__ = {
         "polymorphic_identity": "entity",
         "inherit_condition": id == BasicDataEntry.id,
@@ -112,12 +118,12 @@ class Relationship(BasicDataEntry):
         GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
     )
     source_id: Mapped[uuid.UUID] = mapped_column(
-        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), nullable=False
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), nullable=False, index=True
     )
     target_id: Mapped[uuid.UUID] = mapped_column(
-        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), nullable=False
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    relation_type: Mapped[str] = mapped_column(String, nullable=False)
+    relation_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
     # Type information for source and target nodes (e.g., "entity", "page", "intelligence")
     # These are optional for backward compatibility with existing data
     source_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
@@ -135,6 +141,11 @@ class Relationship(BasicDataEntry):
         "Entity", foreign_keys=[target_id], back_populates="incoming_relationships"
     )
 
+    __table_args__ = (
+        Index('ix_relationship_source_target', 'source_id', 'target_id'),
+        Index('ix_relationship_source_type', 'source_id', 'relation_type'),
+    )
+
     __mapper_args__ = {
         "polymorphic_identity": "relationship",
         "inherit_condition": id == BasicDataEntry.id,
@@ -149,21 +160,26 @@ class Page(BasicDataEntry):
     )
     url: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    page_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    entity_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    domain_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    page_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    entity_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    domain_key: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     last_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    last_fetch_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_fetch_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
     text_length: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     depth: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        GUID(), ForeignKey("entities.id", ondelete="SET NULL"), nullable=True
+        GUID(), ForeignKey("entities.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     entity: Mapped["Entity"] = relationship(
         "Entity", back_populates="pages", foreign_keys=[entity_id]
+    )
+
+    __table_args__ = (
+        Index('ix_page_entity_type', 'entity_id', 'page_type'),
+        Index('ix_page_created_at', 'created_at'),
     )
 
     __mapper_args__ = {
@@ -267,7 +283,7 @@ class Intelligence(BasicDataEntry):
     entity_name: Mapped[Optional[str]] = mapped_column(String, index=True)
     entity_type: Mapped[Optional[str]] = mapped_column(String, index=True)
     page_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        GUID(), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True
+        GUID(), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True, index=True
     )
     confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -277,6 +293,11 @@ class Intelligence(BasicDataEntry):
     )
     page: Mapped["Page"] = relationship(
         "Page", foreign_keys=[page_id], back_populates="intelligence"
+    )
+
+    __table_args__ = (
+        Index('ix_intelligence_entity_page', 'entity_id', 'page_id'),
+        Index('ix_intelligence_created_at', 'created_at'),
     )
 
     __mapper_args__ = {
