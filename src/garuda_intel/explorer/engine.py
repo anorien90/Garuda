@@ -312,6 +312,11 @@ class IntelligentExplorer:
                     logging.getLogger(__name__).warning(f"Media extraction failed for {url}: {e}")
 
             if extracted_entities:
+                # Add page_id context to all entities to create Page→Entity relationships
+                for entity in extracted_entities:
+                    if "page_id" not in entity:
+                        entity["page_id"] = page_uuid
+                
                 entity_id_map = self.store.save_entities(extracted_entities) or {}
 
             # Save relationships from findings
@@ -433,6 +438,22 @@ class IntelligentExplorer:
                     getattr(self.profile.entity_type, "value", str(self.profile.entity_type)),
                 )
             )
+            
+            # Create relationships between primary entity and other entities found on the page
+            if primary_entity_id and entity_id_map:
+                for (ent_name, ent_kind), ent_id in entity_id_map.items():
+                    # Don't create self-relationship
+                    if ent_id != primary_entity_id:
+                        try:
+                            # Primary entity is related to other entities on the same page
+                            self.store.save_relationship(
+                                from_id=primary_entity_id,
+                                to_id=ent_id,
+                                relation_type="related_entity",
+                                meta={"page_id": page_uuid, "discovered_together": True}
+                            )
+                        except Exception as e:
+                            self.logger.debug(f"Failed to create entity-entity relationship: {e}")
 
         for finding, conf_score in verified_findings_with_scores:
             intel_id = None
