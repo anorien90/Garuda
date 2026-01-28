@@ -61,6 +61,14 @@ gap_analyzer = EntityGapAnalyzer(store)
 adaptive_crawler = AdaptiveCrawlerService(store, llm, crawl_learner)
 media_processor = MediaProcessor(llm, enable_processing=settings.media_processing_enabled)
 
+# Initialize media extractor for crawling integration
+from ..services.media_extractor import MediaExtractor
+media_extractor = MediaExtractor(
+    store, 
+    media_processor, 
+    auto_process=settings.media_crawling_enabled and settings.media_processing_enabled
+)
+
 # Initialize event logging
 init_event_logging()
 

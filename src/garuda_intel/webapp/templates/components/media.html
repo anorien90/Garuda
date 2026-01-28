@@ -90,6 +90,10 @@
       <button onclick="loadMediaItems()" class="btn-primary">
         Refresh
       </button>
+      
+      <button onclick="processPendingMedia()" class="btn-secondary">
+        Process Pending (10)
+      </button>
     </div>
     
     <div id="media-items-container" class="space-y-3">
@@ -165,6 +169,43 @@
 
 <script>
 // Media processing functions
+const API_KEY = localStorage.getItem('api_key') || '';
+
+async function fetchWithAuth(url, options = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers
+  };
+  
+  if (API_KEY) {
+    headers['X-API-Key'] = API_KEY;
+  }
+  
+  const response = await fetch(url, {
+    ...options,
+    headers
+  });
+  
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(error.error || response.statusText);
+  }
+  
+  return response.json();
+}
+
+async function loadMediaStats() {
+  try {
+    const stats = await fetchWithAuth('/api/media/stats');
+    document.getElementById('stat-total-media').textContent = stats.total || 0;
+    document.getElementById('stat-processed-media').textContent = stats.processed || 0;
+    document.getElementById('stat-pending-media').textContent = stats.pending || 0;
+    document.getElementById('stat-error-media').textContent = stats.errors || 0;
+  } catch (error) {
+    console.error('Error loading media stats:', error);
+  }
+}
+
 async function loadMediaItems() {
   const container = document.getElementById('media-items-container');
   container.innerHTML = '<p class="text-sm text-slate-500 italic">Loading media items...</p>';
@@ -173,12 +214,77 @@ async function loadMediaItems() {
     const typeFilter = document.getElementById('media-type-filter').value;
     const statusFilter = document.getElementById('media-processed-filter').value;
     
-    // Note: Automatic media processing requires file download and processing
-    // For now, media items can be created via API but processing is manual
-    container.innerHTML = '<p class="text-sm text-slate-500 italic">Media items will appear here. API integration pending.</p>';
+    let params = new URLSearchParams({ limit: 50 });
+    if (typeFilter) params.append('type', typeFilter);
+    if (statusFilter === 'processed') params.append('processed', 'true');
+    else if (statusFilter === 'unprocessed') params.append('processed', 'false');
+    else if (statusFilter === 'error') params.append('processed', 'error');
+    
+    const data = await fetchWithAuth(`/api/media/items?${params}`);
+    
+    if (data.items && data.items.length > 0) {
+      container.innerHTML = data.items.map(item => `
+        <div class="p-3 border rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800">
+          <div class="flex items-start justify-between">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-xs px-2 py-0.5 rounded ${
+                  item.media_type === 'image' ? 'bg-blue-100 text-blue-800' :
+                  item.media_type === 'video' ? 'bg-purple-100 text-purple-800' :
+                  'bg-green-100 text-green-800'
+                }">${item.media_type}</span>
+                ${item.processed ? 
+                  '<span class="text-xs px-2 py-0.5 rounded bg-green-100 text-green-800">✓ Processed</span>' :
+                  item.processing_error ?
+                  '<span class="text-xs px-2 py-0.5 rounded bg-red-100 text-red-800">✗ Error</span>' :
+                  '<span class="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800">⏳ Pending</span>'
+                }
+              </div>
+              <div class="text-sm font-mono text-slate-600 dark:text-slate-400 truncate">${item.url}</div>
+              ${item.extracted_text ? `
+                <div class="text-xs text-slate-500 mt-1 line-clamp-2">${item.extracted_text}</div>
+              ` : ''}
+              ${item.processing_error ? `
+                <div class="text-xs text-red-600 mt-1">${item.processing_error}</div>
+              ` : ''}
+            </div>
+          </div>
+          <div class="text-xs text-slate-400 mt-2">
+            Created: ${new Date(item.created_at).toLocaleString()}
+            ${item.processed_at ? ` | Processed: ${new Date(item.processed_at).toLocaleString()}` : ''}
+          </div>
+        </div>
+      `).join('');
+    } else {
+      container.innerHTML = '<p class="text-sm text-slate-500 italic">No media items found. Try processing a media URL below.</p>';
+    }
+    
+    // Refresh stats
+    loadMediaStats();
     
   } catch (error) {
     container.innerHTML = `<p class="text-sm text-red-500">Error: ${error.message}</p>`;
+  }
+}
+
+async function processPendingMedia() {
+  const container = document.getElementById('media-items-container');
+  const oldContent = container.innerHTML;
+  container.innerHTML = '<p class="text-sm text-blue-500">Processing pending media items...</p>';
+  
+  try {
+    const result = await fetchWithAuth('/api/media/process-pending', {
+      method: 'POST'
+    });
+    
+    alert(`Processed ${result.processed} items, ${result.failed} failed`);
+    
+    // Refresh the list
+    loadMediaItems();
+    
+  } catch (error) {
+    container.innerHTML = oldContent;
+    alert(`Error processing pending media: ${error.message}`);
   }
 }
 
@@ -186,28 +292,66 @@ async function loadMediaItems() {
 document.getElementById('manual-media-process-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const resultDiv = document.getElementById('media-process-result');
-  resultDiv.innerHTML = '<p class="text-sm text-slate-500 italic">Creating media item...</p>';
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Processing...';
+  resultDiv.innerHTML = '<p class="text-sm text-slate-500 italic">Processing media...</p>';
   
   try {
     const url = document.getElementById('media-url').value;
-    const type = document.getElementById('media-type').value;
+    const media_type = document.getElementById('media-type').value;
+    const page_url = document.getElementById('media-page-url').value || null;
     
-    // Note: This creates the database entry, but automatic processing requires file download
-    resultDiv.innerHTML = `<div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg text-sm">
-      Media item created for ${type} from ${url}. Automatic file download and processing will be added in a future update.
-    </div>`;
+    const result = await fetchWithAuth('/api/media/process', {
+      method: 'POST',
+      body: JSON.stringify({
+        url,
+        media_type,
+        page_url,
+        auto_process: true
+      })
+    });
+    
+    if (result.processed) {
+      resultDiv.innerHTML = `<div class="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg text-sm">
+        <div class="font-semibold text-green-800 dark:text-green-200">✓ Media processed successfully!</div>
+        ${result.extracted_text ? `<div class="mt-2 text-xs text-green-700 dark:text-green-300">Extracted text: ${result.extracted_text}</div>` : ''}
+        ${result.has_embedding ? '<div class="mt-1 text-xs text-green-700 dark:text-green-300">✓ Embedding generated</div>' : ''}
+      </div>`;
+      
+      // Refresh the media items list
+      setTimeout(() => loadMediaItems(), 500);
+    } else if (result.processing_error) {
+      resultDiv.innerHTML = `<div class="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg text-sm">
+        <div class="font-semibold text-yellow-800 dark:text-yellow-200">⚠ Media item created but processing failed</div>
+        <div class="mt-2 text-xs text-yellow-700 dark:text-yellow-300">Error: ${result.processing_error}</div>
+      </div>`;
+    } else {
+      resultDiv.innerHTML = `<div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg text-sm">
+        <div class="font-semibold text-blue-800 dark:text-blue-200">Media item created</div>
+        <div class="mt-2 text-xs text-blue-700 dark:text-blue-300">${result.message}</div>
+      </div>`;
+    }
+    
+    // Clear form
+    e.target.reset();
     
   } catch (error) {
-    resultDiv.innerHTML = `<p class="text-sm text-red-500">Error: ${error.message}</p>`;
+    resultDiv.innerHTML = `<div class="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm">
+      <div class="font-semibold text-red-800 dark:text-red-200">✗ Error</div>
+      <div class="mt-2 text-xs text-red-700 dark:text-red-300">${error.message}</div>
+    </div>`;
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = '<svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>Process Media';
   }
 });
 
 // Load stats on page load
 document.addEventListener('DOMContentLoaded', () => {
-  // Placeholder stats
-  document.getElementById('stat-total-media').textContent = '0';
-  document.getElementById('stat-processed-media').textContent = '0';
-  document.getElementById('stat-pending-media').textContent = '0';
-  document.getElementById('stat-error-media').textContent = '0';
+  loadMediaStats();
+  // Auto-load media items after a short delay
+  setTimeout(() => loadMediaItems(), 100);
 });
 </script>
