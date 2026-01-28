@@ -369,6 +369,10 @@ class SQLAlchemyStore(PersistenceStore):
         page_type: Optional[str] = None,
     ) -> List[Dict]:
         with self.Session() as s:
+            # Use explicit alias to avoid automatic aliasing warning for overlapping tables
+            # Both Page and PageContent inherit from BasicDataEntry (polymorphic inheritance)
+            page_content_alias = aliased(PageContent)
+            
             kw_like = f"%{keyword}%"
             stmt = (
                 select(
@@ -377,13 +381,13 @@ class SQLAlchemyStore(PersistenceStore):
                     Page.page_type,
                     Page.score,
                     func.substr(
-                        PageContent.text,
-                        func.max(1, func.instr(func.lower(PageContent.text), keyword.lower()) - 60),
+                        page_content_alias.text,
+                        func.max(1, func.instr(func.lower(page_content_alias.text), keyword.lower()) - 60),
                         200,
                     ).label("snippet"),
                 )
-                .join(PageContent, Page.id == PageContent.page_id)
-                .where(PageContent.text.ilike(kw_like))
+                .join(page_content_alias, Page.id == page_content_alias.page_id)
+                .where(page_content_alias.text.ilike(kw_like))
                 .order_by(Page.score.desc().nullslast(), Page.last_fetch_at.desc().nullslast())
                 .limit(limit)
             )
