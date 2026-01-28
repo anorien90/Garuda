@@ -13,7 +13,9 @@ export function renderRecorderResults(data) {
     return;
   }
   setLastIntelHits(results);
-  els.recorderResults.innerHTML = results.map((r) => renderIntel([r], { innerHTML: '' })).join('');
+  
+  // Use renderIntel for each result properly
+  renderIntel(results, els.recorderResults);
 }
 
 export function renderRecorderHealth({ health, queue }) {

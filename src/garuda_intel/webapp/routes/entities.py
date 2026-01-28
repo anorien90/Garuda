@@ -36,15 +36,35 @@ logger = logging.getLogger(__name__)
 def init_routes(api_key_required, settings, store, llm, vector_store, entity_crawler, gap_analyzer, adaptive_crawler):
     """Initialize routes with required dependencies."""
     
+    def safe_int(value, default=0):
+        """Safely parse integer from request args, handling binary data."""
+        try:
+            if value is None or value == "":
+                return default
+            return int(value)
+        except (ValueError, TypeError):
+            logger.warning(f"Failed to parse int from value: {repr(value)[:100]}")
+            return default
+    
+    def safe_float(value, default=0.0):
+        """Safely parse float from request args, handling binary data."""
+        try:
+            if value is None or value == "":
+                return default
+            return float(value)
+        except (ValueError, TypeError):
+            logger.warning(f"Failed to parse float from value: {repr(value)[:100]}")
+            return default
+    
     @bp.get("/graph")
     @api_key_required
     def api_entities_graph():
         q = (request.args.get("query") or "").strip().lower()
         type_filter_raw = request.args.get("type")
         type_filter = _norm_kind(type_filter_raw) or ""
-        min_score = float(request.args.get("min_score", 0) or 0)
-        limit = min(int(request.args.get("limit", 100) or 100), 500)
-        depth_limit = int(request.args.get("depth", 1) or 1)
+        min_score = safe_float(request.args.get("min_score"), 0)
+        limit = min(safe_int(request.args.get("limit"), 100), 500)
+        depth_limit = safe_int(request.args.get("depth"), 1)
         include_meta = (request.args.get("include_meta") or "1").strip() != "0"
 
         node_type_filters = _parse_list_param(
@@ -53,7 +73,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
         )
         edge_kind_filters = _parse_list_param(
             request.args.get("edge_kinds"),
-            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet", "seed-entity"},
+            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet", "seed-entity", "has-person", "has-location", "has-product"},
         )
 
         emit_event(
@@ -172,6 +192,65 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                                 include_meta,
                                 context_meta={"intel_id": str(row.id)} if include_meta else None
                             )
+                    
+                    # Extract and persist Persons, Locations, Products as unique entities
+                    intel_data = row.data or {}
+                    intel_id_str = str(row.id)
+                    primary = upsert_entity(row.entity_name, row.entity_type, row.confidence) if row.entity_name else None
+                    
+                    # Extract Persons
+                    persons = intel_data.get("persons", [])
+                    if isinstance(persons, list):
+                        for person in persons:
+                            if isinstance(person, dict):
+                                person_name = person.get("name")
+                                if person_name:
+                                    person_node = upsert_entity(person_name, "person", None, meta={
+                                        "role": person.get("role"),
+                                        "title": person.get("title"),
+                                        "bio": person.get("bio")
+                                    })
+                                    if person_node and primary:
+                                        add_edge(primary, person_node, kind="has-person", weight=1,
+                                                meta={"role": person.get("role"), "title": person.get("title")} if include_meta else None)
+                                    if person_node and intel_id_str:
+                                        add_edge(intel_id_str, person_node, kind="intel-mentions", weight=1)
+                    
+                    # Extract Locations
+                    locations = intel_data.get("locations", [])
+                    if isinstance(locations, list):
+                        for location in locations:
+                            if isinstance(location, dict):
+                                location_name = location.get("city") or location.get("address") or location.get("country")
+                                if location_name:
+                                    location_node = upsert_entity(location_name, "location", None, meta={
+                                        "type": location.get("type"),
+                                        "city": location.get("city"),
+                                        "country": location.get("country"),
+                                        "address": location.get("address")
+                                    })
+                                    if location_node and primary:
+                                        add_edge(primary, location_node, kind="has-location", weight=1,
+                                                meta={"type": location.get("type")} if include_meta else None)
+                                    if location_node and intel_id_str:
+                                        add_edge(intel_id_str, location_node, kind="intel-mentions", weight=1)
+                    
+                    # Extract Products
+                    products = intel_data.get("products", [])
+                    if isinstance(products, list):
+                        for product in products:
+                            if isinstance(product, dict):
+                                product_name = product.get("name")
+                                if product_name:
+                                    product_node = upsert_entity(product_name, "product", None, meta={
+                                        "status": product.get("status"),
+                                        "description": product.get("description")
+                                    })
+                                    if product_node and primary:
+                                        add_edge(primary, product_node, kind="has-product", weight=1,
+                                                meta={"status": product.get("status")} if include_meta else None)
+                                    if product_node and intel_id_str:
+                                        add_edge(intel_id_str, product_node, kind="intel-mentions", weight=1)
 
                     if row.entity_name and ents_from_json:
                         primary = upsert_entity(row.entity_name, row.entity_type, row.confidence)
@@ -182,7 +261,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
 
                         intel_id_str = str(row.id)
                         ensure_node(intel_id_str, f"Intel: {row.entity_type or 'data'}", "intel", score=row.confidence,
-                                    meta={"intel_id": intel_id_str, "source_id": intel_id_str})
+                                    meta={"intel_id": intel_id_str, "source_id": intel_id_str, "confidence": row.confidence,
+                                          "entity_name": row.entity_name, "entity_type": row.entity_type, "data": row.data})
                         entry_type_map[intel_id_str] = "intel"
                         if primary:
                             add_edge(intel_id_str, primary, kind="intel-primary", weight=1)

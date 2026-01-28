@@ -31,6 +31,9 @@ const EDGE_COLORS = {
   relationship: 'rgba(139,92,246,0.35)',
   'seed-entity': 'rgba(132,204,22,0.30)',
   'semantic-hit': 'rgba(251,191,36,0.30)',
+  'has-person': 'rgba(14,165,233,0.35)',
+  'has-location': 'rgba(168,85,247,0.35)',
+  'has-product': 'rgba(249,115,22,0.35)',
   default: 'rgba(148,163,184,0.18)',
 };
 
@@ -108,6 +111,81 @@ function fmt(val) {
   return String(val);
 }
 
+function renderIntelDataSummary(data) {
+  if (!data || typeof data !== 'object') return '';
+  
+  const parts = [];
+  
+  // Render Persons
+  if (data.persons && Array.isArray(data.persons) && data.persons.length > 0) {
+    const personsList = data.persons.map(p => `
+      <div class="text-xs mb-1">
+        <b>${escapeHtml(p.name || 'Unknown')}</b>
+        ${p.title ? ` - ${escapeHtml(p.title)}` : ''}
+        ${p.role ? ` (${escapeHtml(p.role)})` : ''}
+      </div>
+    `).join('');
+    parts.push(`
+      <details class="text-xs" open>
+        <summary class="cursor-pointer font-semibold text-blue-600">👤 Persons (${data.persons.length})</summary>
+        <div class="mt-1 ml-2 space-y-1">${personsList}</div>
+      </details>
+    `);
+  }
+  
+  // Render Locations
+  if (data.locations && Array.isArray(data.locations) && data.locations.length > 0) {
+    const locationsList = data.locations.map(l => `
+      <div class="text-xs mb-1">
+        📍 ${escapeHtml(l.city || l.address || l.country || 'Unknown')}
+        ${l.type ? ` (${escapeHtml(l.type)})` : ''}
+      </div>
+    `).join('');
+    parts.push(`
+      <details class="text-xs" open>
+        <summary class="cursor-pointer font-semibold text-purple-600">📍 Locations (${data.locations.length})</summary>
+        <div class="mt-1 ml-2 space-y-1">${locationsList}</div>
+      </details>
+    `);
+  }
+  
+  // Render Products
+  if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+    const productsList = data.products.map(p => `
+      <div class="text-xs mb-1">
+        <b>${escapeHtml(p.name || 'Unknown')}</b>
+        ${p.status ? ` - ${escapeHtml(p.status)}` : ''}
+        ${p.description ? `<div class="text-slate-500">${escapeHtml(p.description)}</div>` : ''}
+      </div>
+    `).join('');
+    parts.push(`
+      <details class="text-xs" open>
+        <summary class="cursor-pointer font-semibold text-orange-600">📦 Products (${data.products.length})</summary>
+        <div class="mt-1 ml-2 space-y-1">${productsList}</div>
+      </details>
+    `);
+  }
+  
+  // Render Basic Info
+  if (data.basic_info && typeof data.basic_info === 'object') {
+    const info = data.basic_info;
+    parts.push(`
+      <details class="text-xs">
+        <summary class="cursor-pointer font-semibold">ℹ️ Basic Info</summary>
+        <div class="mt-1 ml-2 space-y-1">
+          ${info.official_name ? `<div>Name: <b>${escapeHtml(info.official_name)}</b></div>` : ''}
+          ${info.industry ? `<div>Industry: ${escapeHtml(info.industry)}</div>` : ''}
+          ${info.ticker ? `<div>Ticker: ${escapeHtml(info.ticker)}</div>` : ''}
+          ${info.founded ? `<div>Founded: ${escapeHtml(info.founded)}</div>` : ''}
+          ${info.website ? `<div>Website: <a href="${escapeHtml(info.website)}" class="text-blue-600 underline" target="_blank">${escapeHtml(info.website)}</a></div>` : ''}
+        </div>
+      </details>
+    `);
+  }
+  
+  return parts.length > 0 ? `<div class="space-y-2 my-2">${parts.join('')}</div>` : '';
+}
+
 function metaTableWithLinks(meta) {
   if (!meta || typeof meta !== 'object' || !Object.keys(meta).length) {
     return '<div class="text-xs text-slate-500">No metadata</div>';
@@ -175,10 +253,8 @@ function renderDetailBody(node) {
       ${meta.entity_type ? `<div class="text-xs">Type: <b>${escapeHtml(meta.entity_type)}</b></div>` : ''}
       ${meta.confidence ? `<div class="text-xs">Confidence: <b>${escapeHtml(meta.confidence)}</b></div>` : ''}
       ${meta.created_at ? `<div class="text-xs text-slate-500">Created: ${escapeHtml(meta.created_at)}</div>` : ''}
-      ${meta.data ? `<details class="text-xs"><summary class="cursor-pointer font-semibold">Intel Data</summary><pre class="mt-1 p-2 bg-slate-900 text-slate-100 rounded text-xs whitespace-pre-wrap">${escapeHtml(JSON.stringify(meta.data, null, 2))}</pre></details>` : ''}
-      <details class="text-xs"><summary class="cursor-pointer font-semibold">Raw meta</summary><pre class="mt-1 p-2 bg-slate-900 text-slate-100 rounded text-xs whitespace-pre-wrap">${escapeHtml(
-        JSON.stringify(meta, null, 2)
-      )}</pre></details>
+      ${renderIntelDataSummary(meta.data)}
+      ${meta.data ? `<details class="text-xs"><summary class="cursor-pointer font-semibold">Raw Intel Data</summary><pre class="mt-1 p-2 bg-slate-900 text-slate-100 rounded text-xs whitespace-pre-wrap">${escapeHtml(JSON.stringify(meta.data, null, 2))}</pre></details>` : ''}
     </div>`
       : '';
 

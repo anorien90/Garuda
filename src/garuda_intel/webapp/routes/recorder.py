@@ -12,13 +12,23 @@ logger = logging.getLogger(__name__)
 def init_routes(api_key_required, store):
     """Initialize routes with required dependencies."""
     
+    def safe_int(value, default=0):
+        """Safely parse integer from request args, handling binary data."""
+        try:
+            if value is None or value == "":
+                return default
+            return int(value)
+        except (ValueError, TypeError):
+            logger.warning(f"Failed to parse int from value: {repr(value)[:100]}")
+            return default
+    
     @bp.get("/search")
     @api_key_required
     def api_recorder_search():
         q = request.args.get("q", "").strip()
         if not q:
             return jsonify({"error": "q required"}), 400
-        limit = min(int(request.args.get("limit", 20)), 100)
+        limit = min(safe_int(request.args.get("limit"), 20), 100)
         entity_type = request.args.get("entity_type")
         page_type = request.args.get("page_type")
         emit_event("recorder", "search", payload={"q": q, "limit": limit})
