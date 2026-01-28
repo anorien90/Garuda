@@ -7,7 +7,12 @@ and convert them into embeddings for integration into the knowledge graph.
 from typing import Optional, Dict, Any
 import logging
 import json
+import os
+import tempfile
 from datetime import datetime
+from pathlib import Path
+
+from .media_downloader import MediaDownloader
 
 logger = logging.getLogger(__name__)
 
@@ -15,19 +20,22 @@ logger = logging.getLogger(__name__)
 class MediaProcessor:
     """Process media items (images, video, audio) to extract text and embeddings."""
 
-    def __init__(self, llm_extractor=None, enable_processing: bool = True):
+    def __init__(self, llm_extractor=None, enable_processing: bool = True, cache_dir: Optional[str] = None):
         """Initialize media processor.
         
         Args:
             llm_extractor: LLM extractor for generating embeddings
             enable_processing: Whether media processing is enabled (optional feature)
+            cache_dir: Directory for caching downloaded media files
         """
         self.llm = llm_extractor
         self.enabled = enable_processing
+        self.downloader = MediaDownloader(cache_dir=cache_dir)
         
         # Try to import optional dependencies
         self.ocr_available = False
         self.speech_available = False
+        self.video_available = False
         
         try:
             import pytesseract
@@ -43,6 +51,13 @@ class MediaProcessor:
             logger.info("speech_recognition available for audio/video processing")
         except ImportError:
             logger.info("speech_recognition not available - audio processing disabled")
+        
+        try:
+            from moviepy.editor import VideoFileClip
+            self.video_available = True
+            logger.info("moviepy available for video processing")
+        except ImportError:
+            logger.info("moviepy not available - video processing disabled")
 
     def process_image(self, image_path: str, url: str) -> Dict[str, Any]:
         """Extract text from image using OCR.
@@ -113,18 +128,95 @@ class MediaProcessor:
                 "processing_error": "Video processing disabled"
             }
         
-        try:
-            # For now, return a placeholder
-            # Full implementation would use moviepy + speech_recognition
-            logger.info(f"Video processing for {url} - placeholder implementation")
-            
+        if not self.video_available or not self.speech_available:
             return {
                 "extracted_text": None,
                 "processed": False,
-                "processing_error": "Video processing not yet implemented",
-                "metadata_json": {"note": "Requires moviepy and audio extraction"}
+                "processing_error": "Video processing dependencies not available (moviepy, speech_recognition)"
+            }
+        
+        try:
+            from moviepy.editor import VideoFileClip
+            import speech_recognition as sr
+            
+            # Extract video metadata
+            video = VideoFileClip(video_path)
+            duration = video.duration
+            width, height = video.size
+            fps = video.fps
+            
+            metadata = {
+                "duration": duration,
+                "width": width,
+                "height": height,
+                "fps": fps,
             }
             
+            # Extract audio from video
+            temp_audio_path = None
+            try:
+                # Create temporary WAV file for audio
+                temp_audio_path = tempfile.mktemp(suffix='.wav')
+                audio = video.audio
+                
+                if audio is None:
+                    video.close()
+                    return {
+                        "extracted_text": None,
+                        "processed": True,
+                        "processing_error": "No audio track found in video",
+                        "metadata_json": metadata,
+                        "duration": duration,
+                        "width": width,
+                        "height": height,
+                    }
+                
+                # Write audio to temporary file
+                audio.write_audiofile(temp_audio_path, verbose=False, logger=None)
+                video.close()
+                
+                # Use speech recognition on the audio
+                recognizer = sr.Recognizer()
+                with sr.AudioFile(temp_audio_path) as source:
+                    audio_data = recognizer.record(source)
+                
+                # Perform speech recognition
+                try:
+                    text = recognizer.recognize_google(audio_data)
+                    return {
+                        "extracted_text": text,
+                        "processed": True,
+                        "processed_at": datetime.utcnow(),
+                        "metadata_json": metadata,
+                        "duration": duration,
+                        "width": width,
+                        "height": height,
+                    }
+                except sr.UnknownValueError:
+                    return {
+                        "extracted_text": None,
+                        "processed": True,
+                        "processing_error": "Could not understand audio",
+                        "metadata_json": metadata,
+                        "duration": duration,
+                        "width": width,
+                        "height": height,
+                    }
+                except sr.RequestError as e:
+                    return {
+                        "extracted_text": None,
+                        "processed": False,
+                        "processing_error": f"Speech recognition API error: {e}",
+                        "metadata_json": metadata,
+                        "duration": duration,
+                        "width": width,
+                        "height": height,
+                    }
+            finally:
+                # Clean up temporary audio file
+                if temp_audio_path and os.path.exists(temp_audio_path):
+                    os.unlink(temp_audio_path)
+                    
         except Exception as e:
             logger.error(f"Error processing video {url}: {e}")
             return {
@@ -247,3 +339,50 @@ class MediaProcessor:
             result["text_embedding"] = self.generate_embedding(result["extracted_text"])
         
         return result
+
+    def process_from_url(self, url: str, media_type: str) -> Dict[str, Any]:
+        """Download and process media from URL.
+        
+        Args:
+            url: URL of media file
+            media_type: Type of media (image, video, audio)
+            
+        Returns:
+            Dict with processing results including download metadata
+        """
+        if not self.enabled:
+            return {
+                "extracted_text": None,
+                "processed": False,
+                "processing_error": "Media processing disabled"
+            }
+        
+        # Download the file
+        logger.info(f"Downloading {media_type} from {url}")
+        file_path, download_metadata = self.downloader.download(url)
+        
+        if not file_path:
+            error_msg = download_metadata.get("error", "Download failed") if download_metadata else "Download failed"
+            return {
+                "extracted_text": None,
+                "processed": False,
+                "processing_error": f"Download failed: {error_msg}"
+            }
+        
+        # Process the downloaded file
+        try:
+            result = self.process_media_item(media_type, file_path, url)
+            
+            # Add download metadata to result
+            if download_metadata:
+                result["file_size"] = download_metadata.get("file_size")
+                result["mime_type"] = download_metadata.get("mime_type")
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error processing media from {url}: {e}")
+            return {
+                "extracted_text": None,
+                "processed": False,
+                "processing_error": str(e)
+            }
