@@ -116,17 +116,34 @@ class PageRepository:
                 last_fetch_at=page.get("last_fetch_at"),
                 text_length=page.get("text_length"),
             )
-            pc = PageContent(
-                id=uuid4(),
-                page_id=page_id,
-                html=page.get("html", ""),
-                text=page.get("text_content", ""),
-                metadata_json=page.get("metadata", {}) or {},
-                extracted_json=page.get("extracted", {}) or {},
-                fetch_ts=page.get("last_fetch_at") or datetime.utcnow(),
-            )
+            
+            # Check if PageContent already exists for this page_id
+            existing_pc = s.execute(
+                select(PageContent).where(PageContent.page_id == page_id)
+            ).scalar_one_or_none()
+            
+            if existing_pc:
+                # Update existing PageContent
+                existing_pc.html = page.get("html", "")
+                existing_pc.text = page.get("text_content", "")
+                existing_pc.metadata_json = page.get("metadata", {}) or {}
+                existing_pc.extracted_json = page.get("extracted", {}) or {}
+                existing_pc.fetch_ts = page.get("last_fetch_at") or datetime.utcnow()
+                pc = existing_pc
+            else:
+                # Create new PageContent
+                pc = PageContent(
+                    id=uuid4(),
+                    page_id=page_id,
+                    html=page.get("html", ""),
+                    text=page.get("text_content", ""),
+                    metadata_json=page.get("metadata", {}) or {},
+                    extracted_json=page.get("extracted", {}) or {},
+                    fetch_ts=page.get("last_fetch_at") or datetime.utcnow(),
+                )
+                s.add(pc)
+            
             s.merge(p)
-            s.merge(pc)
             s.commit()
             return page_id
 
