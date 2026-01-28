@@ -429,6 +429,52 @@ function renderNodeModalContent(node, links, detail) {
     `;
   }
 
+  if (node.type === 'seed' || detail?.type === 'seed') {
+    return `
+      <div class="space-y-3">
+        <div class="text-xs uppercase text-slate-500">Seed</div>
+        <div class="text-sm font-semibold break-all">${escapeHtml(node.label || node.id)}</div>
+        ${meta.entity_type ? `<div class="text-xs">Entity Type: <b>${escapeHtml(meta.entity_type)}</b></div>` : ''}
+        ${meta.source ? `<div class="text-xs text-slate-500">Source: ${escapeHtml(meta.source)}</div>` : ''}
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
+          ${metaTable}
+        </div>
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Connections (${connections.length})</div>
+          ${connList}
+        </div>
+      </div>
+    `;
+  }
+
+  if (node.type === 'media' || detail?.type === 'media') {
+    const mediaUrl = meta.url || node.label;
+    const mediaType = meta.media_type || 'media';
+    const mediaPreview = mediaType === 'image' 
+      ? `<img src="${escapeHtml(mediaUrl)}" alt="Media" class="w-full max-h-72 object-contain rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">`
+      : '';
+    
+    return `
+      <div class="space-y-3">
+        <div class="text-xs uppercase text-slate-500">Media (${escapeHtml(mediaType)})</div>
+        <div class="text-sm font-semibold break-all">${escapeHtml(node.label || node.id)}</div>
+        ${meta.processed ? `<div class="text-xs text-green-600">✓ Processed</div>` : `<div class="text-xs text-slate-500">⏳ Not processed</div>`}
+        ${meta.extracted_text ? `<div class="text-xs text-slate-600">Extracted text: ${escapeHtml(meta.extracted_text)}</div>` : ''}
+        ${mediaPreview}
+        <div class="text-xs"><a class="text-blue-600 underline" href="${escapeHtml(mediaUrl)}" target="_blank" rel="noreferrer">Open media</a></div>
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
+          ${metaTable}
+        </div>
+        <div>
+          <div class="text-xs uppercase text-slate-500 mb-1">Connections (${connections.length})</div>
+          ${connList}
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div class="space-y-3">
       <div class="text-xs uppercase text-slate-500">Entity</div>

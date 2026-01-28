@@ -433,6 +433,37 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                             "source_id": str(page.id),
                         }
                         return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
+                    
+                    # Check for Seed
+                    if hasattr(db_models, 'Seed'):
+                        seed = session.query(db_models.Seed).filter_by(id=node_id).first()
+                        if seed:
+                            node_type = "seed"
+                            label = seed.query
+                            meta = {
+                                "seed_id": str(seed.id),
+                                "query": seed.query,
+                                "entity_type": seed.entity_type,
+                                "source": seed.source,
+                                "source_id": str(seed.id),
+                            }
+                            return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
+                    
+                    # Check for MediaItem
+                    if hasattr(db_models, 'MediaItem'):
+                        media = session.query(db_models.MediaItem).filter_by(id=node_id).first()
+                        if media:
+                            node_type = "media"
+                            label = media.url.split('/')[-1][:50] if media.url else "media"
+                            meta = {
+                                "media_id": str(media.id),
+                                "url": media.url,
+                                "media_type": media.media_type,
+                                "processed": media.processed,
+                                "extracted_text": media.extracted_text[:200] if media.extracted_text else None,
+                                "source_id": str(media.id),
+                            }
+                            return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
             
             # If not a valid UUID or not found in database, treat as canonical name or other node type
             # Return a generic entity node
