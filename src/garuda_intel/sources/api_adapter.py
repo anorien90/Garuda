@@ -295,7 +295,7 @@ class APIAdapter(SourceAdapter):
         # Convert to formatted JSON
         try:
             return json.dumps(data, indent=2, ensure_ascii=False)
-        except:
+        except (TypeError, ValueError):
             return str(data)
     
     def _extract_title(self, data: Any, query: str) -> Optional[str]:
@@ -331,6 +331,7 @@ class APIAdapter(SourceAdapter):
         Returns:
             Cache key string
         """
+        import hashlib
         # Create deterministic key from query and params
         key_parts = [query]
         
@@ -340,7 +341,7 @@ class APIAdapter(SourceAdapter):
                 key_parts.append(json.dumps(kwargs[k], sort_keys=True))
         
         key_str = "|".join(key_parts)
-        return hashlib.md5(key_str.encode()).hexdigest()
+        return hashlib.sha256(key_str.encode()).hexdigest()
     
     def _generate_id(self, url: str) -> str:
         """Generate unique ID for document.
@@ -351,4 +352,5 @@ class APIAdapter(SourceAdapter):
         Returns:
             Hash-based unique ID
         """
-        return hashlib.md5(url.encode()).hexdigest()
+        import hashlib
+        return hashlib.sha256(url.encode()).hexdigest()

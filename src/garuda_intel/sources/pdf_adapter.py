@@ -198,18 +198,29 @@ class PDFAdapter(SourceAdapter):
             BytesIO with PDF data
             
         Raises:
-            FetchError: If file read fails
+            FetchError: If file read fails or path is invalid
         """
+        import os
+        
+        # Validate path to prevent path traversal
+        try:
+            real_path = os.path.realpath(path)
+            # Ensure path doesn't contain traversal patterns
+            if '..' in path or not os.path.isfile(real_path):
+                raise FetchError(f"Invalid file path: {path}")
+        except Exception as e:
+            raise FetchError(f"Invalid file path: {str(e)}")
+        
         try:
             # Check file size
-            file_size = os.path.getsize(path)
+            file_size = os.path.getsize(real_path)
             if file_size > self.max_file_size:
                 raise FetchError(
                     f"PDF too large: {file_size / 1024 / 1024:.1f}MB "
                     f"(max: {self.max_file_size / 1024 / 1024:.1f}MB)"
                 )
             
-            with open(path, "rb") as f:
+            with open(real_path, "rb") as f:
                 return BytesIO(f.read())
                 
         except Exception as e:
@@ -305,4 +316,5 @@ class PDFAdapter(SourceAdapter):
         Returns:
             Hash-based unique ID
         """
-        return hashlib.md5(url.encode()).hexdigest()
+        import hashlib
+        return hashlib.sha256(url.encode()).hexdigest()

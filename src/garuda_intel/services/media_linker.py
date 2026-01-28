@@ -56,7 +56,17 @@ class MediaEntityLinker:
             
         Returns:
             ID of created MediaContent record
+            
+        Raises:
+            ValueError: If confidence is out of range or URL is invalid
         """
+        # Validate confidence
+        if not 0.0 <= confidence <= 1.0:
+            raise ValueError(f"Confidence must be between 0.0 and 1.0, got {confidence}")
+        
+        # Validate URL format
+        if not media_url or not media_url.startswith(('http://', 'https://', 'file://')):
+            raise ValueError(f"Invalid media URL: {media_url}")
         from ..database.models import MediaContent, Entity
         
         # Find entity mentions in text

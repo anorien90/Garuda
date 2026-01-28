@@ -6,10 +6,16 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+# Set minimal permissions by default
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Code Quality Checks
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     
     steps:
       - name: Checkout code
@@ -35,11 +41,9 @@ jobs:
       
       - name: Run ruff linter
         run: ruff check src/ --output-format=github
-        continue-on-error: true
       
       - name: Run black formatter check
         run: black --check src/
-        continue-on-error: true
       
       - name: Run mypy type checker
         run: mypy src/ --ignore-missing-imports
@@ -48,6 +52,8 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     
     services:
       qdrant:
@@ -110,6 +116,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, test]
     if: github.event_name == 'push'
+    permissions:
+      contents: read
     
     steps:
       - name: Checkout code
@@ -136,6 +144,8 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     
     steps:
       - name: Checkout code
