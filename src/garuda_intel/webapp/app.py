@@ -5,6 +5,14 @@ from flask_cors import CORS
 from functools import wraps
 import logging
 
+# Configure root logger with proper format BEFORE any other imports
+# This ensures all module-level loggers pick up the configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
 from ..database.engine import SQLAlchemyStore
 from ..database.relationship_manager import RelationshipManager
 from ..vector.engine import QdrantVectorStore
@@ -20,13 +28,6 @@ from .services.event_system import init_event_logging
 # Import route blueprints
 from .routes import static, recorder, search, crawling, entities, relationships
 from .routes import entity_gaps, entity_deduplication, entity_relations, media
-
-# Configure root logger with proper format
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
 
 settings = Settings.from_env()
 
