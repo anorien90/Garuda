@@ -37,11 +37,13 @@ class PostCrawlProcessor:
         self,
         store: PersistenceStore,
         relationship_manager: Optional[RelationshipManager] = None,
-        llm: Optional[LLMIntelExtractor] = None
+        llm: Optional[LLMIntelExtractor] = None,
+        vector_store = None
     ):
         self.store = store
         self.relationship_manager = relationship_manager
         self.llm = llm
+        self.vector_store = vector_store
         self.logger = logger
         
     def process(self, session_id: Optional[str] = None) -> Dict[str, Any]:
@@ -64,6 +66,7 @@ class PostCrawlProcessor:
             "relationships_removed": 0,
             "intel_items_aggregated": 0,
             "data_quality_improvements": 0,
+            "embeddings_generated": 0,
         }
         
         self.logger.info("=" * 60)
@@ -71,29 +74,34 @@ class PostCrawlProcessor:
         self.logger.info("=" * 60)
         
         # Step 1: Entity deduplication and merging
-        self.logger.info("Step 1/5: Deduplicating and merging entities...")
+        self.logger.info("Step 1/6: Deduplicating and merging entities...")
         entity_stats = self._deduplicate_entities()
         stats.update(entity_stats)
         
         # Step 2: Relationship deduplication and validation
-        self.logger.info("Step 2/5: Deduplicating and validating relationships...")
+        self.logger.info("Step 2/6: Deduplicating and validating relationships...")
         rel_stats = self._deduplicate_relationships()
         stats.update(rel_stats)
         
         # Step 3: Intelligence data aggregation
-        self.logger.info("Step 3/5: Aggregating intelligence data...")
+        self.logger.info("Step 3/6: Aggregating intelligence data...")
         intel_stats = self._aggregate_intelligence()
         stats.update(intel_stats)
         
         # Step 4: Cross-entity inference
-        self.logger.info("Step 4/5: Running cross-entity inference...")
+        self.logger.info("Step 4/6: Running cross-entity inference...")
         inference_stats = self._cross_entity_inference()
         stats.update(inference_stats)
         
         # Step 5: Data quality improvements
-        self.logger.info("Step 5/5: Applying data quality improvements...")
+        self.logger.info("Step 5/6: Applying data quality improvements...")
         quality_stats = self._improve_data_quality()
         stats.update(quality_stats)
+        
+        # Step 6: Generate embeddings for entities and intelligence
+        self.logger.info("Step 6/6: Generating embeddings for entities and intelligence...")
+        embedding_stats = self._generate_embeddings()
+        stats.update(embedding_stats)
         
         self.logger.info("=" * 60)
         self.logger.info("Post-crawl processing completed!")
@@ -103,6 +111,7 @@ class PostCrawlProcessor:
                         f"(removed {stats['relationships_removed']})")
         self.logger.info(f"  Intel aggregations: {stats['intel_items_aggregated']}")
         self.logger.info(f"  Quality improvements: {stats['data_quality_improvements']}")
+        self.logger.info(f"  Embeddings generated: {stats['embeddings_generated']}")
         self.logger.info("=" * 60)
         
         return stats
@@ -358,5 +367,128 @@ class PostCrawlProcessor:
             
         except Exception as e:
             self.logger.error(f"  Data quality improvements failed: {e}")
+            
+        return stats
+    
+    def _generate_embeddings(self) -> Dict[str, int]:
+        """
+        Generate embeddings for entities, intelligence, and pages that don't have them.
+        This enables semantic search and similarity matching across all data types.
+        """
+        stats = {
+            "embeddings_generated": 0,
+        }
+        
+        if not self.llm or not self.vector_store:
+            self.logger.info("  Embedding generation requires LLM and vector store, skipping")
+            return stats
+            
+        try:
+            from ..database.models import Entity, Intelligence, Page
+            import uuid as uuid_module
+            
+            with self.store.Session() as session:
+                # Generate embeddings for entities
+                entities = session.execute(select(Entity)).scalars().all()
+                
+                for entity in entities:
+                    try:
+                        # Create text representation of entity for embedding
+                        entity_text = f"{entity.name}"
+                        if entity.kind:
+                            entity_text += f" ({entity.kind})"
+                        if entity.data:
+                            # Add key data fields to the embedding text
+                            for key in ['description', 'summary', 'location', 'title']:
+                                if key in entity.data and entity.data[key]:
+                                    entity_text += f" {entity.data[key]}"
+                        
+                        # Generate embedding vector
+                        vector = self.llm.embed_text(entity_text)
+                        
+                        if vector:
+                            # Store in vector store
+                            self.vector_store.upsert(
+                                point_id=str(entity.id),
+                                vector=vector,
+                                payload={
+                                    "type": "entity",
+                                    "entity_id": str(entity.id),
+                                    "entity_name": entity.name,
+                                    "entity_kind": entity.kind,
+                                    "text": entity_text,
+                                }
+                            )
+                            stats["embeddings_generated"] += 1
+                    except Exception as e:
+                        self.logger.debug(f"  Failed to generate embedding for entity {entity.name}: {e}")
+                
+                # Generate embeddings for intelligence items
+                intel_items = session.execute(select(Intelligence)).scalars().all()
+                
+                for intel in intel_items:
+                    try:
+                        # Create text representation of intelligence
+                        intel_text = f"{intel.entity_name or ''} {intel.entity_type or ''}"
+                        if intel.data:
+                            # Add intelligence findings to embedding text
+                            import json
+                            data_str = json.dumps(intel.data, ensure_ascii=False)
+                            intel_text += f" {data_str[:500]}"  # Limit to avoid too long text
+                        
+                        # Generate embedding vector
+                        vector = self.llm.embed_text(intel_text)
+                        
+                        if vector:
+                            # Store in vector store
+                            self.vector_store.upsert(
+                                point_id=f"intel-{intel.id}",
+                                vector=vector,
+                                payload={
+                                    "type": "intelligence",
+                                    "intel_id": str(intel.id),
+                                    "entity_name": intel.entity_name,
+                                    "entity_type": intel.entity_type,
+                                    "text": intel_text[:500],
+                                }
+                            )
+                            stats["embeddings_generated"] += 1
+                    except Exception as e:
+                        self.logger.debug(f"  Failed to generate embedding for intelligence {intel.id}: {e}")
+                
+                # Generate embeddings for pages without embeddings
+                pages = session.execute(select(Page)).scalars().all()
+                
+                for page in pages:
+                    try:
+                        # Create text representation of page
+                        page_text = f"{page.title or ''} {page.url or ''}"
+                        if hasattr(page, 'summary') and page.summary:
+                            page_text += f" {page.summary[:500]}"
+                        
+                        # Generate embedding vector
+                        vector = self.llm.embed_text(page_text)
+                        
+                        if vector:
+                            # Store in vector store
+                            self.vector_store.upsert(
+                                point_id=f"page-{page.id}",
+                                vector=vector,
+                                payload={
+                                    "type": "page",
+                                    "page_id": str(page.id),
+                                    "url": page.url,
+                                    "title": page.title,
+                                    "text": page_text[:500],
+                                }
+                            )
+                            stats["embeddings_generated"] += 1
+                    except Exception as e:
+                        self.logger.debug(f"  Failed to generate embedding for page {page.url}: {e}")
+                
+                self.logger.info(f"  Generated {stats['embeddings_generated']} embeddings")
+            
+        except Exception as e:
+            self.logger.error(f"  Embedding generation failed: {e}")
             
         return stats
