@@ -38,6 +38,8 @@ COPY ./README.md .
 COPY ./LICENSE .
 
 RUN pip install --no-cache-dir .
+RUN apt-get update && apt-get install -y tesseract-ocr
+
 # Expose the default Flask port
 EXPOSE 8080
 

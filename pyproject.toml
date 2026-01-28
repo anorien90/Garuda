@@ -38,6 +38,8 @@ dependencies = [
     "python-dotenv",
     "qdrant-client",
     "sentence-transformers",
+    "pillow",
+    "pytesseract",
 ]
 
 [project.optional-dependencies]
