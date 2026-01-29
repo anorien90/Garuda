@@ -49,10 +49,14 @@ def test_paraphrase_query_success():
     assert len(result) > 0, "Should have paraphrased queries"
     assert len(result) <= 3, "Should cap at 3 paraphrased queries"
     
-    # Verify queries are different from original
+    # Verify queries are strings and not empty
     for para_query in result:
         assert isinstance(para_query, str), "Each query should be a string"
         assert len(para_query) > 0, "Queries should not be empty"
+    
+    # Verify at least one query is different from original
+    different_queries = [q for q in result if q.lower() != original_query.lower()]
+    assert len(different_queries) > 0, "At least one query should be different from original"
     
     print("✓ Paraphrase query success case works correctly")
     print(f"  Original: {original_query}")

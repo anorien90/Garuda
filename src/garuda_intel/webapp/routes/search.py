@@ -358,14 +358,23 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 all_retry_hits.extend(para_hits)
             
             # Deduplicate by URL and score, keep highest scoring versions
+            # Preserve hits without URLs (e.g., SQL-only hits)
             unique_hits = {}
+            hits_without_url = []
+            
             for hit in all_retry_hits:
                 url = hit.get("url", "")
                 if url:
                     if url not in unique_hits or hit.get("score", 0) > unique_hits[url].get("score", 0):
                         unique_hits[url] = hit
+                else:
+                    # Preserve hits without URLs
+                    hits_without_url.append(hit)
             
-            merged_hits = list(unique_hits.values())[:increased_top_k]
+            # Sort by score descending and take top results
+            deduplicated = list(unique_hits.values())
+            deduplicated.sort(key=lambda x: x.get("score", 0), reverse=True)
+            merged_hits = deduplicated[:increased_top_k] + hits_without_url[:increased_top_k // 4]
             
             # Re-check quality after retry
             rag_hits = [h for h in merged_hits if h.get("source") == "rag"]
@@ -385,9 +394,15 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             if not rag_hits:
                 crawl_reason = "No RAG results found"
             elif len(high_quality_rag) < 2:
-                crawl_reason = f"Insufficient high-quality RAG results ({len(high_quality_rag)}) after retry"
+                if retry_attempted:
+                    crawl_reason = f"Insufficient high-quality RAG results ({len(high_quality_rag)}) after retry"
+                else:
+                    crawl_reason = f"Insufficient high-quality RAG results ({len(high_quality_rag)})"
             else:
-                crawl_reason = "Answer insufficient despite RAG results and retry"
+                if retry_attempted:
+                    crawl_reason = "Answer insufficient despite RAG results and retry"
+                else:
+                    crawl_reason = "Answer insufficient despite RAG results"
             
             emit_event("chat", f"Phase 3: Intelligent crawling triggered - {crawl_reason}",
                      payload={"reason": crawl_reason})

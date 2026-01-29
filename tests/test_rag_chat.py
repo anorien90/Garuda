@@ -275,31 +275,46 @@ def test_retry_trigger_conditions():
     
     quality_threshold = 0.7
     
-    # Scenario 1: Low quality results should trigger retry
+    # Scenario 1: Low quality results AND insufficient answer should trigger retry
     low_quality_hits = [
         {"source": "rag", "score": 0.6, "snippet": "Low quality 1"},
         {"source": "rag", "score": 0.65, "snippet": "Low quality 2"},
     ]
     high_quality_low = [h for h in low_quality_hits if h.get("score", 0) >= quality_threshold]
-    should_retry_1 = len(high_quality_low) < 2
-    assert should_retry_1, "Should retry with <2 high-quality results"
-    print("  ✓ Triggers retry for low-quality results")
+    is_sufficient = False  # Simulate insufficient answer
+    should_retry_1 = not is_sufficient and len(high_quality_low) < 2
+    assert should_retry_1, "Should retry with <2 high-quality results and insufficient answer"
+    print("  ✓ Triggers retry for low-quality results AND insufficient answer")
     
-    # Scenario 2: Sufficient high-quality results should not trigger retry
+    # Scenario 2: Sufficient high-quality results BUT sufficient answer should not trigger retry
     high_quality_hits = [
         {"source": "rag", "score": 0.9, "snippet": "High quality 1"},
         {"source": "rag", "score": 0.85, "snippet": "High quality 2"},
     ]
     high_quality_high = [h for h in high_quality_hits if h.get("score", 0) >= quality_threshold]
-    should_retry_2 = len(high_quality_high) < 2
-    assert not should_retry_2, "Should not retry with 2+ high-quality results"
-    print("  ✓ Does not trigger retry for sufficient high-quality results")
+    is_sufficient = True  # Simulate sufficient answer
+    should_retry_2 = not is_sufficient and len(high_quality_high) < 2
+    assert not should_retry_2, "Should not retry with sufficient answer"
+    print("  ✓ Does not trigger retry when answer is sufficient")
     
-    # Scenario 3: No RAG results should trigger retry
+    # Scenario 3: No RAG results AND insufficient answer should trigger retry
     no_rag_hits = []
-    should_retry_3 = len(no_rag_hits) < 1
-    assert should_retry_3, "Should retry with no RAG results"
-    print("  ✓ Triggers retry for no RAG results")
+    is_sufficient = False
+    should_retry_3 = not is_sufficient and len(no_rag_hits) < 2
+    assert should_retry_3, "Should retry with no RAG results and insufficient answer"
+    print("  ✓ Triggers retry for no RAG results AND insufficient answer")
+    
+    # Scenario 4: High-quality results BUT insufficient answer should NOT trigger retry
+    # (This is the edge case - we have good results but answer is still bad)
+    high_quality_hits_2 = [
+        {"source": "rag", "score": 0.9, "snippet": "High quality 1"},
+        {"source": "rag", "score": 0.85, "snippet": "High quality 2"},
+    ]
+    high_quality_count = [h for h in high_quality_hits_2 if h.get("score", 0) >= quality_threshold]
+    is_sufficient = False  # Insufficient answer despite good results
+    should_retry_4 = not is_sufficient and len(high_quality_count) < 2
+    assert not should_retry_4, "Should not retry when quality count >= 2 (skip to crawl instead)"
+    print("  ✓ Does not trigger retry when 2+ high-quality results exist (goes to crawl)")
     
     print("✓ Retry trigger conditions work correctly")
 

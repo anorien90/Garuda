@@ -139,6 +139,10 @@ class QueryGenerator:
         Generate paraphrased versions of a query for better retrieval.
         Returns a list of 2-3 alternative phrasings.
         """
+        # Handle empty queries early
+        if not query or not query.strip():
+            return []
+        
         prompt = f"""
         Generate 2-3 alternative phrasings of the following query while preserving the intent and meaning.
         Make the phrasings diverse to improve information retrieval.
