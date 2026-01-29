@@ -117,7 +117,7 @@ class QueryGenerator:
 
         return sorted(ranked, key=lambda x: x.get("llm_score", 0), reverse=True)
 
-    def generate_seed_queries(self, user_question: str, entity_name: str) -> List[str]:
+    def generate_seed_queries(self, user_question: str, entity_name: str = "") -> List[str]:
         """Generates 3-4 specific search strings to find new data online."""
         prompt = f"""
         Goal: Find information to answer '{user_question}' about '{entity_name}'.
@@ -133,6 +133,38 @@ class QueryGenerator:
 
         except Exception:
             return [f"{entity_name} {user_question}"]
+    
+    def paraphrase_query(self, query: str) -> List[str]:
+        """
+        Generate paraphrased versions of a query for better retrieval.
+        Returns a list of 2-3 alternative phrasings.
+        """
+        # Handle empty queries early
+        if not query or not query.strip():
+            return []
+        
+        prompt = f"""
+        Generate 2-3 alternative phrasings of the following query while preserving the intent and meaning.
+        Make the phrasings diverse to improve information retrieval.
+        
+        Original query: "{query}"
+        
+        Return ONLY a JSON list of strings with the paraphrased queries.
+        """
+        try:
+            payload = {"model": self.model, "prompt": prompt, "stream": False, "format": "json"}
+            resp = requests.post(self.ollama_url, json=payload, timeout=20)
+            data = self.text_processor.safe_json_loads(resp.json().get("response", "[]"), fallback=[])
+            
+            # Ensure we got a list and filter out empty strings
+            if isinstance(data, list):
+                paraphrased = [p.strip() for p in data if isinstance(p, str) and p.strip()]
+                return paraphrased[:3] if paraphrased else [query]
+            
+            return [query]
+        except Exception as e:
+            self.logger.warning(f"Paraphrasing failed: {e}")
+            return [query]
 
     def synthesize_answer(self, question: str, context_hits: List[Dict]) -> str:
         """Synthesize an answer from context snippets."""

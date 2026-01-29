@@ -312,7 +312,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             return merged
     
         # Phase 1: Initial RAG lookup with prioritization
-        emit_event("chat", "Phase 1: RAG lookup", payload={"question": question})
+        emit_event("chat", "Phase 1: Initial RAG lookup", payload={"question": question})
         merged_hits = gather_hits(question, top_k, prioritize_rag=True)
         
         # Check if we have enough high-quality RAG results
@@ -327,28 +327,91 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         online_triggered = False
         live_urls = []
         crawl_reason = None
+        retry_attempted = False
+        paraphrased_queries = []
     
-        # Evaluate answer quality and determine if crawling is needed
+        # Evaluate answer quality and determine if retry is needed
         is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
         
-        # Phase 2: Intelligent crawling if needed
+        # Phase 2: Retry with paraphrasing and more hits if initial attempt insufficient
+        if not is_sufficient and len(high_quality_rag) < 2:
+            emit_event("chat", "Phase 2: Retry with paraphrasing and more hits",
+                     payload={"reason": "Insufficient initial results"})
+            retry_attempted = True
+            
+            # Generate paraphrased queries
+            paraphrased_queries = llm.paraphrase_query(question)
+            emit_event("chat", f"Generated {len(paraphrased_queries)} paraphrased queries",
+                     payload={"paraphrased": paraphrased_queries})
+            
+            # Gather results with increased limit and paraphrased queries
+            increased_top_k = min(top_k * 2, 20)  # Double the hits, cap at 20
+            all_retry_hits = []
+            
+            # Search with original query (increased hits)
+            retry_hits = gather_hits(question, increased_top_k, prioritize_rag=True)
+            all_retry_hits.extend(retry_hits)
+            
+            # Search with each paraphrased query
+            for para_query in paraphrased_queries:
+                para_hits = gather_hits(para_query, increased_top_k, prioritize_rag=True)
+                all_retry_hits.extend(para_hits)
+            
+            # Deduplicate by URL and score, keep highest scoring versions
+            # Preserve hits without URLs (e.g., SQL-only hits)
+            unique_hits = {}
+            hits_without_url = []
+            
+            for hit in all_retry_hits:
+                url = hit.get("url", "")
+                if url:
+                    if url not in unique_hits or hit.get("score", 0) > unique_hits[url].get("score", 0):
+                        unique_hits[url] = hit
+                else:
+                    # Preserve hits without URLs
+                    hits_without_url.append(hit)
+            
+            # Sort by score descending and take top results
+            deduplicated = list(unique_hits.values())
+            deduplicated.sort(key=lambda x: x.get("score", 0), reverse=True)
+            merged_hits = deduplicated[:increased_top_k] + hits_without_url[:increased_top_k // 4]
+            
+            # Re-check quality after retry
+            rag_hits = [h for h in merged_hits if h.get("source") == "rag"]
+            high_quality_rag = [h for h in rag_hits if h.get("score", 0) >= rag_quality_threshold]
+            
+            emit_event("chat", f"After retry: {len(high_quality_rag)}/{len(rag_hits)} high-quality RAG hits",
+                     payload={"high_quality": len(high_quality_rag), "total_rag": len(rag_hits),
+                            "total_results": len(merged_hits)})
+            
+            # Re-synthesize answer with new results
+            answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
+            is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
+        
+        # Phase 3: Intelligent crawling if still insufficient
         if not is_sufficient:
             # Determine crawl trigger reasons
             if not rag_hits:
                 crawl_reason = "No RAG results found"
             elif len(high_quality_rag) < 2:
-                crawl_reason = f"Insufficient high-quality RAG results ({len(high_quality_rag)})"
+                if retry_attempted:
+                    crawl_reason = f"Insufficient high-quality RAG results ({len(high_quality_rag)}) after retry"
+                else:
+                    crawl_reason = f"Insufficient high-quality RAG results ({len(high_quality_rag)})"
             else:
-                crawl_reason = "Answer insufficient despite RAG results"
+                if retry_attempted:
+                    crawl_reason = "Answer insufficient despite RAG results and retry"
+                else:
+                    crawl_reason = "Answer insufficient despite RAG results"
             
-            emit_event("chat", f"Phase 2: Intelligent crawling triggered - {crawl_reason}",
+            emit_event("chat", f"Phase 3: Intelligent crawling triggered - {crawl_reason}",
                      payload={"reason": crawl_reason})
             
             profile = EntityProfile(name=entity or "General Research", entity_type=EntityType.TOPIC)
             online_triggered = True
     
-            # Generate targeted search queries
-            search_queries = llm.generate_seed_queries(question, profile.name)
+            # Generate targeted search queries (use paraphrased queries if available)
+            search_queries = paraphrased_queries if paraphrased_queries else llm.generate_seed_queries(question, profile.name)
             emit_event("chat", f"Generated {len(search_queries)} search queries", 
                      payload={"queries": search_queries})
             
@@ -391,8 +454,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                         except Exception:
                             pass
     
-                # Phase 3: Re-query with new embeddings
-                emit_event("chat", "Phase 3: Re-querying with newly crawled data")
+                # Phase 4: Re-query with new embeddings
+                emit_event("chat", "Phase 4: Re-querying with newly crawled data")
                 merged_hits = gather_hits(question, top_k, prioritize_rag=True)
                 answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
                 
@@ -410,7 +473,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 answer = "I searched online but still couldn't find a definitive answer."
     
         emit_event("chat", "Chat completed successfully", 
-                 payload={"session_id": session_id, "online_triggered": online_triggered})
+                 payload={"session_id": session_id, "online_triggered": online_triggered, 
+                         "retry_attempted": retry_attempted})
         
         return jsonify(
             {
@@ -418,6 +482,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 "context": merged_hits,
                 "entity": entity,
                 "online_search_triggered": online_triggered,
+                "retry_attempted": retry_attempted,
+                "paraphrased_queries": paraphrased_queries,
                 "live_urls": live_urls,
                 "crawl_reason": crawl_reason,
                 "rag_hits_count": len([h for h in merged_hits if h.get("source") == "rag"]),

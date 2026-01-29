@@ -220,9 +220,13 @@ class LLMIntelExtractor:
         )
 
     # ---------- Query helpers ----------
-    def generate_seed_queries(self, user_question: str, entity_name: str) -> List[str]:
+    def generate_seed_queries(self, user_question: str, entity_name: str = "") -> List[str]:
         """Generates 3-4 specific search strings to find new data online."""
         return self.query_generator.generate_seed_queries(user_question, entity_name)
+    
+    def paraphrase_query(self, query: str) -> List[str]:
+        """Generate paraphrased versions of a query for better retrieval."""
+        return self.query_generator.paraphrase_query(query)
 
     def synthesize_answer(self, question: str, context_hits: List[Dict]) -> str:
         """Synthesize an answer from context snippets."""
