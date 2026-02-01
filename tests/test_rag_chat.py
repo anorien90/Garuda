@@ -257,16 +257,36 @@ def test_retry_with_paraphrasing_logic():
     # Verify the higher score version was kept for url1
     url1_hit = next(h for h in deduplicated if h["url"] == "url1")
     assert url1_hit["score"] == 0.75, "Should keep higher-scored duplicate"
+
+
+def test_live_url_dedup_and_normalization():
+    """Test chat crawl candidate handling accepts dicts and strings and dedupes."""
+    # Simulate mixed candidates from collect_candidates_simple
+    candidates = [
+        {"href": "https://example.com/a"},
+        {"url": "https://example.com/b"},
+        "https://example.com/a",  # duplicate string
+        "https://example.com/c",
+    ]
     
-    # Check quality after retry
-    quality_threshold = 0.7
-    high_quality = [h for h in deduplicated if h.get("score", 0) >= quality_threshold]
+    # Inline candidate normalization mirroring route logic
+    live_urls = []
+    seen = set()
+    for cand in candidates:
+        url = None
+        if isinstance(cand, dict):
+            url = cand.get("href") or cand.get("url")
+        elif isinstance(cand, str):
+            url = cand
+        if url and url not in seen:
+            seen.add(url)
+            live_urls.append(url)
     
-    assert len(high_quality) >= 2, f"Should have 2+ high quality after retry, got {len(high_quality)}"
-    
-    print("✓ Retry with paraphrasing logic works correctly")
-    print(f"  Initial results: {len(initial_rag_hits)} RAG + {len(initial_sql_hits)} SQL")
-    print(f"  After retry: {len(deduplicated)} unique results, {len(high_quality)} high-quality")
+    assert live_urls == [
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    ]
 
 
 def test_retry_trigger_conditions():

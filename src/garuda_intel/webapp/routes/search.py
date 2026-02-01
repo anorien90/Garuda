@@ -416,7 +416,19 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             emit_event("chat", f"Generated {len(search_queries)} search queries", 
                      payload={"queries": search_queries})
             
-            live_urls = collect_candidates_simple(search_queries, limit=5)
+            candidates = collect_candidates_simple(search_queries, limit=5)
+            live_urls = []
+            seen_live = set()
+            for cand in candidates:
+                url = None
+                if isinstance(cand, dict):
+                    url = cand.get("href") or cand.get("url")
+                elif isinstance(cand, str):
+                    url = cand
+                if url and url not in seen_live:
+                    seen_live.add(url)
+                    live_urls.append(url)
+            
             emit_event("chat", f"Found {len(live_urls)} candidate URLs", 
                      payload={"urls": live_urls})
     
