@@ -332,9 +332,10 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
     
         # Evaluate answer quality and determine if retry is needed
         is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
+        quality_insufficient = len(high_quality_rag) == 0
         
         # Phase 2: Retry with paraphrasing and more hits if initial attempt insufficient
-        if not is_sufficient and len(high_quality_rag) < 2:
+        if quality_insufficient or (not is_sufficient and len(high_quality_rag) < 2):
             emit_event("chat", "Phase 2: Retry with paraphrasing and more hits",
                      payload={"reason": "Insufficient initial results"})
             retry_attempted = True
@@ -389,7 +390,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
         
         # Phase 3: Intelligent crawling if still insufficient
-        if not is_sufficient:
+        if not is_sufficient or quality_insufficient:
             # Determine crawl trigger reasons
             if not rag_hits:
                 crawl_reason = "No RAG results found"
