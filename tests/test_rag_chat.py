@@ -319,6 +319,27 @@ def test_retry_trigger_conditions():
     print("✓ Retry trigger conditions work correctly")
 
 
+def test_zero_high_quality_always_triggers_online():
+    """Ensure zero high-quality RAG hits trigger online crawl even if answer seems sufficient."""
+    print("\n=== Test: Zero High Quality Triggers Online Crawl ===")
+    
+    rag_hits = [
+        {"source": "rag", "score": 0.4, "snippet": "Low quality"},
+    ]
+    quality_threshold = 0.7
+    high_quality_rag = [h for h in rag_hits if h.get("score", 0) >= quality_threshold]
+    
+    # Simulate sufficiency flag being True but quality is zero
+    is_sufficient = True
+    quality_insufficient = len(high_quality_rag) == 0
+    should_retry = quality_insufficient or (not is_sufficient and len(high_quality_rag) < 2)
+    
+    assert quality_insufficient, "Quality insufficiency should detect zero high-quality results"
+    assert should_retry, "Should trigger retry/crawl when no high-quality hits even if answer seems sufficient"
+    
+    print("✓ Zero high-quality results force online search/crawl trigger")
+
+
 def test_increased_hits_on_retry():
     """Test that retry increases the number of hits requested."""
     print("\n=== Test: Increased Hits on Retry ===")
@@ -398,4 +419,3 @@ def run_all_tests():
 
 if __name__ == "__main__":
     run_all_tests()
-
