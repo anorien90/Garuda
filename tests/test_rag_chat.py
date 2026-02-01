@@ -259,7 +259,7 @@ def test_retry_with_paraphrasing_logic():
     assert url1_hit["score"] == 0.75, "Should keep higher-scored duplicate"
 
 
-def test_live_url_dedup_and_normalization():
+def test_chat_crawl_candidate_normalization_and_deduplication():
     """Test chat crawl candidate handling accepts dicts and strings and dedupes."""
     # Simulate mixed candidates from collect_candidates_simple
     candidates = [
