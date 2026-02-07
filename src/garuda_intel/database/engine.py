@@ -1338,6 +1338,107 @@ class SQLAlchemyStore(PersistenceStore):
         
         return overlap / total if total > 0 else 0.0
 
+    def deduplicate_cross_kind(self, threshold: float = 0.95, batch_size: int = 1000) -> Dict[str, str]:
+        """
+        Deduplicate entities across different kinds.
+        
+        This merges generic entity kinds (like 'entity', 'unknown') into more
+        specific kinds (like 'person', 'company') when names match.
+        Uses the EntityKindRegistry to determine which kind should be preserved.
+        
+        Args:
+            threshold: Name similarity threshold (0-1)
+            batch_size: Number of entities to process per batch
+            
+        Returns:
+            Dictionary mapping source_id -> target_id for all merged entities
+        """
+        try:
+            from ..types.entity import get_registry
+            registry = get_registry()
+        except ImportError:
+            self.logger.warning("EntityKindRegistry not available, skipping cross-kind deduplication")
+            return {}
+        
+        # First pass: collect entity info in batches and group by name
+        entities_by_name = {}
+        offset = 0
+        
+        while True:
+            with self.Session() as s:
+                batch = s.execute(
+                    select(Entity).offset(offset).limit(batch_size)
+                ).scalars().all()
+                
+                if not batch:
+                    break
+                
+                for entity in batch:
+                    if not entity.name:
+                        continue
+                    normalized = entity.name.lower().strip()
+                    if normalized not in entities_by_name:
+                        entities_by_name[normalized] = []
+                    # Store only the info we need, not the ORM object
+                    entities_by_name[normalized].append({
+                        "id": str(entity.id),
+                        "name": entity.name,
+                        "kind": entity.kind or 'entity',
+                    })
+                
+                offset += batch_size
+                
+                # Clear session to avoid memory issues
+                s.expunge_all()
+        
+        # Second pass: determine merge pairs
+        merge_pairs = []  # List of (source_id, target_id) tuples
+        
+        for name, entities in entities_by_name.items():
+            if len(entities) <= 1:
+                continue
+            
+            self.logger.debug(f"Processing {len(entities)} entities with name '{name}'")
+            
+            # Find the entity with the highest priority kind
+            best_entity = None
+            best_priority = -1
+            
+            for entity in entities:
+                priority = registry.get_priority(entity["kind"])
+                if priority > best_priority:
+                    best_priority = priority
+                    best_entity = entity
+            
+            if not best_entity:
+                continue
+            
+            # Collect merge pairs
+            for entity in entities:
+                if entity["id"] == best_entity["id"]:
+                    continue
+                
+                # Check if they should be merged based on kind
+                should_merge, winning_kind = registry.should_merge_kinds(
+                    entity["kind"],
+                    best_entity["kind"]
+                )
+                
+                if should_merge:
+                    merge_pairs.append((entity["id"], best_entity["id"], entity["name"], entity["kind"], best_entity["kind"]))
+        
+        # Third pass: execute merges
+        merged_map = {}
+        for source_id, target_id, name, source_kind, target_kind in merge_pairs:
+            if self.merge_entities(source_id, target_id):
+                merged_map[source_id] = target_id
+                self.logger.info(
+                    f"Cross-kind merge: {name} ({source_kind}) -> ({target_kind})"
+                )
+        
+        self.logger.info(f"Cross-kind deduplication complete: {len(merged_map)} entities merged")
+        return merged_map
+
     # -------- Relationship Queries (Phase 3) --------
     def get_relationship_by_entities(
         self, 

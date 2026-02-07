@@ -483,39 +483,87 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                     if entity:
                         node_type = "entity"
                         label = entity.name
+                        
+                        # Get entity data and metadata
+                        entity_data = entity.data or {}
+                        entity_meta = entity.metadata_json or {}
+                        
                         meta = {
-                            "entity_id": str(entity.id),
                             "name": entity.name,
                             "kind": entity.kind,
-                            "source_id": str(entity.id),
+                            "last_seen": entity.last_seen.isoformat() if entity.last_seen else None,
                         }
-                        return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
+                        
+                        # Add entity data fields (excluding internal fields)
+                        for key, value in entity_data.items():
+                            if key not in meta and value:
+                                meta[key] = value
+                        
+                        # Add metadata fields
+                        for key, value in entity_meta.items():
+                            if key not in meta and value:
+                                meta[key] = value
+                        
+                        # Get related entities through relationships
+                        relationships = []
+                        for rel in entity.outgoing_relationships:
+                            target = session.query(db_models.Entity).filter_by(id=rel.target_id).first()
+                            if target:
+                                relationships.append({
+                                    "direction": "outgoing",
+                                    "type": rel.relation_type,
+                                    "target_name": target.name,
+                                    "target_kind": target.kind,
+                                    "confidence": rel.confidence,
+                                })
+                        for rel in entity.incoming_relationships:
+                            source = session.query(db_models.Entity).filter_by(id=rel.source_id).first()
+                            if source:
+                                relationships.append({
+                                    "direction": "incoming",
+                                    "type": rel.relation_type,
+                                    "source_name": source.name,
+                                    "source_kind": source.kind,
+                                    "confidence": rel.confidence,
+                                })
+                        
+                        return jsonify({
+                            "id": node_id, 
+                            "type": node_type, 
+                            "label": label, 
+                            "meta": meta,
+                            "relationships": relationships,
+                        })
 
                     intel = session.query(db_models.Intelligence).filter_by(id=node_id).first()
                     if intel:
                         node_type = "intel"
-                        label = f"Intel: {intel.entity_type or 'data'}"
+                        label = intel.entity_name or f"Intel: {intel.entity_type or 'data'}"
                         meta = {
-                            "intel_id": str(intel.id),
                             "entity_name": intel.entity_name,
                             "entity_type": intel.entity_type,
-                            "data": intel.data,
                             "confidence": intel.confidence,
-                            "source_id": str(intel.id),
+                            "created_at": intel.created_at.isoformat() if intel.created_at else None,
                         }
-                        return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
+                        # Include intel data in a readable format
+                        data = intel.data or {}
+                        return jsonify({
+                            "id": node_id, 
+                            "type": node_type, 
+                            "label": label, 
+                            "meta": meta,
+                            "data": data,
+                        })
 
                     page = session.query(db_models.Page).filter_by(id=node_id).first()
                     if page:
                         node_type = "page"
                         label = page.title or page.url
                         meta = {
-                            "page_id": str(page.id),
                             "url": page.url,
                             "title": page.title,
                             "page_type": page.page_type,
                             "intel_score": page.score,
-                            "source_id": str(page.id),
                         }
                         return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
                     
@@ -526,11 +574,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                             node_type = "seed"
                             label = seed.query
                             meta = {
-                                "seed_id": str(seed.id),
                                 "query": seed.query,
                                 "entity_type": seed.entity_type,
                                 "source": seed.source,
-                                "source_id": str(seed.id),
                             }
                             return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
                     
@@ -541,12 +587,10 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                             node_type = "media"
                             label = media.url.split('/')[-1][:50] if media.url else "media"
                             meta = {
-                                "media_id": str(media.id),
                                 "url": media.url,
                                 "media_type": media.media_type,
                                 "processed": media.processed,
                                 "extracted_text": media.extracted_text[:200] if media.extracted_text else None,
-                                "source_id": str(media.id),
                             }
                             return jsonify({"id": node_id, "type": node_type, "label": label, "meta": meta})
             

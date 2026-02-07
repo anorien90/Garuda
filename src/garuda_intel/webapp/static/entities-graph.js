@@ -2,8 +2,8 @@ import { els, val } from './config.js';
 import { pill, collapsible, renderKeyValTable } from './ui.js';
 import { showModal, updateModal } from './modals.js';
 
-// Color maps for node/edge kinds
-const COLORS = {
+// Color maps for node/edge kinds - will be updated from schema API
+let COLORS = {
   person: '#0ea5e9',
   org: '#22c55e',
   location: '#a855f7',
@@ -19,7 +19,7 @@ const COLORS = {
   unknown: '#94a3b8',
 };
 
-const EDGE_COLORS = {
+let EDGE_COLORS = {
   cooccurrence: 'rgba(148,163,184,0.22)',
   'page-mentions': 'rgba(34,197,94,0.28)',
   'intel-mentions': 'rgba(244,63,94,0.32)',
@@ -36,6 +36,11 @@ const EDGE_COLORS = {
   'has-product': 'rgba(249,115,22,0.35)',
   default: 'rgba(148,163,184,0.18)',
 };
+
+// Schema cache
+let schemaCache = null;
+let schemaCacheTime = 0;
+const SCHEMA_CACHE_TTL = 60000; // 1 minute cache
 
 const PARTICLE_SPEED = 0.0002;
 const PARTICLE_WIDTH_BASE = 0.45;
@@ -73,6 +78,55 @@ function setStatus(msg, isError = false) {
   if (!els.entitiesGraphStatus) return;
   els.entitiesGraphStatus.textContent = msg || '';
   els.entitiesGraphStatus.classList.toggle('text-rose-500', isError);
+}
+
+/**
+ * Fetch schema from API with caching
+ */
+async function fetchSchema() {
+  const now = Date.now();
+  if (schemaCache && (now - schemaCacheTime) < SCHEMA_CACHE_TTL) {
+    return schemaCache;
+  }
+  
+  try {
+    const base = val('base-url') || '';
+    const res = await fetch(`${base}/api/schema/full`, {
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+    });
+    if (!res.ok) throw new Error(`Schema fetch failed (${res.status})`);
+    schemaCache = await res.json();
+    schemaCacheTime = now;
+    
+    // Update color maps
+    if (schemaCache.colors?.nodes) {
+      COLORS = { ...COLORS, ...schemaCache.colors.nodes };
+    }
+    if (schemaCache.colors?.edges) {
+      EDGE_COLORS = { ...EDGE_COLORS, ...schemaCache.colors.edges };
+    }
+    
+    return schemaCache;
+  } catch (e) {
+    console.warn('Failed to fetch schema:', e);
+    return null;
+  }
+}
+
+/**
+ * Get node color, falling back to defaults
+ */
+function getNodeColor(node) {
+  const type = node.type || node.meta?.entity_kind;
+  return COLORS[type] || COLORS[node.meta?.entity_kind] || COLORS.unknown;
+}
+
+/**
+ * Get edge color, falling back to defaults
+ */
+function getEdgeColor(link) {
+  const kind = link.kind || link.meta?.relation_type;
+  return EDGE_COLORS[kind] || EDGE_COLORS.default;
 }
 
 function renderLegend() {
@@ -190,17 +244,33 @@ function metaTableWithLinks(meta) {
   if (!meta || typeof meta !== 'object' || !Object.keys(meta).length) {
     return '<div class="text-xs text-slate-500">No metadata</div>';
   }
+  
+  // Skip internal ID fields
+  const skipKeys = ['source_id', 'target_id', 'page_id', 'entity_id', 'intel_id', 'seed_id', 'media_id'];
+  const filteredMeta = Object.fromEntries(
+    Object.entries(meta).filter(([k]) => !skipKeys.includes(k))
+  );
+  
+  if (!Object.keys(filteredMeta).length) {
+    return '<div class="text-xs text-slate-500">No metadata</div>';
+  }
+  
   return renderKeyValTable(
     Object.fromEntries(
-      Object.entries(meta).map(([k, v]) => {
+      Object.entries(filteredMeta).map(([k, v]) => {
+        const label = k.replace(/_/g, ' ');
         if (typeof v === 'string' && v.startsWith('http')) {
           const safeUrl = escapeHtml(v);
           return [
-            escapeHtml(k),
+            escapeHtml(label),
             `<a class="text-blue-600 underline" href="${safeUrl}" target="_blank" rel="noreferrer">${safeUrl}</a>`,
           ];
         }
-        return [escapeHtml(k), escapeHtml(fmt(v))];
+        // Handle objects
+        if (typeof v === 'object' && v !== null) {
+          return [escapeHtml(label), formatMetaValue(v)];
+        }
+        return [escapeHtml(label), escapeHtml(fmt(v))];
       })
     )
   );
@@ -371,6 +441,99 @@ async function fetchNodeDetail(node) {
   }
 }
 
+/**
+ * Format a metadata value for human-readable display
+ */
+function formatMetaValue(value, depth = 0) {
+  if (value === null || value === undefined) return '—';
+  // Limit recursion depth to prevent performance issues
+  if (depth > 3) return '…';
+  if (typeof value === 'object') {
+    // Format nested objects
+    if (Array.isArray(value)) {
+      // Limit array length for performance
+      const maxItems = 10;
+      const items = value.slice(0, maxItems).map(v => formatMetaValue(v, depth + 1));
+      return items.join(', ') + (value.length > maxItems ? ` (+${value.length - maxItems} more)` : '');
+    }
+    // Extract meaningful fields from object
+    const meaningful = ['name', 'title', 'label', 'type', 'role', 'value', 'description'];
+    for (const key of meaningful) {
+      if (value[key]) return escapeHtml(String(value[key]));
+    }
+    // Fallback: show first few key-value pairs
+    const entries = Object.entries(value).slice(0, 3);
+    if (entries.length === 0) return '—';
+    return entries.map(([k, v]) => `${k}: ${formatMetaValue(v, depth + 1)}`).join(', ');
+  }
+  return escapeHtml(String(value));
+}
+
+/**
+ * Lookup a node's label by ID from the current graph data
+ */
+function lookupNodeLabel(nodeId) {
+  if (!nodeId) return null;
+  // Handle both string IDs and object references with id property
+  const searchId = typeof nodeId === 'object' && nodeId !== null ? nodeId.id : nodeId;
+  if (!searchId) return null;
+  const node = filteredNodes.find(n => n.id === searchId);
+  return node?.label || node?.meta?.name || null;
+}
+
+/**
+ * Format a connection for human-readable display
+ */
+function formatConnection(conn) {
+  const nodeLabel = lookupNodeLabel(conn.id) || conn.id;
+  const kindLabel = formatRelationType(conn.kind);
+  const weight = conn.weight ? `<span class="text-slate-400 ml-1">weight: ${conn.weight}</span>` : '';
+  
+  // Format meta, excluding internal IDs
+  const metaDisplay = conn.meta && Object.keys(conn.meta).length
+    ? formatConnectionMeta(conn.meta)
+    : '';
+  
+  return `
+    <li class="py-1 border-b border-slate-100 dark:border-slate-800 last:border-0">
+      <div class="flex items-center gap-2">
+        <span class="font-medium text-blue-600 dark:text-blue-400">${escapeHtml(nodeLabel)}</span>
+        <span class="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[10px] text-slate-600 dark:text-slate-400">${escapeHtml(kindLabel)}</span>
+        ${weight}
+      </div>
+      ${metaDisplay}
+    </li>
+  `;
+}
+
+/**
+ * Format relation type for human display
+ */
+function formatRelationType(kind) {
+  if (!kind) return 'link';
+  return kind.replace(/_/g, ' ').replace(/-/g, ' ');
+}
+
+/**
+ * Format connection metadata, excluding internal IDs
+ */
+function formatConnectionMeta(meta) {
+  const skipKeys = ['source_id', 'target_id', 'metadata'];
+  const displayEntries = Object.entries(meta)
+    .filter(([k]) => !skipKeys.includes(k))
+    .filter(([, v]) => v !== null && v !== undefined && v !== '');
+  
+  if (displayEntries.length === 0) return '';
+  
+  const formatted = displayEntries.map(([k, v]) => {
+    const label = k.replace(/_/g, ' ');
+    const value = formatMetaValue(v);
+    return `<span class="inline-block mr-2">${escapeHtml(label)}: <b>${value}</b></span>`;
+  }).join('');
+  
+  return `<div class="text-[11px] text-slate-500 mt-0.5">${formatted}</div>`;
+}
+
 function renderNodeModalContent(node, links, detail) {
   const meta = detail?.meta || node.meta || {};
   const connections = links
@@ -383,20 +546,7 @@ function renderNodeModalContent(node, links, detail) {
 
   const metaTable = metaTableWithLinks(meta);
   const connList = connections.length
-    ? `<ul class="text-xs space-y-1">${connections
-        .map(
-          (c) =>
-            `<li><b>${escapeHtml(c.id)}</b> <span class="text-slate-500">[${escapeHtml(c.kind || 'link')}]</span>${
-              c.weight ? ` w:${escapeHtml(fmt(c.weight))}` : ''
-            }${
-              c.meta && Object.keys(c.meta).length
-                ? `<div class="text-slate-500">${Object.entries(c.meta)
-                    .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(fmt(v))}`)
-                    .join(' • ')}</div>`
-                : ''
-            }</li>`
-        )
-        .join('')}</ul>`
+    ? `<ul class="text-xs space-y-0">${connections.map(c => formatConnection(c)).join('')}</ul>`
     : `<div class="text-xs text-slate-500">No connections</div>`;
 
   if (node.type === 'page' || detail?.type === 'page') {
@@ -555,19 +705,47 @@ function renderNodeModalContent(node, links, detail) {
     `;
   }
 
+  // Render relationships from API if available
+  const relationshipsSection = detail?.relationships && detail.relationships.length > 0
+    ? `
+      <div>
+        <div class="text-xs uppercase text-slate-500 mb-1">Relationships (${detail.relationships.length})</div>
+        <ul class="text-xs space-y-1">
+          ${detail.relationships.map(r => {
+            const direction = r.direction === 'outgoing' ? '→' : '←';
+            const other = r.direction === 'outgoing' 
+              ? `<b class="text-blue-600">${escapeHtml(r.target_name || 'Unknown')}</b> <span class="text-slate-400">(${escapeHtml(r.target_kind || 'entity')})</span>`
+              : `<b class="text-blue-600">${escapeHtml(r.source_name || 'Unknown')}</b> <span class="text-slate-400">(${escapeHtml(r.source_kind || 'entity')})</span>`;
+            const relType = escapeHtml(formatRelationType(r.type || 'related'));
+            const confidence = r.confidence ? ` <span class="text-slate-400">confidence: ${r.confidence}</span>` : '';
+            return `<li class="py-1 border-b border-slate-100 dark:border-slate-800 last:border-0">${direction} <span class="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[10px]">${relType}</span> ${other}${confidence}</li>`;
+          }).join('')}
+        </ul>
+      </div>
+    `
+    : '';
+
+  // Get kind from meta or node type
+  const kind = meta.kind || node.type || 'entity';
+  const kindColor = COLORS[kind] || COLORS.entity;
+
   return `
     <div class="space-y-3">
-      <div class="text-xs uppercase text-slate-500">Entity</div>
-      <div class="text-sm font-semibold break-all">${escapeHtml(node.label || node.id)}</div>
-      <div class="text-xs text-slate-500">Type: ${escapeHtml(node.type || 'unknown')} • score ${escapeHtml(
-    fmt(node.score)
-  )} • count ${escapeHtml(fmt(node.count))}</div>
+      <div class="flex items-center gap-2">
+        <span class="inline-block w-3 h-3 rounded-full" style="background:${kindColor}"></span>
+        <span class="text-xs uppercase text-slate-500">${escapeHtml(kind)}</span>
+      </div>
+      <div class="text-lg font-semibold break-all">${escapeHtml(node.label || meta.name || node.id)}</div>
+      ${meta.last_seen ? `<div class="text-xs text-slate-500">Last seen: ${escapeHtml(meta.last_seen)}</div>` : ''}
+      ${node.score ? `<div class="text-xs"><span class="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900 rounded">score: ${escapeHtml(fmt(node.score))}</span></div>` : ''}
+      ${node.count ? `<div class="text-xs"><span class="px-1.5 py-0.5 bg-green-100 dark:bg-green-900 rounded">mentions: ${escapeHtml(fmt(node.count))}</span></div>` : ''}
       <div>
-        <div class="text-xs uppercase text-slate-500 mb-1">Meta</div>
+        <div class="text-xs uppercase text-slate-500 mb-1">Details</div>
         ${metaTable}
       </div>
+      ${relationshipsSection}
       <div>
-        <div class="text-xs uppercase text-slate-500 mb-1">Connections (${connections.length})</div>
+        <div class="text-xs uppercase text-slate-500 mb-1">Graph Connections (${connections.length})</div>
         ${connList}
       </div>
     </div>
@@ -910,6 +1088,11 @@ async function renderGraph() {
 async function loadAndRender(ev) {
   ev?.preventDefault();
   try {
+    // Fetch schema first to update colors
+    await fetchSchema();
+    // Re-render legend with updated colors
+    renderLegend();
+    
     const data = await fetchGraph();
     currentNodes = data.nodes || [];
     currentLinks = data.links || [];
@@ -923,6 +1106,9 @@ async function loadAndRender(ev) {
 
 export async function initEntitiesGraph() {
   if (!els.entitiesGraphForm || !els.entitiesGraphCanvas) return;
+  
+  // Fetch schema on init
+  await fetchSchema();
   renderLegend();
   renderDetails(null, []);
   updateToggleButton();
