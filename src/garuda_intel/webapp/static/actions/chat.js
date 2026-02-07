@@ -11,12 +11,12 @@ export async function chatAsk(e) {
   const maxCyclesEl = getEl('chat-max-cycles');
   const autonomousModeEl = getEl('chat-autonomous-mode');
   
-  if (!qEl || !entityEl || !topkEl || !maxCyclesEl || !autonomousModeEl) {
+  if (!qEl || !entityEl || !topkEl) {
     els.chatAnswer.innerHTML = '<div class="p-4 text-rose-500">Chat form is missing from the page.</div>';
     return;
   }
 
-  const autonomousModeEnabled = autonomousModeEl.checked;
+  const autonomousModeEnabled = autonomousModeEl ? autonomousModeEl.checked : false;
   
   // Phase indicator with animation
   const updatePhase = (phase, message) => {
@@ -35,7 +35,7 @@ export async function chatAsk(e) {
       question: qEl.value,
       entity: entityEl.value,
       top_k: Number(topkEl.value || 6),
-      max_search_cycles: Number(maxCyclesEl.value || 3),
+      max_search_cycles: Number((maxCyclesEl && maxCyclesEl.value) || 3),
     };
     
     const res = await fetchWithAuth('/api/chat', {
