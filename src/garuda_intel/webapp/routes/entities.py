@@ -105,14 +105,20 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 if not node_id:
                     return None
                 node_id = str(node_id)
-                node = nodes.get(node_id, {"id": node_id, "label": label or node_id, "type": node_type, "kind": kind, "score": 0, "count": 0, "meta": {}})
+                # Initialize node with defaults
+                node = nodes.get(node_id, {"id": node_id, "label": label or node_id, "type": node_type, "score": 0, "count": 0, "meta": {}})
                 node["count"] = (node.get("count") or 0) + (count_inc or 0)
                 if score is not None:
                     node["score"] = max(node.get("score") or 0, score)
-                # Update kind if a more specific one is provided (non-None and non-generic)
-                if kind and kind not in ("entity", "unknown"):
+                # Set kind field: prefer specific kinds over generic ones
+                if kind:
                     existing_kind = node.get("kind")
-                    if not existing_kind or existing_kind in ("entity", "unknown"):
+                    is_specific_kind = kind not in ("entity", "unknown")
+                    is_existing_generic = not existing_kind or existing_kind in ("entity", "unknown")
+                    # Update kind if new kind is more specific, or if no kind exists yet
+                    if is_specific_kind and is_existing_generic:
+                        node["kind"] = kind
+                    elif not existing_kind:
                         node["kind"] = kind
                 if meta:
                     node_meta = node.get("meta") or {}
@@ -132,17 +138,18 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 ent_uuid = entity_ids.get(canon)
                 # Get stored kind from database if available (may have more specific kind like "founder")
                 stored_kind = entity_kinds.get(canon)
-                # Use the more specific kind between stored and provided
-                effective_kind = stored_kind if stored_kind and stored_kind not in ("entity", "unknown") else norm_kind
+                # Priority: stored_kind (if specific) > norm_kind (if specific) > norm_kind (generic) > "entity"
+                is_stored_specific = stored_kind and stored_kind not in ("entity", "unknown")
+                effective_kind = stored_kind if is_stored_specific else (norm_kind or "entity")
                 node_key = str(ent_uuid) if ent_uuid else canon
-                node_meta = {"entity_kind": effective_kind or norm_kind, "canonical": canon, "entity_id": ent_uuid, "source_id": node_key}
+                node_meta = {"entity_kind": effective_kind, "canonical": canon, "entity_id": ent_uuid, "source_id": node_key}
                 if meta:
                     node_meta.update(meta)
-                node_id = ensure_node(node_key, raw_name, node_type=effective_kind or norm_kind or "entity", score=score, meta=node_meta, kind=effective_kind or norm_kind)
-                if effective_kind or norm_kind:
-                    canonical_type[canon] = canonical_type.get(canon) or (effective_kind or norm_kind)
+                node_id = ensure_node(node_key, raw_name, node_type=effective_kind, score=score, meta=node_meta, kind=effective_kind)
+                if effective_kind:
+                    canonical_type[canon] = canonical_type.get(canon) or effective_kind
                     nodes[node_id]["type"] = canonical_type[canon]
-                    nodes[node_id]["kind"] = effective_kind or norm_kind
+                    nodes[node_id]["kind"] = effective_kind
                 return node_id
 
             entry_type_map: dict[str, str] = {}

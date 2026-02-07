@@ -123,9 +123,9 @@ function getNodeColor(node) {
   if (kind && COLORS[kind]) {
     return COLORS[kind];
   }
-  // Then try the type field
+  // Then try the type field (type may already be derived from meta.entity_kind on backend)
   const type = node.type || node.meta?.entity_kind;
-  return COLORS[type] || COLORS[node.meta?.entity_kind] || COLORS.unknown;
+  return COLORS[type] || COLORS.unknown;
 }
 
 /**
