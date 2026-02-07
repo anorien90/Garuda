@@ -6,6 +6,8 @@ Includes:
 - Entity merging: Looks up existing entities and merges new data
 - Type hierarchy: Detects specialized entity types (e.g., headquarters is a type of address)
 - Dynamic field tracking: Logs field discovery for adaptive learning
+- Dynamic entity kind registry: Supports entity kind inheritance and lookup
+- Related entity extraction: Extracts all entities mentioned, not just primary target
 """
 
 import json
@@ -15,6 +17,7 @@ import requests
 from typing import List, Dict, Any, Optional, Tuple
 
 from ..types.entity import EntityProfile
+from ..types.entity.registry import EntityKindRegistry, get_registry
 from .text_processor import TextProcessor
 from ..cache import CacheManager
 from .semantic_chunker import SemanticChunker
@@ -31,6 +34,8 @@ class IntelExtractor:
     - Entity merging: Automatically finds and updates existing entities
     - Type hierarchy: Detects specialized subtypes (address → headquarters)
     - Field tracking: Records field discovery for learning
+    - Dynamic entity kind registry: Supports runtime entity kind discovery with inheritance
+    - Related entity extraction: Extracts all entities mentioned on a page, not just primary target
     """
 
     def __init__(
@@ -46,6 +51,7 @@ class IntelExtractor:
         enable_schema_discovery: bool = False,
         enable_entity_merging: bool = True,
         session_maker=None,
+        extract_related_entities: bool = True,
     ):
         self.ollama_url = ollama_url
         self.model = model
@@ -60,6 +66,10 @@ class IntelExtractor:
         self.enable_schema_discovery = enable_schema_discovery
         self.enable_entity_merging = enable_entity_merging
         self.session_maker = session_maker
+        self.extract_related_entities = extract_related_entities
+        
+        # Initialize entity kind registry for dynamic kind management
+        self.kind_registry = get_registry()
         
         # Initialize Phase 2 enhancements
         if use_semantic_chunking:
@@ -262,9 +272,11 @@ class IntelExtractor:
         Extract entity mentions from a finding with type hierarchy detection.
         
         This enhanced version:
-        1. Detects specialized entity types (e.g., address → headquarters)
-        2. Tracks relationships between entities (e.g., Company → has_headquarters → Address)
-        3. Provides context for entity merging
+        1. Uses EntityKindRegistry for dynamic kind lookup and inheritance
+        2. Detects specialized entity types (e.g., address → headquarters)
+        3. Tracks relationships between entities (e.g., Company → has_headquarters → Address)
+        4. Extracts ALL entity mentions from page, not just primary target
+        5. Provides context for entity merging
         
         Args:
             finding: The extracted finding dictionary
@@ -282,21 +294,31 @@ class IntelExtractor:
 
         basic_info = finding.get("basic_info") or {}
         if basic_info.get("official_name"):
-            # Determine entity kind based on available data
+            # Determine entity kind based on available data using registry
             kind = "entity"
             if basic_info.get("ticker") or basic_info.get("industry"):
                 kind = "company"
             elif basic_info.get("entity_type"):
-                kind = basic_info.get("entity_type")
+                raw_kind = basic_info.get("entity_type")
+                # Use registry to normalize and validate the kind
+                kind = self._resolve_entity_kind(raw_kind)
+            
+            # Normalize kind through registry
+            kind = self.kind_registry.normalize_kind(kind)
             
             # Store all basic info as entity data
             entity_data = {k: v for k, v in basic_info.items() if v and k != "official_name"}
+            
+            # Get inherited fields from parent kind if applicable
+            kind_info = self.kind_registry.get_kind(kind)
+            parent_kind = kind_info.parent_kind if kind_info else None
             
             entities.append({
                 "name": basic_info["official_name"],
                 "kind": kind,
                 "data": entity_data,
                 "attrs": basic_info,
+                "parent_kind": parent_kind,
             })
 
         for p in finding.get("persons") or []:
@@ -307,19 +329,13 @@ class IntelExtractor:
                     p = {"name": p}
 
             if p.get("name"):
-                # Detect specialized person types (CEO, founder, etc.)
-                person_kind = "person"
-                title = (p.get("title") or "").lower()
-                role = (p.get("role") or "").lower()
+                # Detect specialized person types using registry
+                person_kind = self._detect_person_kind(p)
                 
-                if any(kw in title or kw in role for kw in ["ceo", "chief executive"]):
-                    person_kind = "ceo"
-                elif any(kw in title or kw in role for kw in ["founder", "co-founder"]):
-                    person_kind = "founder"
-                elif any(kw in title or kw in role for kw in ["cfo", "cto", "coo", "president", "vp", "vice president", "director"]):
-                    person_kind = "executive"
-                elif any(kw in title or kw in role for kw in ["board", "chairman"]):
-                    person_kind = "board_member"
+                # Normalize through registry
+                person_kind = self.kind_registry.normalize_kind(person_kind)
+                kind_info = self.kind_registry.get_kind(person_kind)
+                parent_kind = kind_info.parent_kind if kind_info else "person"
                 
                 # Store all person attributes as entity data
                 entity_data = {
@@ -336,7 +352,7 @@ class IntelExtractor:
                     "kind": person_kind,
                     "data": entity_data,
                     "attrs": p,
-                    "parent_type": "person" if person_kind != "person" else None,
+                    "parent_kind": parent_kind if person_kind != "person" else None,
                 }
                 
                 # Add relationship to primary entity if this is a leader
@@ -356,6 +372,9 @@ class IntelExtractor:
                     prod = {"name": prod}
 
             if prod.get("name"):
+                # Use registry to normalize product kind
+                product_kind = self.kind_registry.normalize_kind("product")
+                
                 # Store all product attributes as entity data
                 entity_data = {
                     "description": prod.get("description"),
@@ -368,7 +387,7 @@ class IntelExtractor:
                 
                 entity_dict = {
                     "name": prod["name"],
-                    "kind": "product",
+                    "kind": product_kind,
                     "data": entity_data,
                     "attrs": prod,
                 }
@@ -391,18 +410,13 @@ class IntelExtractor:
 
             label = loc.get("address") or loc.get("city") or loc.get("country") or loc.get("name")
             if label:
-                # Detect specialized location types
-                location_kind = "location"
-                loc_type = (loc.get("type") or "").lower()
+                # Detect specialized location types using registry
+                location_kind = self._detect_location_kind(loc, label, context_text)
                 
-                # Check location type and context for specialization
-                if any(kw in loc_type or kw in label.lower() or kw in context_text.lower() 
-                       for kw in ["headquarter", "hq", "head office", "main office", "corporate office"]):
-                    location_kind = "headquarters"
-                elif any(kw in loc_type or kw in label.lower() for kw in ["branch", "regional"]):
-                    location_kind = "branch_office"
-                elif any(kw in loc_type for kw in ["registered", "legal"]):
-                    location_kind = "registered_address"
+                # Normalize through registry
+                location_kind = self.kind_registry.normalize_kind(location_kind)
+                kind_info = self.kind_registry.get_kind(location_kind)
+                parent_kind = kind_info.parent_kind if kind_info else "location"
                 
                 # Store all location attributes as entity data
                 entity_data = {
@@ -410,6 +424,8 @@ class IntelExtractor:
                     "city": loc.get("city"),
                     "country": loc.get("country"),
                     "type": loc.get("type"),
+                    "latitude": loc.get("latitude"),
+                    "longitude": loc.get("longitude"),
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
@@ -419,7 +435,7 @@ class IntelExtractor:
                     "kind": location_kind,
                     "data": entity_data,
                     "attrs": loc,
-                    "parent_type": "location" if location_kind != "location" else None,
+                    "parent_kind": parent_kind if location_kind != "location" else None,
                 }
                 
                 # Add relationship based on location type
@@ -450,6 +466,9 @@ class IntelExtractor:
                     evt = {"title": evt}
 
             if evt.get("title"):
+                # Use registry to normalize event kind
+                event_kind = self.kind_registry.normalize_kind("event")
+                
                 # Store all event attributes as entity data
                 entity_data = {
                     "date": evt.get("date"),
@@ -461,7 +480,7 @@ class IntelExtractor:
                 
                 entity_dict = {
                     "name": evt["title"],
-                    "kind": "event",
+                    "kind": event_kind,
                     "data": entity_data,
                     "attrs": evt,
                 }
@@ -476,6 +495,120 @@ class IntelExtractor:
                 entities.append(entity_dict)
 
         return entities
+    
+    def _resolve_entity_kind(self, raw_kind: str) -> str:
+        """
+        Resolve an entity kind using the registry with inheritance support.
+        
+        Checks if the kind exists in the registry, and if not, attempts to
+        find a suitable parent kind or registers it as a new kind.
+        
+        Args:
+            raw_kind: The raw entity kind string
+            
+        Returns:
+            Normalized entity kind
+        """
+        if not raw_kind:
+            return "entity"
+        
+        raw_kind = raw_kind.lower().strip()
+        
+        # Check if kind already exists in registry
+        existing = self.kind_registry.get_kind(raw_kind)
+        if existing:
+            return existing.name
+        
+        # Try to infer parent kind for automatic registration
+        parent_kind = None
+        if any(kw in raw_kind for kw in ["person", "people", "employee", "staff"]):
+            parent_kind = "person"
+        elif any(kw in raw_kind for kw in ["company", "corp", "inc", "ltd", "org"]):
+            parent_kind = "org"
+        elif any(kw in raw_kind for kw in ["location", "place", "address", "city"]):
+            parent_kind = "location"
+        
+        # Register the new kind with inferred parent
+        self.kind_registry.register_kind(
+            name=raw_kind,
+            parent_kind=parent_kind,
+            description=f"Dynamically discovered entity kind: {raw_kind}",
+        )
+        self.logger.info(f"Registered new entity kind: {raw_kind} (parent: {parent_kind})")
+        
+        return raw_kind
+    
+    def _detect_person_kind(self, person_data: Dict[str, Any]) -> str:
+        """
+        Detect the specialized kind for a person entity using registry.
+        
+        Args:
+            person_data: Person data dictionary with title, role, etc.
+            
+        Returns:
+            Specialized person kind (ceo, founder, executive, etc.) or 'person'
+        """
+        title = (person_data.get("title") or "").lower()
+        role = (person_data.get("role") or "").lower()
+        combined = f"{title} {role}"
+        
+        # Check for specific executive titles
+        if any(kw in combined for kw in ["ceo", "chief executive officer"]):
+            return "ceo"
+        if any(kw in combined for kw in ["founder", "co-founder"]):
+            return "founder"
+        if any(kw in combined for kw in ["cfo", "chief financial"]):
+            return "executive"
+        if any(kw in combined for kw in ["cto", "chief technology", "chief technical"]):
+            return "executive"
+        if any(kw in combined for kw in ["coo", "chief operating"]):
+            return "executive"
+        if any(kw in combined for kw in ["president", "vp", "vice president", "director"]):
+            return "executive"
+        if any(kw in combined for kw in ["board", "chairman", "chairwoman", "chair"]):
+            return "board_member"
+        
+        return "person"
+    
+    def _detect_location_kind(
+        self, 
+        loc_data: Dict[str, Any], 
+        label: str, 
+        context_text: str
+    ) -> str:
+        """
+        Detect the specialized kind for a location entity using registry.
+        
+        Args:
+            loc_data: Location data dictionary
+            label: Location label/name
+            context_text: Surrounding context text
+            
+        Returns:
+            Specialized location kind (headquarters, branch_office, etc.) or 'location'
+        """
+        loc_type = (loc_data.get("type") or "").lower()
+        label_lower = label.lower()
+        context_lower = context_text.lower()
+        
+        # Check for headquarters
+        hq_keywords = ["headquarter", "hq", "head office", "main office", "corporate office", "global office"]
+        if any(kw in loc_type or kw in label_lower or kw in context_lower for kw in hq_keywords):
+            return "headquarters"
+        
+        # Check for branch office
+        if any(kw in loc_type or kw in label_lower for kw in ["branch", "regional office"]):
+            return "branch_office"
+        
+        # Check for registered address
+        if any(kw in loc_type for kw in ["registered", "legal", "statutory"]):
+            return "registered_address"
+        
+        # Check for office location
+        if any(kw in loc_type or kw in label_lower for kw in ["office", "facility"]):
+            return "office"
+        
+        return "location"
     
     def process_entities_with_merging(
         self,
