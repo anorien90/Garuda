@@ -433,3 +433,277 @@ class TestEntityTypeHierarchy:
     def test_subsidiary_is_subtype_of_company(self):
         """Verify subsidiary is defined as subtype of company."""
         assert ENTITY_TYPE_HIERARCHY.get("subsidiary") == "company"
+
+
+class TestSemanticEntityDeduplicator:
+    """Test SemanticEntityDeduplicator functionality."""
+    
+    def test_find_semantic_duplicates_exact(self, db_session):
+        """Test finding exact duplicate by name."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        # Create test entities
+        with db_session() as session:
+            entity = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+            )
+            session.add(entity)
+            session.commit()
+        
+        # Find duplicates
+        duplicates = deduplicator.find_semantic_duplicates("Microsoft Corporation")
+        
+        assert len(duplicates) == 1
+        assert duplicates[0]["match_type"] == "exact"
+        assert duplicates[0]["similarity"] == 1.0
+    
+    def test_find_semantic_duplicates_similar_names(self, db_session):
+        """Test finding similar names like 'Microsoft' vs 'Microsoft Corp.'"""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        # Create test entities
+        with db_session() as session:
+            entity = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+            )
+            session.add(entity)
+            session.commit()
+        
+        # Find duplicates with similar name
+        duplicates = deduplicator.find_semantic_duplicates("Microsoft Corp.", threshold=0.5)
+        
+        # Should find similarity based on word overlap
+        assert len(duplicates) >= 1
+        assert duplicates[0]["entity"]["name"] == "Microsoft Corporation"
+    
+    def test_name_normalization(self, db_session):
+        """Test name normalization for comparison."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        # Test normalization
+        normalized = deduplicator._normalize_name("Apple Inc.")
+        assert "incorporated" in normalized
+        
+        normalized = deduplicator._normalize_name("Google LLC")
+        assert "limited liability company" in normalized
+    
+    def test_deduplicate_entities_dry_run(self, db_session):
+        """Test deduplication in dry run mode."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        # Create similar entities
+        with db_session() as session:
+            entity1 = Entity(
+                id=uuid.uuid4(),
+                name="Apple Inc.",
+                kind="company",
+                data={"industry": "Technology"},
+            )
+            entity2 = Entity(
+                id=uuid.uuid4(),
+                name="Apple Incorporated",
+                kind="company",
+                data={"founded": "1976"},
+            )
+            session.add(entity1)
+            session.add(entity2)
+            session.commit()
+        
+        # Run dry run
+        report = deduplicator.deduplicate_entities(dry_run=True, threshold=0.7)
+        
+        # Should find duplicates but not merge them in dry run mode
+        # Verify that we found potential duplicates OR nothing was merged (dry_run behavior)
+        assert len(report["merged"]) == 0  # Dry run should never merge
+        # Note: Duplicates may or may not be found depending on similarity threshold
+
+
+class TestGraphSearchEngine:
+    """Test GraphSearchEngine functionality."""
+    
+    def test_search_entities_sql(self, db_session):
+        """Test SQL entity search."""
+        from garuda_intel.extractor.entity_merger import GraphSearchEngine
+        
+        engine = GraphSearchEngine(db_session)
+        
+        # Create test entities
+        with db_session() as session:
+            entity = Entity(
+                id=uuid.uuid4(),
+                name="Tesla Inc.",
+                kind="company",
+            )
+            session.add(entity)
+            session.commit()
+        
+        # Search
+        results = engine.search_entities("Tesla")
+        
+        assert len(results) == 1
+        assert results[0]["match_type"] == "sql_exact"
+        assert results[0]["entity"]["name"] == "Tesla Inc."
+    
+    def test_traverse_graph_single_depth(self, db_session):
+        """Test single-depth graph traversal."""
+        from garuda_intel.extractor.entity_merger import GraphSearchEngine
+        
+        engine = GraphSearchEngine(db_session)
+        
+        # Create test entities and relationships
+        with db_session() as session:
+            company = Entity(id=uuid.uuid4(), name="SpaceX", kind="company")
+            person = Entity(id=uuid.uuid4(), name="Elon Musk", kind="person")
+            
+            session.add(company)
+            session.add(person)
+            session.flush()
+            
+            rel = Relationship(
+                id=uuid.uuid4(),
+                source_id=company.id,
+                target_id=person.id,
+                relation_type="has_ceo",
+            )
+            session.add(rel)
+            session.commit()
+            
+            company_id = str(company.id)
+            person_id = str(person.id)
+        
+        # Traverse from company
+        result = engine.traverse_graph([company_id], max_depth=1)
+        
+        assert len(result["root_entities"]) == 1
+        assert result["root_entities"][0]["name"] == "SpaceX"
+        assert 1 in result["depths"]
+        assert len(result["depths"][1]["entities"]) == 1
+        assert result["depths"][1]["entities"][0]["entity"]["name"] == "Elon Musk"
+    
+    def test_find_path_between_entities(self, db_session):
+        """Test path finding between entities."""
+        from garuda_intel.extractor.entity_merger import GraphSearchEngine
+        
+        engine = GraphSearchEngine(db_session)
+        
+        # Create chain: A -> B -> C
+        with db_session() as session:
+            a = Entity(id=uuid.uuid4(), name="Entity A", kind="entity")
+            b = Entity(id=uuid.uuid4(), name="Entity B", kind="entity")
+            c = Entity(id=uuid.uuid4(), name="Entity C", kind="entity")
+            
+            session.add_all([a, b, c])
+            session.flush()
+            
+            rel1 = Relationship(id=uuid.uuid4(), source_id=a.id, target_id=b.id, relation_type="links_to")
+            rel2 = Relationship(id=uuid.uuid4(), source_id=b.id, target_id=c.id, relation_type="links_to")
+            
+            session.add_all([rel1, rel2])
+            session.commit()
+            
+            a_id, c_id = str(a.id), str(c.id)
+        
+        # Find path from A to C
+        path = engine.find_path(a_id, c_id, max_depth=3)
+        
+        assert path is not None
+        assert len(path) == 3
+        assert path[0]["entity"]["name"] == "Entity A"
+        assert path[1]["entity"]["name"] == "Entity B"
+        assert path[2]["entity"]["name"] == "Entity C"
+
+
+class TestRelationshipConfidenceManager:
+    """Test RelationshipConfidenceManager functionality."""
+    
+    def test_record_new_relationship(self, db_session):
+        """Test recording a new relationship."""
+        from garuda_intel.extractor.entity_merger import RelationshipConfidenceManager
+        
+        manager = RelationshipConfidenceManager(db_session)
+        
+        # Create entities
+        with db_session() as session:
+            e1 = Entity(id=uuid.uuid4(), name="Company X", kind="company")
+            e2 = Entity(id=uuid.uuid4(), name="Person Y", kind="person")
+            session.add_all([e1, e2])
+            session.commit()
+            
+            e1_id, e2_id = str(e1.id), str(e2.id)
+        
+        # Record relationship
+        result = manager.record_relationship(e1_id, e2_id, "employs", source_url="https://example.com")
+        
+        assert result["is_new"] is True
+        assert result["confidence"] == 0.5
+        assert result["occurrence_count"] == 1
+    
+    def test_boost_relationship_confidence(self, db_session):
+        """Test that recording same relationship multiple times boosts confidence."""
+        from garuda_intel.extractor.entity_merger import RelationshipConfidenceManager
+        
+        manager = RelationshipConfidenceManager(db_session)
+        
+        # Create entities
+        with db_session() as session:
+            e1 = Entity(id=uuid.uuid4(), name="Company Z", kind="company")
+            e2 = Entity(id=uuid.uuid4(), name="Product A", kind="product")
+            session.add_all([e1, e2])
+            session.commit()
+            
+            e1_id, e2_id = str(e1.id), str(e2.id)
+        
+        # Record relationship multiple times
+        result1 = manager.record_relationship(e1_id, e2_id, "produces", source_url="https://source1.com")
+        result2 = manager.record_relationship(e1_id, e2_id, "produces", source_url="https://source2.com")
+        result3 = manager.record_relationship(e1_id, e2_id, "produces", source_url="https://source3.com")
+        
+        assert result1["is_new"] is True
+        assert result2["is_new"] is False
+        assert result3["is_new"] is False
+        
+        # Confidence should increase
+        assert result2["confidence"] > result1["confidence"]
+        assert result3["confidence"] > result2["confidence"]
+        
+        # Occurrence count should increase
+        assert result3["occurrence_count"] == 3
+    
+    def test_get_high_confidence_relationships(self, db_session):
+        """Test getting high confidence relationships."""
+        from garuda_intel.extractor.entity_merger import RelationshipConfidenceManager
+        
+        manager = RelationshipConfidenceManager(db_session)
+        
+        # Create entities and relationships
+        with db_session() as session:
+            e1 = Entity(id=uuid.uuid4(), name="Test Company", kind="company")
+            e2 = Entity(id=uuid.uuid4(), name="Test Location", kind="location")
+            session.add_all([e1, e2])
+            session.commit()
+            
+            e1_id, e2_id = str(e1.id), str(e2.id)
+        
+        # Record relationship multiple times to boost confidence
+        for i in range(5):
+            manager.record_relationship(e1_id, e2_id, "headquartered_in", source_url=f"https://source{i}.com")
+        
+        # Get high confidence relationships
+        results = manager.get_high_confidence_relationships(min_confidence=0.6, min_occurrences=3)
+        
+        assert len(results) >= 1
+        found = next((r for r in results if r["relation_type"] == "headquartered_in"), None)
+        assert found is not None
+        assert found["occurrence_count"] >= 3

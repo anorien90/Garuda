@@ -12,6 +12,9 @@ from .entity_merger import (
     FieldDiscoveryTracker,
     ENTITY_TYPE_HIERARCHY,
     ENTITY_TYPE_CHILDREN,
+    SemanticEntityDeduplicator,
+    GraphSearchEngine,
+    RelationshipConfidenceManager,
 )
 from .intel_extractor import IntelExtractor
 from .llm import LLMIntelExtractor
@@ -28,6 +31,9 @@ __all__ = [
     "FieldDiscoveryTracker",
     "ENTITY_TYPE_HIERARCHY",
     "ENTITY_TYPE_CHILDREN",
+    "SemanticEntityDeduplicator",
+    "GraphSearchEngine",
+    "RelationshipConfidenceManager",
     "IntelExtractor",
     "LLMIntelExtractor",
 ]

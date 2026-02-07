@@ -786,3 +786,979 @@ class FieldDiscoveryTracker:
                 session.add(field_def)
             
             session.commit()
+
+
+class SemanticEntityDeduplicator:
+    """
+    Handles semantic entity deduplication using embeddings.
+    
+    This class identifies and merges duplicate entities based on:
+    1. Semantic name similarity (e.g., "Microsoft" vs "Microsoft Corporation")
+    2. Shared relationship information (e.g., both linked to "Bill Gates")
+    3. Overlapping intelligence data
+    """
+    
+    def __init__(
+        self,
+        session_maker,
+        semantic_engine=None,
+        logger: Optional[logging.Logger] = None,
+    ):
+        """
+        Initialize SemanticEntityDeduplicator.
+        
+        Args:
+            session_maker: SQLAlchemy session maker
+            semantic_engine: SemanticEngine instance for embeddings (optional)
+            logger: Optional logger instance
+        """
+        self.Session = session_maker
+        self.semantic_engine = semantic_engine
+        self.logger = logger or logging.getLogger(__name__)
+    
+    def find_semantic_duplicates(
+        self,
+        name: str,
+        kind: Optional[str] = None,
+        threshold: float = 0.85,
+        max_results: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Find entities that are semantically similar to the given name.
+        
+        Handles cases like:
+        - "Microsoft" vs "Microsoft Corporation" vs "Microsoft Corp."
+        - "Bill Gates" vs "William Gates" vs "Gates, Bill"
+        
+        Args:
+            name: Entity name to find duplicates for
+            kind: Optional entity kind filter
+            threshold: Minimum semantic similarity (0.0-1.0)
+            max_results: Maximum number of results
+            
+        Returns:
+            List of similar entities with similarity scores
+        """
+        if not name or not name.strip():
+            return []
+        
+        name = name.strip()
+        results = []
+        
+        with self.Session() as session:
+            # Get all entities of the same kind (or all if no kind specified)
+            stmt = select(Entity)
+            if kind:
+                # Also include compatible kinds
+                compatible_kinds = self._get_compatible_kinds(kind)
+                stmt = stmt.where(Entity.kind.in_(compatible_kinds))
+            
+            entities = session.execute(stmt).scalars().all()
+            
+            # Calculate similarity for each entity
+            for entity in entities:
+                if entity.name.lower() == name.lower():
+                    # Exact match
+                    results.append({
+                        "entity": self._entity_to_dict(entity),
+                        "similarity": 1.0,
+                        "match_type": "exact",
+                    })
+                    continue
+                
+                # Calculate semantic similarity
+                similarity = self._calculate_similarity(name, entity.name)
+                
+                if similarity >= threshold:
+                    results.append({
+                        "entity": self._entity_to_dict(entity),
+                        "similarity": similarity,
+                        "match_type": "semantic",
+                    })
+            
+            # Sort by similarity (highest first) and limit
+            results.sort(key=lambda x: x["similarity"], reverse=True)
+            return results[:max_results]
+    
+    def find_duplicates_by_shared_relationships(
+        self,
+        entity_id: str,
+        min_shared: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """
+        Find entities that share relationships with the given entity.
+        
+        This helps identify potential duplicates like:
+        - "Gates" entity linked to Microsoft via "founded Microsoft" context
+        - "Bill Gates" entity also linked to Microsoft
+        
+        Args:
+            entity_id: Entity UUID to find duplicates for
+            min_shared: Minimum number of shared relationships
+            
+        Returns:
+            List of entities sharing relationships
+        """
+        with self.Session() as session:
+            # Get the entity's relationships
+            entity = session.execute(
+                select(Entity).where(Entity.id == entity_id)
+            ).scalar_one_or_none()
+            
+            if not entity:
+                return []
+            
+            # Get all entities this one is related to
+            out_rels = session.execute(
+                select(Relationship).where(Relationship.source_id == entity_id)
+            ).scalars().all()
+            
+            in_rels = session.execute(
+                select(Relationship).where(Relationship.target_id == entity_id)
+            ).scalars().all()
+            
+            related_ids = set()
+            for rel in out_rels:
+                related_ids.add(str(rel.target_id))
+            for rel in in_rels:
+                related_ids.add(str(rel.source_id))
+            
+            if not related_ids:
+                return []
+            
+            # Find other entities that share these relationships
+            candidates = {}
+            
+            for related_id in related_ids:
+                # Find other entities connected to this same related entity
+                other_out = session.execute(
+                    select(Relationship).where(
+                        Relationship.target_id == related_id,
+                        Relationship.source_id != entity_id,
+                    )
+                ).scalars().all()
+                
+                other_in = session.execute(
+                    select(Relationship).where(
+                        Relationship.source_id == related_id,
+                        Relationship.target_id != entity_id,
+                    )
+                ).scalars().all()
+                
+                for rel in other_out:
+                    src_id = str(rel.source_id)
+                    if src_id not in candidates:
+                        candidates[src_id] = {"shared_targets": set(), "shared_sources": set()}
+                    candidates[src_id]["shared_targets"].add(related_id)
+                
+                for rel in other_in:
+                    tgt_id = str(rel.target_id)
+                    if tgt_id not in candidates:
+                        candidates[tgt_id] = {"shared_targets": set(), "shared_sources": set()}
+                    candidates[tgt_id]["shared_sources"].add(related_id)
+            
+            # Filter to entities with enough shared relationships
+            results = []
+            for cand_id, shared in candidates.items():
+                total_shared = len(shared["shared_targets"]) + len(shared["shared_sources"])
+                if total_shared >= min_shared:
+                    cand_entity = session.execute(
+                        select(Entity).where(Entity.id == cand_id)
+                    ).scalar_one_or_none()
+                    
+                    if cand_entity:
+                        # Also check name similarity
+                        name_similarity = self._calculate_similarity(entity.name, cand_entity.name)
+                        
+                        results.append({
+                            "entity": self._entity_to_dict(cand_entity),
+                            "shared_relationships": total_shared,
+                            "name_similarity": name_similarity,
+                            "shared_targets": list(shared["shared_targets"]),
+                            "shared_sources": list(shared["shared_sources"]),
+                        })
+            
+            # Sort by shared relationships + name similarity
+            results.sort(key=lambda x: (x["shared_relationships"], x["name_similarity"]), reverse=True)
+            return results
+    
+    def deduplicate_entities(
+        self,
+        dry_run: bool = True,
+        threshold: float = 0.9,
+        kind: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Find and optionally merge duplicate entities across the database.
+        
+        Args:
+            dry_run: If True, only report duplicates without merging
+            threshold: Minimum similarity threshold for merging
+            kind: Optional entity kind to limit deduplication
+            
+        Returns:
+            Report with found duplicates and merge actions
+        """
+        report = {
+            "duplicates_found": [],
+            "merged": [],
+            "errors": [],
+        }
+        
+        with self.Session() as session:
+            stmt = select(Entity)
+            if kind:
+                stmt = stmt.where(Entity.kind == kind)
+            stmt = stmt.order_by(Entity.created_at)
+            
+            entities = session.execute(stmt).scalars().all()
+            processed_ids = set()
+            
+            for entity in entities:
+                if str(entity.id) in processed_ids:
+                    continue
+                
+                # Find duplicates for this entity
+                duplicates = self.find_semantic_duplicates(
+                    entity.name,
+                    kind=entity.kind,
+                    threshold=threshold,
+                )
+                
+                # Filter out self and already processed
+                duplicates = [
+                    d for d in duplicates
+                    if d["entity"]["id"] != str(entity.id) and d["entity"]["id"] not in processed_ids
+                ]
+                
+                if duplicates:
+                    group = {
+                        "canonical": self._entity_to_dict(entity),
+                        "duplicates": duplicates,
+                    }
+                    report["duplicates_found"].append(group)
+                    
+                    # Mark all as processed
+                    processed_ids.add(str(entity.id))
+                    for dup in duplicates:
+                        processed_ids.add(dup["entity"]["id"])
+                    
+                    # Merge if not dry run
+                    if not dry_run:
+                        for dup in duplicates:
+                            try:
+                                self._merge_entities(session, dup["entity"]["id"], str(entity.id))
+                                report["merged"].append({
+                                    "source": dup["entity"]["name"],
+                                    "target": entity.name,
+                                    "similarity": dup["similarity"],
+                                })
+                            except Exception as e:
+                                report["errors"].append({
+                                    "source": dup["entity"]["name"],
+                                    "error": str(e),
+                                })
+            
+            if not dry_run:
+                session.commit()
+        
+        return report
+    
+    def merge_entities(self, source_id: str, target_id: str) -> bool:
+        """
+        Merge source entity into target entity (public API).
+        
+        The source entity will be deleted and its data/relationships
+        will be merged into the target entity.
+        
+        Args:
+            source_id: Source entity UUID (will be deleted)
+            target_id: Target entity UUID (will be kept)
+            
+        Returns:
+            True if merge succeeded, False otherwise
+        """
+        with self.Session() as session:
+            success = self._merge_entities(session, source_id, target_id)
+            if success:
+                session.commit()
+            return success
+    
+    def _calculate_similarity(self, name1: str, name2: str) -> float:
+        """Calculate similarity between two entity names."""
+        if not name1 or not name2:
+            return 0.0
+        
+        name1 = name1.lower().strip()
+        name2 = name2.lower().strip()
+        
+        if name1 == name2:
+            return 1.0
+        
+        # Try embedding similarity if semantic engine is available
+        if self.semantic_engine:
+            try:
+                emb1 = self.semantic_engine.embed_text(name1)
+                emb2 = self.semantic_engine.embed_text(name2)
+                if emb1 and emb2:
+                    return self.semantic_engine.calculate_similarity(emb1, emb2)
+            except Exception as e:
+                self.logger.debug(f"Embedding similarity failed: {e}")
+        
+        # Fall back to word-overlap similarity
+        return self._word_overlap_similarity(name1, name2)
+    
+    def _word_overlap_similarity(self, name1: str, name2: str) -> float:
+        """Calculate word-overlap (Jaccard) similarity."""
+        # Normalize common abbreviations
+        name1 = self._normalize_name(name1)
+        name2 = self._normalize_name(name2)
+        
+        words1 = set(name1.split())
+        words2 = set(name2.split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = len(words1 & words2)
+        union = len(words1 | words2)
+        
+        return intersection / union if union > 0 else 0.0
+    
+    def _normalize_name(self, name: str) -> str:
+        """Normalize entity name for comparison."""
+        name = name.lower().strip()
+        
+        # Common abbreviation expansions
+        replacements = {
+            " corp.": " corporation",
+            " corp": " corporation",
+            " inc.": " incorporated",
+            " inc": " incorporated",
+            " ltd.": " limited",
+            " ltd": " limited",
+            " llc": " limited liability company",
+            " co.": " company",
+            " co": " company",
+        }
+        
+        for abbrev, full in replacements.items():
+            name = name.replace(abbrev, full)
+        
+        return name
+    
+    def _get_compatible_kinds(self, kind: str) -> List[str]:
+        """Get compatible entity kinds including type hierarchy."""
+        kind = kind.lower()
+        compatible = [kind]
+        
+        # Add parent type
+        if kind in ENTITY_TYPE_HIERARCHY:
+            compatible.append(ENTITY_TYPE_HIERARCHY[kind])
+        
+        # Add child types
+        if kind in ENTITY_TYPE_CHILDREN:
+            compatible.extend(ENTITY_TYPE_CHILDREN[kind])
+        
+        # Add equivalent types
+        if kind in EQUIVALENT_TYPES:
+            compatible.extend(EQUIVALENT_TYPES[kind])
+        
+        return list(set(compatible))
+    
+    def _entity_to_dict(self, entity: Entity) -> Dict[str, Any]:
+        """Convert Entity model to dictionary."""
+        return {
+            "id": str(entity.id),
+            "name": entity.name,
+            "kind": entity.kind,
+            "data": entity.data or {},
+            "metadata": entity.metadata_json or {},
+            "last_seen": entity.last_seen.isoformat() if entity.last_seen else None,
+        }
+    
+    def _merge_entities(self, session: Session, source_id: str, target_id: str) -> bool:
+        """Merge source entity into target entity."""
+        source = session.execute(
+            select(Entity).where(Entity.id == source_id)
+        ).scalar_one_or_none()
+        
+        target = session.execute(
+            select(Entity).where(Entity.id == target_id)
+        ).scalar_one_or_none()
+        
+        if not source or not target:
+            return False
+        
+        # Merge data
+        source_data = source.data or {}
+        target_data = target.data or {}
+        for key, value in source_data.items():
+            if value and (key not in target_data or not target_data.get(key)):
+                target_data[key] = value
+        target.data = target_data
+        
+        # Redirect relationships
+        for rel in session.execute(
+            select(Relationship).where(Relationship.source_id == source_id)
+        ).scalars().all():
+            rel.source_id = target_id
+        
+        for rel in session.execute(
+            select(Relationship).where(Relationship.target_id == source_id)
+        ).scalars().all():
+            rel.target_id = target_id
+        
+        # Record merge in metadata
+        merge_history = target.metadata_json.get("merged_from", []) if target.metadata_json else []
+        merge_history.append({
+            "id": source_id,
+            "name": source.name,
+            "merged_at": datetime.now(timezone.utc).isoformat(),
+        })
+        if target.metadata_json is None:
+            target.metadata_json = {}
+        target.metadata_json["merged_from"] = merge_history
+        flag_modified(target, 'metadata_json')
+        
+        # Delete source
+        session.delete(source)
+        
+        self.logger.info(f"Merged entity '{source.name}' into '{target.name}'")
+        return True
+
+
+class GraphSearchEngine:
+    """
+    Provides depth-based graph traversal with semantic and SQL hybrid search.
+    
+    Enables searching for entities with:
+    1. SQL exact matches
+    2. Semantic embedding similarity
+    3. Depth-based relationship traversal (top X relations per depth)
+    """
+    
+    def __init__(
+        self,
+        session_maker,
+        semantic_engine=None,
+        logger: Optional[logging.Logger] = None,
+    ):
+        """
+        Initialize GraphSearchEngine.
+        
+        Args:
+            session_maker: SQLAlchemy session maker
+            semantic_engine: SemanticEngine instance for embeddings (optional)
+            logger: Optional logger instance
+        """
+        self.Session = session_maker
+        self.semantic_engine = semantic_engine
+        self.logger = logger or logging.getLogger(__name__)
+    
+    def search_entities(
+        self,
+        query: str,
+        kind: Optional[str] = None,
+        semantic_threshold: float = 0.7,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for entities using hybrid SQL + semantic search.
+        
+        Args:
+            query: Search query string
+            kind: Optional entity kind filter
+            semantic_threshold: Minimum semantic similarity for semantic matches
+            limit: Maximum results
+            
+        Returns:
+            List of matching entities with match type and scores
+        """
+        results = []
+        seen_ids = set()
+        
+        with self.Session() as session:
+            # 1. SQL exact matches (name contains query)
+            stmt = select(Entity).where(
+                func.lower(Entity.name).like(f"%{query.lower()}%")
+            )
+            if kind:
+                stmt = stmt.where(Entity.kind == kind)
+            
+            sql_matches = session.execute(stmt.limit(limit)).scalars().all()
+            
+            for entity in sql_matches:
+                if str(entity.id) not in seen_ids:
+                    seen_ids.add(str(entity.id))
+                    results.append({
+                        "entity": self._entity_to_dict(entity),
+                        "match_type": "sql_exact",
+                        "score": 1.0,
+                    })
+            
+            # 2. Semantic search (if semantic engine available)
+            if self.semantic_engine and len(results) < limit:
+                try:
+                    query_embedding = self.semantic_engine.embed_text(query)
+                    
+                    if query_embedding:
+                        # Get remaining entities for semantic comparison
+                        remaining = limit - len(results)
+                        stmt = select(Entity)
+                        if kind:
+                            stmt = stmt.where(Entity.kind == kind)
+                        
+                        all_entities = session.execute(stmt).scalars().all()
+                        
+                        semantic_matches = []
+                        for entity in all_entities:
+                            if str(entity.id) in seen_ids:
+                                continue
+                            
+                            # Calculate semantic similarity
+                            name_embedding = self.semantic_engine.embed_text(entity.name)
+                            if name_embedding:
+                                similarity = self.semantic_engine.calculate_similarity(
+                                    query_embedding, name_embedding
+                                )
+                                if similarity >= semantic_threshold:
+                                    semantic_matches.append((entity, similarity))
+                        
+                        # Sort by similarity and take top remaining
+                        semantic_matches.sort(key=lambda x: x[1], reverse=True)
+                        for entity, similarity in semantic_matches[:remaining]:
+                            seen_ids.add(str(entity.id))
+                            results.append({
+                                "entity": self._entity_to_dict(entity),
+                                "match_type": "semantic",
+                                "score": similarity,
+                            })
+                
+                except Exception as e:
+                    self.logger.warning(f"Semantic search failed: {e}")
+            
+            return results
+    
+    def traverse_graph(
+        self,
+        entity_ids: List[str],
+        max_depth: int = 2,
+        top_n_per_depth: int = 10,
+        relation_types: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Traverse the graph from starting entities with depth-limited BFS.
+        
+        At each depth level, returns the top N most connected entities.
+        
+        Args:
+            entity_ids: Starting entity UUIDs
+            max_depth: Maximum traversal depth
+            top_n_per_depth: Number of top entities to return per depth level
+            relation_types: Optional filter for relationship types
+            
+        Returns:
+            Graph structure with entities and relationships at each depth
+        """
+        result = {
+            "root_entities": [],
+            "depths": {},
+            "all_relationships": [],
+        }
+        
+        with self.Session() as session:
+            # Get root entities
+            for eid in entity_ids:
+                entity = session.execute(
+                    select(Entity).where(Entity.id == eid)
+                ).scalar_one_or_none()
+                if entity:
+                    result["root_entities"].append(self._entity_to_dict(entity))
+            
+            visited_ids = set(entity_ids)
+            current_level_ids = set(entity_ids)
+            
+            for depth in range(1, max_depth + 1):
+                next_level_entities = []
+                depth_relationships = []
+                
+                for eid in current_level_ids:
+                    # Get outgoing relationships
+                    out_stmt = select(Relationship).where(Relationship.source_id == eid)
+                    if relation_types:
+                        out_stmt = out_stmt.where(Relationship.relation_type.in_(relation_types))
+                    
+                    out_rels = session.execute(out_stmt).scalars().all()
+                    
+                    for rel in out_rels:
+                        target_id = str(rel.target_id)
+                        if target_id not in visited_ids:
+                            target = session.execute(
+                                select(Entity).where(Entity.id == rel.target_id)
+                            ).scalar_one_or_none()
+                            
+                            if target:
+                                next_level_entities.append({
+                                    "entity": self._entity_to_dict(target),
+                                    "from_entity_id": eid,
+                                    "relation_type": rel.relation_type,
+                                    "direction": "outgoing",
+                                })
+                        
+                        depth_relationships.append({
+                            "source_id": eid,
+                            "target_id": target_id,
+                            "relation_type": rel.relation_type,
+                            "metadata": rel.metadata_json,
+                        })
+                    
+                    # Get incoming relationships
+                    in_stmt = select(Relationship).where(Relationship.target_id == eid)
+                    if relation_types:
+                        in_stmt = in_stmt.where(Relationship.relation_type.in_(relation_types))
+                    
+                    in_rels = session.execute(in_stmt).scalars().all()
+                    
+                    for rel in in_rels:
+                        source_id = str(rel.source_id)
+                        if source_id not in visited_ids:
+                            source = session.execute(
+                                select(Entity).where(Entity.id == rel.source_id)
+                            ).scalar_one_or_none()
+                            
+                            if source:
+                                next_level_entities.append({
+                                    "entity": self._entity_to_dict(source),
+                                    "from_entity_id": eid,
+                                    "relation_type": rel.relation_type,
+                                    "direction": "incoming",
+                                })
+                        
+                        depth_relationships.append({
+                            "source_id": source_id,
+                            "target_id": eid,
+                            "relation_type": rel.relation_type,
+                            "metadata": rel.metadata_json,
+                        })
+                
+                # Deduplicate and rank entities by connection count
+                entity_counts = {}
+                for item in next_level_entities:
+                    eid = item["entity"]["id"]
+                    if eid not in entity_counts:
+                        entity_counts[eid] = {"item": item, "count": 0}
+                    entity_counts[eid]["count"] += 1
+                
+                # Take top N by connection count
+                sorted_entities = sorted(
+                    entity_counts.values(),
+                    key=lambda x: x["count"],
+                    reverse=True,
+                )[:top_n_per_depth]
+                
+                # Update for next level
+                current_level_ids = set()
+                depth_entities = []
+                for entry in sorted_entities:
+                    eid = entry["item"]["entity"]["id"]
+                    visited_ids.add(eid)
+                    current_level_ids.add(eid)
+                    depth_entities.append({
+                        **entry["item"],
+                        "connection_count": entry["count"],
+                    })
+                
+                result["depths"][depth] = {
+                    "entities": depth_entities,
+                    "entity_count": len(depth_entities),
+                }
+                result["all_relationships"].extend(depth_relationships)
+                
+                if not current_level_ids:
+                    break
+        
+        return result
+    
+    def find_path(
+        self,
+        source_id: str,
+        target_id: str,
+        max_depth: int = 5,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Find the shortest path between two entities.
+        
+        Args:
+            source_id: Source entity UUID
+            target_id: Target entity UUID
+            max_depth: Maximum path length
+            
+        Returns:
+            List of path steps (entities and relationships), or None if no path
+        """
+        if source_id == target_id:
+            with self.Session() as session:
+                entity = session.execute(
+                    select(Entity).where(Entity.id == source_id)
+                ).scalar_one_or_none()
+                if entity:
+                    return [{"entity": self._entity_to_dict(entity), "relationship": None}]
+            return None
+        
+        # BFS to find shortest path
+        with self.Session() as session:
+            visited = {source_id: None}  # Maps entity_id to (prev_id, relationship)
+            queue = [source_id]
+            
+            for _ in range(max_depth):
+                next_queue = []
+                
+                for current_id in queue:
+                    # Get all connected entities
+                    out_rels = session.execute(
+                        select(Relationship).where(Relationship.source_id == current_id)
+                    ).scalars().all()
+                    
+                    in_rels = session.execute(
+                        select(Relationship).where(Relationship.target_id == current_id)
+                    ).scalars().all()
+                    
+                    for rel in out_rels:
+                        neighbor_id = str(rel.target_id)
+                        if neighbor_id not in visited:
+                            visited[neighbor_id] = (current_id, rel.relation_type, "outgoing")
+                            next_queue.append(neighbor_id)
+                            
+                            if neighbor_id == target_id:
+                                # Found path, reconstruct it
+                                return self._reconstruct_path(session, visited, source_id, target_id)
+                    
+                    for rel in in_rels:
+                        neighbor_id = str(rel.source_id)
+                        if neighbor_id not in visited:
+                            visited[neighbor_id] = (current_id, rel.relation_type, "incoming")
+                            next_queue.append(neighbor_id)
+                            
+                            if neighbor_id == target_id:
+                                return self._reconstruct_path(session, visited, source_id, target_id)
+                
+                queue = next_queue
+                if not queue:
+                    break
+        
+        return None
+    
+    def _reconstruct_path(
+        self,
+        session: Session,
+        visited: Dict,
+        source_id: str,
+        target_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Reconstruct path from visited dictionary."""
+        path = []
+        current = target_id
+        
+        while current != source_id:
+            prev_id, rel_type, direction = visited[current]
+            
+            entity = session.execute(
+                select(Entity).where(Entity.id == current)
+            ).scalar_one_or_none()
+            
+            if entity:
+                path.append({
+                    "entity": self._entity_to_dict(entity),
+                    "relationship": {
+                        "type": rel_type,
+                        "direction": direction,
+                        "from_id": prev_id,
+                    },
+                })
+            
+            current = prev_id
+        
+        # Add source entity
+        source_entity = session.execute(
+            select(Entity).where(Entity.id == source_id)
+        ).scalar_one_or_none()
+        if source_entity:
+            path.append({
+                "entity": self._entity_to_dict(source_entity),
+                "relationship": None,
+            })
+        
+        path.reverse()
+        return path
+    
+    def _entity_to_dict(self, entity: Entity) -> Dict[str, Any]:
+        """Convert Entity model to dictionary."""
+        return {
+            "id": str(entity.id),
+            "name": entity.name,
+            "kind": entity.kind,
+            "data": entity.data or {},
+            "metadata": entity.metadata_json or {},
+        }
+
+
+class RelationshipConfidenceManager:
+    """
+    Manages relationship confidence scores.
+    
+    When a relationship is found multiple times, its confidence increases.
+    """
+    
+    def __init__(self, session_maker, logger: Optional[logging.Logger] = None):
+        """
+        Initialize RelationshipConfidenceManager.
+        
+        Args:
+            session_maker: SQLAlchemy session maker
+            logger: Optional logger instance
+        """
+        self.Session = session_maker
+        self.logger = logger or logging.getLogger(__name__)
+    
+    def record_relationship(
+        self,
+        source_id: str,
+        target_id: str,
+        relation_type: str,
+        source_url: Optional[str] = None,
+        confidence_boost: float = 0.1,
+    ) -> Dict[str, Any]:
+        """
+        Record a relationship occurrence, boosting confidence if already exists.
+        
+        Args:
+            source_id: Source entity UUID
+            target_id: Target entity UUID
+            relation_type: Type of relationship
+            source_url: Source URL where relationship was found
+            confidence_boost: How much to increase confidence per occurrence
+            
+        Returns:
+            Relationship info with current confidence
+        """
+        with self.Session() as session:
+            # Check if relationship exists
+            existing = session.execute(
+                select(Relationship).where(
+                    Relationship.source_id == source_id,
+                    Relationship.target_id == target_id,
+                    Relationship.relation_type == relation_type,
+                )
+            ).scalar_one_or_none()
+            
+            if existing:
+                # Boost confidence
+                meta = dict(existing.metadata_json) if existing.metadata_json else {}
+                current_confidence = meta.get("confidence", 0.5)
+                occurrence_count = meta.get("occurrence_count", 1)
+                
+                # Apply diminishing returns: boost decreases as confidence approaches 1.0
+                # This ensures repeated observations increase confidence but can never exceed 1.0
+                new_confidence = min(1.0, current_confidence + confidence_boost * (1 - current_confidence))
+                
+                meta["confidence"] = new_confidence
+                meta["occurrence_count"] = occurrence_count + 1
+                meta["last_seen"] = datetime.now(timezone.utc).isoformat()
+                
+                # Track sources
+                sources = meta.get("sources", [])
+                if source_url and source_url not in sources:
+                    sources.append(source_url)
+                meta["sources"] = sources
+                
+                existing.metadata_json = meta
+                flag_modified(existing, 'metadata_json')
+                
+                session.commit()
+                
+                self.logger.debug(
+                    f"Boosted relationship confidence: {relation_type} "
+                    f"({current_confidence:.2f} -> {new_confidence:.2f})"
+                )
+                
+                return {
+                    "id": str(existing.id),
+                    "source_id": source_id,
+                    "target_id": target_id,
+                    "relation_type": relation_type,
+                    "confidence": new_confidence,
+                    "occurrence_count": occurrence_count + 1,
+                    "is_new": False,
+                }
+            else:
+                # Create new relationship
+                rel = Relationship(
+                    id=uuid.uuid4(),
+                    source_id=source_id,
+                    target_id=target_id,
+                    relation_type=relation_type,
+                    source_type="entity",
+                    target_type="entity",
+                    metadata_json={
+                        "confidence": 0.5,
+                        "occurrence_count": 1,
+                        "sources": [source_url] if source_url else [],
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                session.add(rel)
+                session.commit()
+                
+                return {
+                    "id": str(rel.id),
+                    "source_id": source_id,
+                    "target_id": target_id,
+                    "relation_type": relation_type,
+                    "confidence": 0.5,
+                    "occurrence_count": 1,
+                    "is_new": True,
+                }
+    
+    def get_high_confidence_relationships(
+        self,
+        min_confidence: float = 0.7,
+        min_occurrences: int = 2,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get relationships with high confidence scores.
+        
+        Args:
+            min_confidence: Minimum confidence threshold
+            min_occurrences: Minimum occurrence count
+            limit: Maximum results
+            
+        Returns:
+            List of high-confidence relationships
+        """
+        results = []
+        
+        with self.Session() as session:
+            # Get all relationships
+            rels = session.execute(select(Relationship)).scalars().all()
+            
+            for rel in rels:
+                meta = rel.metadata_json or {}
+                confidence = meta.get("confidence", 0.5)
+                occurrences = meta.get("occurrence_count", 1)
+                
+                if confidence >= min_confidence and occurrences >= min_occurrences:
+                    results.append({
+                        "id": str(rel.id),
+                        "source_id": str(rel.source_id),
+                        "target_id": str(rel.target_id),
+                        "relation_type": rel.relation_type,
+                        "confidence": confidence,
+                        "occurrence_count": occurrences,
+                        "sources": meta.get("sources", []),
+                    })
+            
+            # Sort by confidence
+            results.sort(key=lambda x: x["confidence"], reverse=True)
+            return results[:limit]

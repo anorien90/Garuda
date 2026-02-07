@@ -625,6 +625,69 @@ def create_parser() -> argparse.ArgumentParser:
                           help="Only current values")
     field_get.add_argument("--format", choices=["table", "json"], default="table")
     
+    # ==================== Graph Search Commands ====================
+    
+    # graph search
+    graph_search = subparsers.add_parser("graph-search", help="Search entities with hybrid SQL + semantic")
+    graph_search.add_argument("query", help="Search query")
+    graph_search.add_argument("--kind", help="Entity kind filter")
+    graph_search.add_argument("--threshold", type=float, default=0.7, help="Semantic similarity threshold")
+    graph_search.add_argument("--limit", type=int, default=20, help="Maximum results")
+    graph_search.add_argument("--format", choices=["table", "json"], default="table")
+    
+    # graph traverse
+    graph_traverse = subparsers.add_parser("graph-traverse", help="Traverse entity relationships")
+    graph_traverse.add_argument("entity_id", type=uuid.UUID, help="Starting entity UUID")
+    graph_traverse.add_argument("--depth", type=int, default=2, help="Maximum traversal depth")
+    graph_traverse.add_argument("--top-n", type=int, default=10, help="Top N entities per depth")
+    graph_traverse.add_argument("--relation-types", nargs="+", help="Filter by relation types")
+    graph_traverse.add_argument("--format", choices=["table", "json"], default="json")
+    
+    # graph path
+    graph_path = subparsers.add_parser("graph-path", help="Find path between two entities")
+    graph_path.add_argument("source_id", type=uuid.UUID, help="Source entity UUID")
+    graph_path.add_argument("target_id", type=uuid.UUID, help="Target entity UUID")
+    graph_path.add_argument("--max-depth", type=int, default=5, help="Maximum path length")
+    graph_path.add_argument("--format", choices=["table", "json"], default="table")
+    
+    # ==================== Deduplication Commands ====================
+    
+    # dedupe find
+    dedupe_find = subparsers.add_parser("dedupe-find", help="Find duplicate entities")
+    dedupe_find.add_argument("name", help="Entity name to find duplicates for")
+    dedupe_find.add_argument("--kind", help="Entity kind filter")
+    dedupe_find.add_argument("--threshold", type=float, default=0.85, help="Similarity threshold")
+    dedupe_find.add_argument("--format", choices=["table", "json"], default="table")
+    
+    # dedupe scan
+    dedupe_scan = subparsers.add_parser("dedupe-scan", help="Scan for duplicate entities")
+    dedupe_scan.add_argument("--kind", help="Entity kind filter")
+    dedupe_scan.add_argument("--threshold", type=float, default=0.9, help="Similarity threshold")
+    dedupe_scan.add_argument("--merge", action="store_true", help="Actually merge duplicates (dangerous!)")
+    dedupe_scan.add_argument("--format", choices=["table", "json"], default="table")
+    
+    # dedupe merge
+    dedupe_merge = subparsers.add_parser("dedupe-merge", help="Merge two entities")
+    dedupe_merge.add_argument("source_id", type=uuid.UUID, help="Source entity UUID (to be deleted)")
+    dedupe_merge.add_argument("target_id", type=uuid.UUID, help="Target entity UUID (to keep)")
+    dedupe_merge.add_argument("-f", "--force", action="store_true", help="Skip confirmation")
+    
+    # ==================== Relationship Commands ====================
+    
+    # rel record
+    rel_record = subparsers.add_parser("rel-record", help="Record a relationship (boosts confidence if exists)")
+    rel_record.add_argument("source_id", type=uuid.UUID, help="Source entity UUID")
+    rel_record.add_argument("target_id", type=uuid.UUID, help="Target entity UUID")
+    rel_record.add_argument("relation_type", help="Relationship type")
+    rel_record.add_argument("--source-url", help="Source URL where relationship was found")
+    
+    # rel high-confidence
+    rel_high = subparsers.add_parser("rel-high-confidence", help="List high-confidence relationships")
+    rel_high.add_argument("--min-confidence", type=float, default=0.7, help="Minimum confidence")
+    rel_high.add_argument("--min-occurrences", type=int, default=2, help="Minimum occurrences")
+    rel_high.add_argument("--limit", type=int, default=50, help="Maximum results")
+    rel_high.add_argument("--format", choices=["table", "json"], default="table")
+    
     # ==================== Utility Commands ====================
     
     # stats
@@ -635,6 +698,230 @@ def create_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init", help="Initialize database tables")
     
     return parser
+
+
+# ============================================================================
+# Graph Search Commands
+# ============================================================================
+
+def cmd_graph_search(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    """Search entities using hybrid SQL + semantic search."""
+    from ..extractor.entity_merger import GraphSearchEngine
+    
+    engine = GraphSearchEngine(store.Session)
+    results = engine.search_entities(
+        query=args.query,
+        kind=args.kind,
+        semantic_threshold=args.threshold,
+        limit=args.limit,
+    )
+    
+    if args.format == "json":
+        print(json.dumps(results, indent=2))
+    else:
+        print(f"\n{'Name':<40} {'Kind':<15} {'Match':<12} {'Score':<8}")
+        print("-" * 80)
+        for r in results:
+            e = r["entity"]
+            print(f"{e['name'][:38]:<40} {(e['kind'] or 'N/A'):<15} {r['match_type']:<12} {r['score']:.2f}")
+        print(f"\nTotal: {len(results)} entities")
+
+
+def cmd_graph_traverse(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    """Traverse entity relationships from starting entity."""
+    from ..extractor.entity_merger import GraphSearchEngine
+    
+    engine = GraphSearchEngine(store.Session)
+    result = engine.traverse_graph(
+        entity_ids=[str(args.entity_id)],
+        max_depth=args.depth,
+        top_n_per_depth=args.top_n,
+        relation_types=args.relation_types,
+    )
+    
+    if args.format == "json":
+        print(json.dumps(result, indent=2))
+    else:
+        print("\n=== Root Entities ===")
+        for e in result["root_entities"]:
+            print(f"  {e['name']} ({e['kind']})")
+        
+        for depth, data in result["depths"].items():
+            print(f"\n=== Depth {depth} ({data['entity_count']} entities) ===")
+            for item in data["entities"]:
+                e = item["entity"]
+                rel = item["relation_type"]
+                direction = item["direction"]
+                print(f"  {e['name']} ({e['kind']}) [{rel}, {direction}]")
+
+
+def cmd_graph_path(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    """Find path between two entities."""
+    from ..extractor.entity_merger import GraphSearchEngine
+    
+    engine = GraphSearchEngine(store.Session)
+    path = engine.find_path(
+        source_id=str(args.source_id),
+        target_id=str(args.target_id),
+        max_depth=args.max_depth,
+    )
+    
+    if path is None:
+        print("No path found between entities.")
+        sys.exit(1)
+    
+    if args.format == "json":
+        print(json.dumps(path, indent=2))
+    else:
+        print("\nPath found:")
+        for i, step in enumerate(path):
+            e = step["entity"]
+            rel = step.get("relationship")
+            
+            if rel:
+                print(f"  {i+1}. {e['name']} ({e['kind']}) -- [{rel['type']}] -->")
+            else:
+                print(f"  {i+1}. {e['name']} ({e['kind']})")
+
+
+# ============================================================================
+# Deduplication Commands
+# ============================================================================
+
+def cmd_dedupe_find(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    """Find duplicate entities for a given name."""
+    from ..extractor.entity_merger import SemanticEntityDeduplicator
+    
+    deduplicator = SemanticEntityDeduplicator(store.Session)
+    results = deduplicator.find_semantic_duplicates(
+        name=args.name,
+        kind=args.kind,
+        threshold=args.threshold,
+    )
+    
+    if args.format == "json":
+        print(json.dumps(results, indent=2))
+    else:
+        print(f"\n{'Name':<40} {'Kind':<15} {'Match':<12} {'Similarity':<10}")
+        print("-" * 80)
+        for r in results:
+            e = r["entity"]
+            print(f"{e['name'][:38]:<40} {(e['kind'] or 'N/A'):<15} {r['match_type']:<12} {r['similarity']:.2f}")
+        print(f"\nTotal: {len(results)} potential duplicates")
+
+
+def cmd_dedupe_scan(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    """Scan database for duplicate entities."""
+    from ..extractor.entity_merger import SemanticEntityDeduplicator
+    
+    deduplicator = SemanticEntityDeduplicator(store.Session)
+    report = deduplicator.deduplicate_entities(
+        dry_run=not args.merge,
+        threshold=args.threshold,
+        kind=args.kind,
+    )
+    
+    if args.format == "json":
+        print(json.dumps(report, indent=2))
+    else:
+        print(f"\n=== Duplicate Scan Report ===")
+        print(f"Duplicate groups found: {len(report['duplicates_found'])}")
+        
+        for i, group in enumerate(report["duplicates_found"][:10]):
+            print(f"\n  Group {i+1}: {group['canonical']['name']}")
+            for dup in group["duplicates"]:
+                print(f"    - {dup['entity']['name']} (similarity: {dup['similarity']:.2f})")
+        
+        if report["merged"]:
+            print(f"\nMerged: {len(report['merged'])} entities")
+        
+        if report["errors"]:
+            print(f"\nErrors: {len(report['errors'])}")
+
+
+def cmd_dedupe_merge(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    """Merge two entities."""
+    from ..extractor.entity_merger import SemanticEntityDeduplicator
+    
+    deduplicator = SemanticEntityDeduplicator(store.Session)
+    
+    # Get entity names for confirmation
+    with store.Session() as session:
+        source = session.execute(
+            select(Entity).where(Entity.id == args.source_id)
+        ).scalar_one_or_none()
+        target = session.execute(
+            select(Entity).where(Entity.id == args.target_id)
+        ).scalar_one_or_none()
+        
+        if not source:
+            print(f"Source entity not found: {args.source_id}")
+            sys.exit(1)
+        if not target:
+            print(f"Target entity not found: {args.target_id}")
+            sys.exit(1)
+        
+        source_name = source.name
+        target_name = target.name
+        
+        if not args.force:
+            confirm = input(f"Merge '{source_name}' into '{target_name}'? [y/N]: ")
+            if confirm.lower() != "y":
+                print("Cancelled.")
+                return
+    
+    # Perform merge using public API
+    success = deduplicator.merge_entities(str(args.source_id), str(args.target_id))
+    
+    if success:
+        print(f"Successfully merged '{source_name}' into '{target_name}'")
+    else:
+        print("Merge failed.")
+        sys.exit(1)
+
+
+# ============================================================================
+# Relationship Commands
+# ============================================================================
+
+def cmd_rel_record(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    """Record a relationship, boosting confidence if it already exists."""
+    from ..extractor.entity_merger import RelationshipConfidenceManager
+    
+    manager = RelationshipConfidenceManager(store.Session)
+    result = manager.record_relationship(
+        source_id=str(args.source_id),
+        target_id=str(args.target_id),
+        relation_type=args.relation_type,
+        source_url=args.source_url,
+    )
+    
+    status = "Created new" if result["is_new"] else "Updated existing"
+    print(f"{status} relationship: {args.relation_type}")
+    print(f"  Confidence: {result['confidence']:.2f}")
+    print(f"  Occurrences: {result['occurrence_count']}")
+
+
+def cmd_rel_high_confidence(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    """List high-confidence relationships."""
+    from ..extractor.entity_merger import RelationshipConfidenceManager
+    
+    manager = RelationshipConfidenceManager(store.Session)
+    results = manager.get_high_confidence_relationships(
+        min_confidence=args.min_confidence,
+        min_occurrences=args.min_occurrences,
+        limit=args.limit,
+    )
+    
+    if args.format == "json":
+        print(json.dumps(results, indent=2))
+    else:
+        print(f"\n{'Type':<25} {'Confidence':<12} {'Occurrences':<12} {'Sources':<10}")
+        print("-" * 65)
+        for r in results:
+            sources = len(r.get("sources", []))
+            print(f"{r['relation_type'][:23]:<25} {r['confidence']:.2f}        {r['occurrence_count']:<12} {sources}")
+        print(f"\nTotal: {len(results)} high-confidence relationships")
 
 
 def main() -> None:
@@ -659,6 +946,14 @@ def main() -> None:
         "field-discover": cmd_field_discover,
         "field-set": cmd_field_set_value,
         "field-get": cmd_field_get_values,
+        "graph-search": cmd_graph_search,
+        "graph-traverse": cmd_graph_traverse,
+        "graph-path": cmd_graph_path,
+        "dedupe-find": cmd_dedupe_find,
+        "dedupe-scan": cmd_dedupe_scan,
+        "dedupe-merge": cmd_dedupe_merge,
+        "rel-record": cmd_rel_record,
+        "rel-high-confidence": cmd_rel_high_confidence,
         "stats": cmd_stats,
         "init": cmd_init_db,
     }
