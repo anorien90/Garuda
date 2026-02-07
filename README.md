@@ -991,12 +991,15 @@ Open browser to **http://localhost:8080**
 
 - Go to **Chat** tab
 - Ask: "What is Flask used for?"
-- Watch the 4-phase intelligent search in action
+- **Optional**: Adjust "Max Search Cycles" (1-10) to control crawl depth
+- **Optional**: Enable "Autonomous Mode" to discover knowledge gaps
+- Watch the 4-phase intelligent search in action with real-time phase indicators
 - If data is insufficient, it will automatically:
-  - Phase 1: Search existing database
+  - Phase 1: Search existing database (embedding + graph + SQL)
   - Phase 2: Retry with paraphrased queries
   - Phase 3: Crawl web for new information
   - Phase 4: Re-search with new data
+- If autonomous mode is enabled, see discovered dead-ends and crawl plans
 
 **6. Start a crawl:**
 
@@ -1234,6 +1237,123 @@ Phase 4: Re-query → Answer found in new content
 
 Result: ✓ Answered after intelligent crawling
 Time: ~25 seconds (2s + 3s retry + 20s crawl)
+```
+
+---
+
+## Chat UI Features
+
+The Web UI Chat panel provides comprehensive controls for the 4-phase intelligent search pipeline:
+
+### UI Controls
+
+![Chat Interface](media/screenshots/chat.png)
+*RAG-powered chat with configurable search cycles and autonomous mode*
+
+#### Max Search Cycles
+- **Range**: 1-10 cycles (default: 3)
+- **Purpose**: Controls how many search/crawl cycles to run before giving up
+- **When to adjust**:
+  - Set to 1-2 for quick queries on known entities
+  - Set to 5-10 for deep research on new/unknown entities
+  - Each cycle performs: Search → Crawl → Re-index → Re-query
+
+#### Autonomous Mode 🤖
+- **Type**: Toggle checkbox
+- **Purpose**: After answering your question, automatically discovers knowledge gaps and dead-end entities
+- **What it does**:
+  1. Analyzes the answer context for incomplete entities
+  2. Identifies dead-end entities (entities with few/no relationships)
+  3. Generates targeted crawl plans for gap-filling
+  4. Optionally triggers crawls to fill gaps (when auto_crawl enabled)
+- **Results displayed**:
+  - Dead-end entities with priority scores
+  - Knowledge gaps (missing fields, relationships)
+  - Generated crawl plans with target URLs
+  - Crawl results summary
+
+### UI Feedback
+
+The chat interface provides real-time feedback on search progress:
+
+#### Phase Indicators
+- **Phase 1: RAG Search** - "Searching through embeddings, graph, and SQL data"
+- **Phase 2: Paraphrasing** - "Retrying with alternative queries" (shows paraphrased queries)
+- **Phase 3: Web Crawling** - "Discovering and indexing online sources" (shows X/Y cycles)
+- **Phase 4: Re-query** - Automatic after each crawl cycle
+
+#### Result Display
+- **Source breakdown**: Shows RAG, Graph, and SQL hit counts with color-coded badges
+- **Search cycle progress**: "3/5 cycles completed"
+- **Paraphrased queries**: Lists alternative queries used during retry
+- **Live URLs crawled**: Clickable links to sources discovered online
+- **Context sources**: Expandable snippets from each search source
+
+#### Always-Answer Guarantee
+The chat system ensures you **always** get a meaningful response:
+
+1. **Primary**: LLM-synthesized answer from retrieved context
+2. **Fallback 1**: If LLM refuses, builds answer from context snippets
+3. **Fallback 2**: If no context, provides clear guidance message
+
+**Example fallback messages:**
+- "Based on the available information: [context snippets]"
+- "I searched through local data and online sources but couldn't find a definitive answer. Try refining your question or providing more context."
+- "No relevant information was found. Try a different question or crawl some relevant pages first."
+
+### Example Usage
+
+#### Quick Query (1 cycle, no autonomous mode)
+```
+Question: "What is Flask?"
+Max Search Cycles: 1
+Autonomous Mode: OFF
+
+Result: Fast answer from existing database
+Time: ~3 seconds
+```
+
+#### Deep Research (5 cycles, autonomous mode ON)
+```
+Question: "Who is the CTO of StartupX?"
+Max Search Cycles: 5
+Autonomous Mode: ON
+
+Flow:
+1. Phase 1: Search local data → No results
+2. Phase 2: Retry with paraphrasing → No results
+3. Phase 3: Crawl StartupX website → Extract data
+4. Phase 4: Re-query → Found answer!
+5. Autonomous: Discover related executives → Plan crawls
+
+Result: Complete answer + discovered knowledge gaps
+Time: ~30 seconds
+```
+
+### API Integration
+
+The UI controls map to these API parameters:
+
+```bash
+# Manual API call with same functionality
+curl -X POST http://localhost:8080/api/chat \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What is Microsoft headquarters?",
+    "top_k": 6,
+    "max_search_cycles": 3
+  }'
+
+# With autonomous mode (separate call)
+curl -X POST http://localhost:8080/api/agent/autonomous \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "auto_crawl": true,
+    "max_entities": 10,
+    "priority_threshold": 0.3
+  }'
 ```
 
 ---
