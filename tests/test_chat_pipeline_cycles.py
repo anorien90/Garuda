@@ -31,6 +31,11 @@ class TestChatPipelineSettings:
         settings = Settings()
         assert settings.chat_rag_quality_threshold == 0.7
     
+    def test_default_chat_min_high_quality_hits(self):
+        """Test default value for chat_min_high_quality_hits."""
+        settings = Settings()
+        assert settings.chat_min_high_quality_hits == 2
+    
     def test_default_chat_use_selenium(self):
         """Test default value for chat_use_selenium."""
         settings = Settings()
@@ -45,6 +50,7 @@ class TestChatPipelineSettings:
         'GARUDA_CHAT_MAX_SEARCH_CYCLES': '5',
         'GARUDA_CHAT_MAX_PAGES': '10',
         'GARUDA_CHAT_RAG_QUALITY_THRESHOLD': '0.8',
+        'GARUDA_CHAT_MIN_HIGH_QUALITY_HITS': '3',
         'GARUDA_CHAT_USE_SELENIUM': 'true',
         'GARUDA_CHAT_EXTRACT_RELATED_ENTITIES': 'false',
     })
@@ -55,6 +61,7 @@ class TestChatPipelineSettings:
         assert settings.chat_max_search_cycles == 5
         assert settings.chat_max_pages == 10
         assert settings.chat_rag_quality_threshold == 0.8
+        assert settings.chat_min_high_quality_hits == 3
         assert settings.chat_use_selenium is True
         assert settings.chat_extract_related_entities is False
 
@@ -96,8 +103,9 @@ class TestChatSearchCycleLogic:
             if cycle_num == 2:
                 high_quality_rag = [{"score": 0.9}, {"score": 0.85}]  # 2 high quality hits
                 is_sufficient = True
+                min_high_quality_hits = 2  # Configurable threshold
                 
-                if is_sufficient and len(high_quality_rag) >= 2:
+                if is_sufficient and len(high_quality_rag) >= min_high_quality_hits:
                     break
         
         assert search_cycles_completed == 2  # Should stop after cycle 2

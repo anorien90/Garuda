@@ -352,7 +352,7 @@ class IntelExtractor:
                     "kind": person_kind,
                     "data": entity_data,
                     "attrs": p,
-                    "parent_kind": parent_kind if person_kind != "person" else None,
+                    "parent_kind": parent_kind,  # Registry already handles None for base types
                 }
                 
                 # Add relationship to primary entity if this is a leader
@@ -435,7 +435,7 @@ class IntelExtractor:
                     "kind": location_kind,
                     "data": entity_data,
                     "attrs": loc,
-                    "parent_kind": parent_kind if location_kind != "location" else None,
+                    "parent_kind": parent_kind,  # Registry already handles None for base types
                 }
                 
                 # Add relationship based on location type

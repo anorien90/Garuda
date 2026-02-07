@@ -73,6 +73,7 @@ class Settings:
     chat_max_pages: int = 5  # Maximum pages to crawl per chat search cycle
     chat_use_selenium: bool = False  # Use Selenium for chat crawling
     chat_rag_quality_threshold: float = 0.7  # Minimum RAG similarity score threshold
+    chat_min_high_quality_hits: int = 2  # Minimum high-quality RAG hits before considering sufficient
     chat_extract_related_entities: bool = True  # Extract related entities during chat crawl
 
     @classmethod
@@ -120,6 +121,7 @@ class Settings:
             chat_max_pages=int(os.environ.get("GARUDA_CHAT_MAX_PAGES", "5")),
             chat_use_selenium=_as_bool(os.environ.get("GARUDA_CHAT_USE_SELENIUM"), False),
             chat_rag_quality_threshold=float(os.environ.get("GARUDA_CHAT_RAG_QUALITY_THRESHOLD", "0.7")),
+            chat_min_high_quality_hits=int(os.environ.get("GARUDA_CHAT_MIN_HIGH_QUALITY_HITS", "2")),
             chat_extract_related_entities=_as_bool(os.environ.get("GARUDA_CHAT_EXTRACT_RELATED_ENTITIES"), True),
         )
 

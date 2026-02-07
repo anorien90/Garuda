@@ -245,8 +245,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             "max_search_cycles": max_search_cycles
         })
     
-        # Get RAG quality threshold from settings
+        # Get configurable thresholds from settings
         rag_quality_threshold = getattr(settings, "chat_rag_quality_threshold", 0.7)
+        min_high_quality_hits = getattr(settings, "chat_min_high_quality_hits", 2)
         
         def gather_hits(q: str, limit: int, prioritize_rag: bool = True) -> list[dict[str, Any]]:
             """
@@ -426,7 +427,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         quality_insufficient = len(high_quality_rag) == 0
         
         # Phase 2: Retry with paraphrasing and more hits if initial attempt insufficient
-        if quality_insufficient or (not is_sufficient and len(high_quality_rag) < 2):
+        if quality_insufficient or (not is_sufficient and len(high_quality_rag) < min_high_quality_hits):
             emit_event("chat", "Phase 2: Retry with paraphrasing and more hits",
                      payload={"reason": "Insufficient initial results"})
             retry_attempted = True
@@ -485,7 +486,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             # Determine crawl trigger reasons
             if not rag_hits:
                 crawl_reason = "No RAG results found"
-            elif len(high_quality_rag) < 2:
+            elif len(high_quality_rag) < min_high_quality_hits:
                 if retry_attempted:
                     crawl_reason = f"Insufficient high-quality RAG results ({len(high_quality_rag)}) after retry"
                 else:
@@ -530,7 +531,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                     emit_event("chat", f"After cycle {cycle_num}: {len(high_quality_rag)} high-quality RAG hits",
                              payload={"high_quality": len(high_quality_rag), "is_sufficient": is_sufficient})
                     
-                    if is_sufficient and len(high_quality_rag) >= 2:
+                    if is_sufficient and len(high_quality_rag) >= min_high_quality_hits:
                         emit_event("chat", f"Sufficient results after {cycle_num} cycles - stopping early",
                                  payload={"cycles_completed": cycle_num})
                         break
