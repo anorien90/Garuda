@@ -1,0 +1,463 @@
+<div class="space-y-6">
+  <!-- Agent Control Panel -->
+  <article class="card-surface rounded-xl border border-purple-200 dark:border-purple-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <h3 class="text-xl font-bold text-purple-800 dark:text-purple-200">🤖 Agent Control Panel</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400">Intelligent data exploration, entity management, and quality analysis</p>
+      </div>
+      <div id="agent-status-badge" class="px-3 py-1 text-xs font-bold rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+        Agent Active
+      </div>
+    </div>
+    
+    <!-- Agent Mode Tabs -->
+    <div class="border-b border-slate-200 dark:border-slate-700">
+      <nav class="flex gap-4 -mb-px">
+        <button id="agent-tab-reflect" class="agent-tab px-4 py-2 text-sm font-medium border-b-2 border-purple-600 text-purple-700 dark:text-purple-300">
+          🔄 Reflect & Refine
+        </button>
+        <button id="agent-tab-explore" class="agent-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
+          🗺️ Explore Graph
+        </button>
+        <button id="agent-tab-search" class="agent-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
+          🔍 Multidimensional Search
+        </button>
+      </nav>
+    </div>
+    
+    <!-- Reflect & Refine Panel -->
+    <div id="agent-panel-reflect" class="agent-panel space-y-4">
+      <div class="p-3 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800">
+        <p class="text-xs text-orange-800 dark:text-orange-200">
+          <strong>Reflect & Refine</strong> analyzes your data to find duplicate entities (e.g., "Microsoft Corp" vs "Microsoft Corporation"), validates data quality, and can merge duplicates.
+        </p>
+      </div>
+      
+      <form id="agent-reflect-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-100">Target Entities (comma-separated, optional)</label>
+          <input id="reflect-entities" type="text" placeholder="Microsoft, Apple, Google (leave empty for all)" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-purple-500 focus:ring-purple-500"/>
+        </div>
+        <div class="flex items-center gap-4">
+          <label class="flex items-center gap-2 text-sm">
+            <input id="reflect-dry-run" type="checkbox" checked class="rounded border-slate-300 text-purple-600 focus:ring-purple-500">
+            <span class="text-slate-700 dark:text-slate-300">Dry Run (preview only, no changes)</span>
+          </label>
+        </div>
+        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-orange-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-orange-500">
+          🔄 Analyze & Reflect
+        </button>
+      </form>
+      
+      <div id="reflect-results" class="space-y-3"></div>
+    </div>
+    
+    <!-- Explore Graph Panel -->
+    <div id="agent-panel-explore" class="agent-panel hidden space-y-4">
+      <div class="p-3 rounded-lg bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800">
+        <p class="text-xs text-teal-800 dark:text-teal-200">
+          <strong>Explore Graph</strong> traverses entity relationships to find high-priority entities for further research. Entities are prioritized by relation depth and discovery potential.
+        </p>
+      </div>
+      
+      <form id="agent-explore-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-100">Root Entities (comma-separated)</label>
+          <input id="explore-entities" type="text" placeholder="Microsoft Corporation, Bill Gates" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-purple-500 focus:ring-purple-500"/>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Max Depth
+            <input id="explore-depth" type="number" min="1" max="5" value="3" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+          </label>
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Top N Results
+            <input id="explore-top-n" type="number" min="5" max="100" value="20" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+          </label>
+        </div>
+        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-teal-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-teal-500">
+          🗺️ Explore Relations
+        </button>
+      </form>
+      
+      <div id="explore-results" class="space-y-3"></div>
+    </div>
+    
+    <!-- Multidimensional Search Panel -->
+    <div id="agent-panel-search" class="agent-panel hidden space-y-4">
+      <div class="p-3 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800">
+        <p class="text-xs text-purple-800 dark:text-purple-200">
+          <strong>Multidimensional Search</strong> combines embedding-based semantic search with entity graph traversal for comprehensive results across all data dimensions.
+        </p>
+      </div>
+      
+      <form id="agent-search-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-100">Search Query</label>
+          <input id="agent-search-q" type="text" placeholder="Natural language search query" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-purple-500 focus:ring-purple-500"/>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Top K
+            <input id="agent-search-topk" type="number" min="1" max="50" value="10" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+          </label>
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Graph Depth
+            <input id="agent-search-depth" type="number" min="1" max="5" value="2" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+          </label>
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100 flex flex-col">
+            Include Graph
+            <select id="agent-search-graph" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500">
+              <option value="true">Yes - Full Multidimensional</option>
+              <option value="false">No - Embedding Only</option>
+            </select>
+          </label>
+        </div>
+        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-purple-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-purple-500">
+          🔍 Search Multidimensional
+        </button>
+      </form>
+      
+      <div id="agent-search-results" class="space-y-3"></div>
+    </div>
+  </article>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  // Tab switching
+  const tabs = document.querySelectorAll('.agent-tab');
+  const panels = document.querySelectorAll('.agent-panel');
+  
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const targetPanel = tab.id.replace('agent-tab-', 'agent-panel-');
+      
+      // Reset all tabs
+      tabs.forEach(t => {
+        t.classList.remove('border-purple-600', 'text-purple-700', 'dark:text-purple-300');
+        t.classList.add('border-transparent', 'text-slate-600', 'dark:text-slate-400');
+      });
+      
+      // Activate clicked tab
+      tab.classList.add('border-purple-600', 'text-purple-700', 'dark:text-purple-300');
+      tab.classList.remove('border-transparent', 'text-slate-600', 'dark:text-slate-400');
+      
+      // Show/hide panels
+      panels.forEach(panel => {
+        if (panel.id === targetPanel) {
+          panel.classList.remove('hidden');
+        } else {
+          panel.classList.add('hidden');
+        }
+      });
+    });
+  });
+  
+  // Reflect Form
+  const reflectForm = document.getElementById('agent-reflect-form');
+  reflectForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const entitiesInput = document.getElementById('reflect-entities').value.trim();
+    const dryRun = document.getElementById('reflect-dry-run').checked;
+    
+    const targetEntities = entitiesInput ? entitiesInput.split(',').map(e => e.trim()).filter(e => e) : null;
+    
+    const resultsContainer = document.getElementById('reflect-results');
+    resultsContainer.innerHTML = '<div class="text-sm text-orange-600 p-4">🔄 Analyzing entities...</div>';
+    
+    try {
+      const response = await fetch('/api/agent/reflect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_entities: targetEntities,
+          dry_run: dryRun
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${data.error}</div>`;
+        return;
+      }
+      
+      const stats = data.statistics || {};
+      const duplicates = data.duplicates_found || [];
+      const issues = data.data_quality_issues || [];
+      
+      resultsContainer.innerHTML = `
+        <div class="space-y-4">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div class="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 text-center">
+              <div class="text-2xl font-bold text-slate-900 dark:text-white">${stats.entities_before || 0}</div>
+              <div class="text-xs text-slate-500">Entities Before</div>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 text-center">
+              <div class="text-2xl font-bold text-slate-900 dark:text-white">${stats.entities_after || stats.entities_before || 0}</div>
+              <div class="text-xs text-slate-500">Entities After</div>
+            </div>
+            <div class="p-3 rounded-lg bg-orange-50 dark:bg-orange-900/20 text-center">
+              <div class="text-2xl font-bold text-orange-700 dark:text-orange-300">${duplicates.length}</div>
+              <div class="text-xs text-orange-600 dark:text-orange-400">Duplicate Groups</div>
+            </div>
+            <div class="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-center">
+              <div class="text-2xl font-bold text-red-700 dark:text-red-300">${issues.length}</div>
+              <div class="text-xs text-red-600 dark:text-red-400">Quality Issues</div>
+            </div>
+          </div>
+          
+          ${dryRun ? '<div class="text-xs text-amber-600 dark:text-amber-400 p-2 bg-amber-50 dark:bg-amber-900/20 rounded">🔒 Dry Run - No changes were made</div>' : ''}
+          
+          ${duplicates.length > 0 ? `
+            <div>
+              <h5 class="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Duplicate Groups Found</h5>
+              <div class="space-y-2 max-h-60 overflow-y-auto">
+                ${duplicates.slice(0, 10).map(group => `
+                  <div class="p-2 rounded border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/10 text-xs">
+                    <div class="font-medium text-orange-800 dark:text-orange-200 mb-1">${group.normalized_name} (${group.count} entities)</div>
+                    <div class="text-slate-600 dark:text-slate-400">
+                      ${(group.entities || []).map(e => `${e.name} (${e.kind || 'unknown'})`).join(', ')}
+                    </div>
+                  </div>
+                `).join('')}
+                ${duplicates.length > 10 ? `<div class="text-xs text-slate-500">... and ${duplicates.length - 10} more groups</div>` : ''}
+              </div>
+            </div>
+          ` : ''}
+          
+          ${issues.length > 0 ? `
+            <div>
+              <h5 class="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Quality Issues</h5>
+              <div class="space-y-2 max-h-60 overflow-y-auto">
+                ${issues.slice(0, 10).map(issue => `
+                  <div class="p-2 rounded border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10 text-xs">
+                    <div class="font-medium text-red-800 dark:text-red-200">${issue.entity_name}</div>
+                    <ul class="text-red-600 dark:text-red-400 list-disc list-inside">
+                      ${(issue.issues || []).map(i => `<li>${i}</li>`).join('')}
+                    </ul>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    } catch (err) {
+      resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
+    }
+  });
+  
+  // Explore Form
+  const exploreForm = document.getElementById('agent-explore-form');
+  exploreForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const entitiesInput = document.getElementById('explore-entities').value.trim();
+    const maxDepth = parseInt(document.getElementById('explore-depth').value) || 3;
+    const topN = parseInt(document.getElementById('explore-top-n').value) || 20;
+    
+    if (!entitiesInput) {
+      alert('Please enter at least one root entity');
+      return;
+    }
+    
+    const rootEntities = entitiesInput.split(',').map(e => e.trim()).filter(e => e);
+    
+    const resultsContainer = document.getElementById('explore-results');
+    resultsContainer.innerHTML = '<div class="text-sm text-teal-600 p-4">🗺️ Exploring entity graph...</div>';
+    
+    try {
+      const response = await fetch('/api/agent/explore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          root_entities: rootEntities,
+          max_depth: maxDepth,
+          top_n: topN
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${data.error}</div>`;
+        return;
+      }
+      
+      const stats = data.statistics || {};
+      const prioritized = data.prioritized_entities || [];
+      
+      resultsContainer.innerHTML = `
+        <div class="space-y-4">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div class="p-3 rounded-lg bg-teal-50 dark:bg-teal-900/20 text-center">
+              <div class="text-2xl font-bold text-teal-700 dark:text-teal-300">${stats.unique_entities || 0}</div>
+              <div class="text-xs text-teal-600 dark:text-teal-400">Unique Entities</div>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 text-center">
+              <div class="text-2xl font-bold text-slate-900 dark:text-white">${stats.max_depth_reached || 0}</div>
+              <div class="text-xs text-slate-500">Max Depth Reached</div>
+            </div>
+            <div class="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 text-center">
+              <div class="text-2xl font-bold text-slate-900 dark:text-white">${stats.relations_traversed || 0}</div>
+              <div class="text-xs text-slate-500">Relations Traversed</div>
+            </div>
+            <div class="p-3 rounded-lg bg-purple-50 dark:bg-purple-900/20 text-center">
+              <div class="text-2xl font-bold text-purple-700 dark:text-purple-300">${prioritized.length}</div>
+              <div class="text-xs text-purple-600 dark:text-purple-400">Prioritized</div>
+            </div>
+          </div>
+          
+          ${prioritized.length > 0 ? `
+            <div>
+              <h5 class="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">High-Priority Entities for Research</h5>
+              <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                  <thead class="bg-slate-100 dark:bg-slate-800">
+                    <tr>
+                      <th class="px-2 py-1 text-left">Entity</th>
+                      <th class="px-2 py-1 text-left">Kind</th>
+                      <th class="px-2 py-1 text-center">Depth</th>
+                      <th class="px-2 py-1 text-center">Relations</th>
+                      <th class="px-2 py-1 text-center">Priority</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-200 dark:divide-slate-700">
+                    ${prioritized.map((entity, i) => `
+                      <tr class="${i % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-800/50'}">
+                        <td class="px-2 py-1 font-medium text-slate-900 dark:text-white">${entity.name || 'Unknown'}</td>
+                        <td class="px-2 py-1 text-slate-600 dark:text-slate-400">${entity.kind || '-'}</td>
+                        <td class="px-2 py-1 text-center">${entity.depth_from_root || 0}</td>
+                        <td class="px-2 py-1 text-center">${entity.relation_count || 0}</td>
+                        <td class="px-2 py-1 text-center">
+                          <span class="inline-block px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 font-medium">
+                            ${(entity.priority_score || 0).toFixed(3)}
+                          </span>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ` : '<div class="text-sm text-slate-500 p-4">No entities found to explore</div>'}
+        </div>
+      `;
+    } catch (err) {
+      resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
+    }
+  });
+  
+  // Search Form
+  const searchForm = document.getElementById('agent-search-form');
+  searchForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const query = document.getElementById('agent-search-q').value.trim();
+    const topK = parseInt(document.getElementById('agent-search-topk').value) || 10;
+    const graphDepth = parseInt(document.getElementById('agent-search-depth').value) || 2;
+    const includeGraph = document.getElementById('agent-search-graph').value === 'true';
+    
+    if (!query) {
+      alert('Please enter a search query');
+      return;
+    }
+    
+    const resultsContainer = document.getElementById('agent-search-results');
+    resultsContainer.innerHTML = '<div class="text-sm text-purple-600 p-4">🔍 Searching multidimensionally...</div>';
+    
+    try {
+      const response = await fetch('/api/agent/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: query,
+          top_k: topK,
+          include_graph: includeGraph,
+          graph_depth: graphDepth
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${data.error}</div>`;
+        return;
+      }
+      
+      const stats = data.statistics || {};
+      const results = data.combined_results || [];
+      
+      resultsContainer.innerHTML = `
+        <div class="space-y-4">
+          <div class="flex flex-wrap gap-2">
+            <span class="inline-block px-2 py-1 text-xs rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
+              Embedding: ${stats.embedding_hits || 0}
+            </span>
+            <span class="inline-block px-2 py-1 text-xs rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+              Graph: ${stats.graph_hits || 0}
+            </span>
+            <span class="inline-block px-2 py-1 text-xs rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
+              Total Unique: ${stats.unique_results || 0}
+            </span>
+          </div>
+          
+          ${results.length > 0 ? `
+            <div class="space-y-2 max-h-96 overflow-y-auto">
+              ${results.map((r, i) => {
+                const source = r.source || 'unknown';
+                const sourceClass = source === 'embedding' 
+                  ? 'border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/20' 
+                  : 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20';
+                const sourceLabel = source === 'embedding' ? '🧠 Embedding' : '🕸️ Graph';
+                const score = r.combined_score || r.score || 0;
+                
+                return `
+                  <div class="p-3 rounded-lg border ${sourceClass}">
+                    <div class="flex justify-between items-start mb-2">
+                      <span class="text-xs font-semibold">${sourceLabel}</span>
+                      <span class="text-xs text-slate-500">Score: ${score.toFixed(3)}</span>
+                    </div>
+                    ${r.entity ? `<div class="text-sm font-medium text-slate-900 dark:text-white mb-1">${r.entity}</div>` : ''}
+                    ${r.url ? `<div class="text-xs text-brand-600 dark:text-brand-400 truncate mb-1">${r.url}</div>` : ''}
+                    ${r.text ? `<p class="text-xs text-slate-600 dark:text-slate-400 line-clamp-3">${r.text.substring(0, 300)}${r.text.length > 300 ? '...' : ''}</p>` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : '<div class="text-sm text-slate-500 p-4">No results found</div>'}
+        </div>
+      `;
+    } catch (err) {
+      resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
+    }
+  });
+  
+  // Load agent status on page load
+  async function loadAgentStatus() {
+    try {
+      const response = await fetch('/api/agent/status');
+      const data = await response.json();
+      
+      const badge = document.getElementById('agent-status-badge');
+      if (data.enabled !== false) {
+        badge.textContent = 'Agent Active';
+        badge.classList.remove('bg-red-100', 'text-red-700');
+        badge.classList.add('bg-green-100', 'text-green-700');
+      } else {
+        badge.textContent = 'Agent Disabled';
+        badge.classList.remove('bg-green-100', 'text-green-700');
+        badge.classList.add('bg-red-100', 'text-red-700');
+      }
+    } catch (err) {
+      console.warn('Could not load agent status:', err);
+    }
+  }
+  
+  loadAgentStatus();
+});
+</script>

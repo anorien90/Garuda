@@ -1,26 +1,207 @@
 <article class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
-  <div>
-    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">RAG</p>
-    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Chat</h3>
-  </div>
-  <form id="chat-form" class="space-y-3">
-    <label class="space-y-2 text-sm font-medium text-slate-800 dark:text-slate-100">
-      Question
-      <textarea id="chat-q" rows="3" placeholder="Ask a question about collected intel" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"></textarea>
-    </label>
-    <div class="grid gap-3 sm:grid-cols-2">
-      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
-        Entity (optional)
-        <input id="chat-entity" type="text" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
-      </label>
-      <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
-        Top K
-        <input id="chat-topk" type="number" min="1" max="20" value="6" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
-      </label>
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">RAG Chat</p>
+      <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Ask Questions</h3>
     </div>
-    <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-brand-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
-      Ask
-    </button>
-  </form>
+    <div class="flex gap-2">
+      <button id="chat-mode-classic" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-brand-600 text-white">Classic RAG</button>
+      <button id="chat-mode-advanced" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700">🧠 Advanced RAG</button>
+    </div>
+  </div>
+  
+  <!-- Classic Chat Form -->
+  <div id="classic-chat-container">
+    <form id="chat-form" class="space-y-3">
+      <label class="space-y-2 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Question
+        <textarea id="chat-q" rows="3" placeholder="Ask a question about collected intel" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"></textarea>
+      </label>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+          Entity (optional)
+          <input id="chat-entity" type="text" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+        </label>
+        <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+          Top K
+          <input id="chat-topk" type="number" min="1" max="20" value="6" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+        </label>
+      </div>
+      <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-brand-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
+        Ask
+      </button>
+    </form>
+  </div>
+  
+  <!-- Advanced Chat Form -->
+  <div id="advanced-chat-container" class="hidden">
+    <div class="p-3 mb-3 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800">
+      <p class="text-xs text-purple-800 dark:text-purple-200">
+        <strong>🧠 Advanced RAG</strong> uses multidimensional search (embeddings + entity graph) and supports agent modes: <strong>Search</strong>, <strong>Reflect</strong>, and <strong>Explore</strong>.
+      </p>
+    </div>
+    <form id="advanced-chat-form" class="space-y-3">
+      <label class="space-y-2 text-sm font-medium text-slate-800 dark:text-slate-100">
+        Question
+        <textarea id="advanced-chat-q" rows="3" placeholder="Ask a question using advanced RAG" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-purple-500 focus:ring-purple-500"></textarea>
+      </label>
+      <div class="grid gap-3 sm:grid-cols-3">
+        <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+          Entity (optional)
+          <input id="advanced-chat-entity" type="text" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+        </label>
+        <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+          Agent Mode
+          <select id="advanced-chat-mode" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500">
+            <option value="search">🔍 Search - Multidimensional RAG</option>
+            <option value="reflect">🔄 Reflect - Analyze & Merge Entities</option>
+            <option value="explore">🗺️ Explore - Graph Exploration</option>
+          </select>
+        </label>
+        <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+          Top K
+          <input id="advanced-chat-topk" type="number" min="1" max="20" value="10" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+        </label>
+      </div>
+      <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-purple-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-900">
+        🧠 Ask Advanced
+      </button>
+    </form>
+  </div>
+  
   <div id="chat-answer" class="space-y-3"></div>
 </article>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const classicBtn = document.getElementById('chat-mode-classic');
+  const advancedBtn = document.getElementById('chat-mode-advanced');
+  const classicContainer = document.getElementById('classic-chat-container');
+  const advancedContainer = document.getElementById('advanced-chat-container');
+  
+  function setChatMode(mode) {
+    if (mode === 'classic') {
+      classicBtn.classList.add('bg-brand-600', 'text-white');
+      classicBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border');
+      advancedBtn.classList.remove('bg-purple-600', 'text-white');
+      advancedBtn.classList.add('bg-white', 'dark:bg-slate-900', 'text-purple-700', 'dark:text-purple-300', 'border', 'border-purple-300', 'dark:border-purple-700');
+      classicContainer.classList.remove('hidden');
+      advancedContainer.classList.add('hidden');
+    } else {
+      advancedBtn.classList.add('bg-purple-600', 'text-white');
+      advancedBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-purple-700', 'dark:text-purple-300', 'border');
+      classicBtn.classList.remove('bg-brand-600', 'text-white');
+      classicBtn.classList.add('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border', 'border-slate-200', 'dark:border-slate-700');
+      classicContainer.classList.add('hidden');
+      advancedContainer.classList.remove('hidden');
+    }
+    localStorage.setItem('garuda_chat_mode', mode);
+  }
+  
+  classicBtn.addEventListener('click', () => setChatMode('classic'));
+  advancedBtn.addEventListener('click', () => setChatMode('advanced'));
+  
+  // Load saved mode
+  const savedMode = localStorage.getItem('garuda_chat_mode') || 'classic';
+  setChatMode(savedMode);
+  
+  // Advanced chat form submission
+  const advancedChatForm = document.getElementById('advanced-chat-form');
+  if (advancedChatForm) {
+    advancedChatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const question = document.getElementById('advanced-chat-q').value.trim();
+      const entity = document.getElementById('advanced-chat-entity').value.trim() || null;
+      const mode = document.getElementById('advanced-chat-mode').value;
+      
+      if (!question) {
+        alert('Please enter a question');
+        return;
+      }
+      
+      const answerContainer = document.getElementById('chat-answer');
+      answerContainer.innerHTML = '<div class="p-4 text-sm text-purple-600">🔄 Processing with Advanced RAG...</div>';
+      
+      try {
+        const response = await fetch('/api/agent/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: question,
+            entity: entity,
+            mode: mode
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) {
+          answerContainer.innerHTML = `<div class="p-4 text-sm text-red-500">Error: ${data.error}</div>`;
+          return;
+        }
+        
+        // Build response display
+        const metaBadges = [];
+        metaBadges.push(`<span class="inline-block px-2 py-1 text-xs font-semibold rounded bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-200">🧠 ${mode.charAt(0).toUpperCase() + mode.slice(1)} Mode</span>`);
+        
+        if (data.metadata) {
+          if (data.metadata.search_stats) {
+            const stats = data.metadata.search_stats;
+            metaBadges.push(`<span class="inline-block px-2 py-1 text-xs rounded bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200">Embedding: ${stats.embedding_hits || 0}</span>`);
+            metaBadges.push(`<span class="inline-block px-2 py-1 text-xs rounded bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200">Graph: ${stats.graph_hits || 0}</span>`);
+          }
+          if (data.metadata.reflect_report) {
+            const report = data.metadata.reflect_report;
+            metaBadges.push(`<span class="inline-block px-2 py-1 text-xs rounded bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-200">Duplicates: ${report.duplicates_found?.length || 0}</span>`);
+          }
+          if (data.metadata.explore_report) {
+            const report = data.metadata.explore_report;
+            metaBadges.push(`<span class="inline-block px-2 py-1 text-xs rounded bg-teal-100 dark:bg-teal-900/30 text-teal-800 dark:text-teal-200">Entities: ${report.statistics?.unique_entities || 0}</span>`);
+          }
+        }
+        
+        if (entity) {
+          metaBadges.push(`<span class="inline-block px-2 py-1 text-xs rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">Entity: ${entity}</span>`);
+        }
+        
+        const context = data.context || [];
+        
+        answerContainer.innerHTML = `
+          <div class="space-y-4">
+            <div class="flex flex-wrap gap-2">${metaBadges.join(' ')}</div>
+            
+            <div class="prose prose-sm dark:prose-invert max-w-none bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg border border-purple-200 dark:border-purple-800">
+              <p>${(data.answer || 'No answer generated').replace(/\n/g, '<br>')}</p>
+            </div>
+            
+            ${context.length > 0 ? `
+              <div>
+                <h5 class="text-xs font-bold uppercase text-slate-500 mb-2">Context Sources (${context.length})</h5>
+                <div class="space-y-2">
+                  ${context.map(ctx => {
+                    const source = ctx.source || ctx.kind || 'unknown';
+                    const sourceClass = source === 'embedding' || source === 'rag'
+                      ? 'border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/10'
+                      : 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/10';
+                    return `
+                      <div class="text-xs p-2 border rounded ${sourceClass}">
+                        ${ctx.name || ctx.entity ? `<div class="font-medium mb-1">${ctx.name || ctx.entity}</div>` : ''}
+                        ${ctx.url ? `<div class="text-brand-600 dark:text-brand-400 truncate text-xs mb-1">${ctx.url}</div>` : ''}
+                        ${ctx.text ? `<p class="text-slate-600 dark:text-slate-400 line-clamp-2">${ctx.text.substring(0, 200)}...</p>` : ''}
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        `;
+        
+      } catch (err) {
+        answerContainer.innerHTML = `<div class="p-4 text-sm text-red-500">Error: ${err.message}</div>`;
+      }
+    });
+  }
+});
+</script>

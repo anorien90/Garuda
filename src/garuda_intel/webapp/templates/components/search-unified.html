@@ -1,15 +1,16 @@
 <div class="space-y-6">
   <!-- Unified Search Interface -->
   <article class="card-surface rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between flex-wrap gap-3">
       <div>
         <h3 class="text-xl font-bold text-slate-900 dark:text-white">🔍 Unified Search</h3>
-        <p class="text-sm text-slate-600 dark:text-slate-400">Search across structured data (SQL) and semantic vectors (Qdrant)</p>
+        <p class="text-sm text-slate-600 dark:text-slate-400">Search across structured data (SQL), semantic vectors, and entity graph</p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap">
         <button id="search-mode-toggle-sql" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-brand-600 text-white">SQL</button>
         <button id="search-mode-toggle-semantic" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Semantic</button>
         <button id="search-mode-toggle-both" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Both</button>
+        <button id="search-mode-toggle-advanced" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700">🧠 Advanced RAG</button>
       </div>
     </div>
     
@@ -57,6 +58,41 @@
       </form>
     </div>
     
+    <!-- Advanced RAG Search Form (Multidimensional: Embedding + Graph) -->
+    <div id="advanced-search-form-container" class="hidden">
+      <div class="p-3 mb-3 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800">
+        <p class="text-xs text-purple-800 dark:text-purple-200">
+          <strong>🧠 Advanced RAG</strong> combines embedding-based semantic search with entity graph traversal for multidimensional results.
+        </p>
+      </div>
+      <form id="advanced-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-100">Query</label>
+          <input id="advanced-q" type="search" placeholder="Natural language query for multidimensional search" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-purple-500 focus:ring-purple-500"/>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Top K Results
+            <input id="advanced-topk" type="number" min="1" max="50" value="10" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+          </label>
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Graph Depth
+            <input id="advanced-graph-depth" type="number" min="1" max="5" value="2" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+          </label>
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100 flex flex-col">
+            Include Graph
+            <select id="advanced-include-graph" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500">
+              <option value="true">Yes - Full Multidimensional</option>
+              <option value="false">No - Embedding Only</option>
+            </select>
+          </label>
+        </div>
+        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-purple-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500">
+          🧠 Search Advanced RAG
+        </button>
+      </form>
+    </div>
+    
     <!-- Results Container -->
     <div class="space-y-4">
       <div id="sql-results-container">
@@ -68,6 +104,14 @@
         <h4 class="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Semantic Results</h4>
         <div id="semantic-results" class="grid gap-3"></div>
       </div>
+      
+      <div id="advanced-results-container" class="hidden">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-sm font-bold text-purple-700 dark:text-purple-300">🧠 Advanced RAG Results</h4>
+          <div id="advanced-stats" class="text-xs text-slate-500 dark:text-slate-400"></div>
+        </div>
+        <div id="advanced-results" class="grid gap-3"></div>
+      </div>
     </div>
   </article>
 </div>
@@ -78,32 +122,41 @@ document.addEventListener('DOMContentLoaded', () => {
   const sqlBtn = document.getElementById('search-mode-toggle-sql');
   const semanticBtn = document.getElementById('search-mode-toggle-semantic');
   const bothBtn = document.getElementById('search-mode-toggle-both');
+  const advancedBtn = document.getElementById('search-mode-toggle-advanced');
   
   const sqlForm = document.getElementById('sql-search-form-container');
   const semanticForm = document.getElementById('semantic-search-form-container');
+  const advancedForm = document.getElementById('advanced-search-form-container');
   const sqlResults = document.getElementById('sql-results-container');
   const semanticResults = document.getElementById('semantic-results-container');
+  const advancedResults = document.getElementById('advanced-results-container');
   
   function setMode(mode) {
-    // Reset button styles
+    // Reset all button styles
     [sqlBtn, semanticBtn, bothBtn].forEach(btn => {
       btn.classList.remove('bg-brand-600', 'text-white');
       btn.classList.add('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border', 'border-slate-200', 'dark:border-slate-700');
     });
+    advancedBtn.classList.remove('bg-purple-600', 'text-white');
+    advancedBtn.classList.add('bg-white', 'dark:bg-slate-900', 'text-purple-700', 'dark:text-purple-300', 'border', 'border-purple-300', 'dark:border-purple-700');
+    
+    // Hide all forms and results
+    sqlForm.classList.add('hidden');
+    semanticForm.classList.add('hidden');
+    advancedForm.classList.add('hidden');
+    sqlResults.classList.add('hidden');
+    semanticResults.classList.add('hidden');
+    advancedResults.classList.add('hidden');
     
     if (mode === 'sql') {
       sqlBtn.classList.add('bg-brand-600', 'text-white');
       sqlBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border');
       sqlForm.classList.remove('hidden');
-      semanticForm.classList.add('hidden');
       sqlResults.classList.remove('hidden');
-      semanticResults.classList.add('hidden');
     } else if (mode === 'semantic') {
       semanticBtn.classList.add('bg-brand-600', 'text-white');
       semanticBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border');
-      sqlForm.classList.add('hidden');
       semanticForm.classList.remove('hidden');
-      sqlResults.classList.add('hidden');
       semanticResults.classList.remove('hidden');
     } else if (mode === 'both') {
       bothBtn.classList.add('bg-brand-600', 'text-white');
@@ -112,6 +165,11 @@ document.addEventListener('DOMContentLoaded', () => {
       semanticForm.classList.remove('hidden');
       sqlResults.classList.remove('hidden');
       semanticResults.classList.remove('hidden');
+    } else if (mode === 'advanced') {
+      advancedBtn.classList.add('bg-purple-600', 'text-white');
+      advancedBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-purple-700', 'dark:text-purple-300', 'border');
+      advancedForm.classList.remove('hidden');
+      advancedResults.classList.remove('hidden');
     }
     
     localStorage.setItem('garuda_search_mode', mode);
@@ -120,9 +178,92 @@ document.addEventListener('DOMContentLoaded', () => {
   sqlBtn.addEventListener('click', () => setMode('sql'));
   semanticBtn.addEventListener('click', () => setMode('semantic'));
   bothBtn.addEventListener('click', () => setMode('both'));
+  advancedBtn.addEventListener('click', () => setMode('advanced'));
   
   // Load saved mode
   const savedMode = localStorage.getItem('garuda_search_mode') || 'sql';
   setMode(savedMode);
+  
+  // Advanced RAG form submission
+  const advancedSearchForm = document.getElementById('advanced-form');
+  if (advancedSearchForm) {
+    advancedSearchForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const query = document.getElementById('advanced-q').value.trim();
+      const topK = parseInt(document.getElementById('advanced-topk').value) || 10;
+      const graphDepth = parseInt(document.getElementById('advanced-graph-depth').value) || 2;
+      const includeGraph = document.getElementById('advanced-include-graph').value === 'true';
+      
+      if (!query) {
+        alert('Please enter a query');
+        return;
+      }
+      
+      const resultsContainer = document.getElementById('advanced-results');
+      const statsContainer = document.getElementById('advanced-stats');
+      resultsContainer.innerHTML = '<div class="text-sm text-slate-500 p-4">🔄 Searching with Advanced RAG...</div>';
+      statsContainer.innerHTML = '';
+      
+      try {
+        const response = await fetch('/api/agent/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: query,
+            top_k: topK,
+            include_graph: includeGraph,
+            graph_depth: graphDepth
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) {
+          resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${data.error}</div>`;
+          return;
+        }
+        
+        // Show statistics
+        const stats = data.statistics || {};
+        statsContainer.innerHTML = `
+          <span class="inline-block px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 mr-2">Embedding: ${stats.embedding_hits || 0}</span>
+          <span class="inline-block px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 mr-2">Graph: ${stats.graph_hits || 0}</span>
+          <span class="inline-block px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">Total: ${stats.unique_results || 0}</span>
+        `;
+        
+        // Render results
+        const results = data.combined_results || [];
+        if (results.length === 0) {
+          resultsContainer.innerHTML = '<div class="text-sm text-slate-500 p-4">No results found</div>';
+          return;
+        }
+        
+        resultsContainer.innerHTML = results.map((r, i) => {
+          const source = r.source || 'unknown';
+          const sourceClass = source === 'embedding' 
+            ? 'border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/20' 
+            : 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20';
+          const sourceLabel = source === 'embedding' ? '🧠 Embedding' : '🕸️ Graph';
+          const score = r.combined_score || r.score || 0;
+          
+          return `
+            <div class="p-3 rounded-lg border ${sourceClass}">
+              <div class="flex justify-between items-start mb-2">
+                <span class="text-xs font-semibold">${sourceLabel}</span>
+                <span class="text-xs text-slate-500">Score: ${score.toFixed(3)}</span>
+              </div>
+              ${r.entity ? `<div class="text-sm font-medium text-slate-900 dark:text-white mb-1">${r.entity}</div>` : ''}
+              ${r.url ? `<div class="text-xs text-brand-600 dark:text-brand-400 truncate mb-1">${r.url}</div>` : ''}
+              ${r.text ? `<p class="text-xs text-slate-600 dark:text-slate-400 line-clamp-3">${r.text.substring(0, 300)}${r.text.length > 300 ? '...' : ''}</p>` : ''}
+            </div>
+          `;
+        }).join('');
+        
+      } catch (err) {
+        resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
+      }
+    });
+  }
 });
 </script>
