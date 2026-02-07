@@ -394,6 +394,16 @@ class IntelligentExplorer:
                         source_type = rel.get("source_type", "entity")
                         target_type = rel.get("target_type", "entity")
                         
+                        # Coerce list values to strings (LLM may return lists)
+                        if isinstance(source_name, list):
+                            source_name = source_name[0] if source_name else None
+                        if isinstance(target_name, list):
+                            target_name = target_name[0] if target_name else None
+                        if isinstance(source_type, list):
+                            source_type = source_type[0] if source_type else "entity"
+                        if isinstance(target_type, list):
+                            target_type = target_type[0] if target_type else "entity"
+                        
                         if source_name and target_name:
                             # Look up entity IDs using lowercase name lookup
                             source_id = entity_name_to_id.get(source_name.lower())
