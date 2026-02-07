@@ -28,7 +28,7 @@ from .services.event_system import init_event_logging
 # Import route blueprints
 from .routes import static, recorder, search, crawling, entities, relationships
 from .routes import entity_gaps, entity_deduplication, entity_relations, media
-from .routes import graph_search, relationship_confidence
+from .routes import graph_search, relationship_confidence, schema
 
 settings = Settings.from_env()
 
@@ -160,6 +160,10 @@ app.register_blueprint(
 
 app.register_blueprint(
     relationship_confidence.init_relationship_confidence_routes(api_key_required, store)
+)
+
+app.register_blueprint(
+    schema.init_schema_routes(api_key_required, store)
 )
 
 

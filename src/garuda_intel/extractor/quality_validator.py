@@ -400,8 +400,10 @@ class ExtractionQualityValidator:
             for person in corrected['persons']:
                 # Handle case where person might be a string instead of dict
                 if isinstance(person, str):
+                    self.logger.warning(f"Converting string person to dict: {person}")
                     person = {"name": person}
                 elif not isinstance(person, dict):
+                    self.logger.warning(f"Skipping invalid person type: {type(person).__name__}")
                     continue
                 name = (person.get('name') or '').lower()
                 if name and name not in seen_names:
@@ -416,8 +418,10 @@ class ExtractionQualityValidator:
             for loc in corrected['locations']:
                 # Handle case where loc might be a string instead of dict
                 if isinstance(loc, str):
+                    self.logger.warning(f"Converting string location to dict: {loc}")
                     loc = {"location": loc}
                 elif not isinstance(loc, dict):
+                    self.logger.warning(f"Skipping invalid location type: {type(loc).__name__}")
                     continue
                 location = (loc.get('location') or '').lower()
                 if location and location not in seen_locations:

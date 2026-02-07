@@ -1338,6 +1338,85 @@ class SQLAlchemyStore(PersistenceStore):
         
         return overlap / total if total > 0 else 0.0
 
+    def deduplicate_cross_kind(self, threshold: float = 0.95) -> Dict[str, str]:
+        """
+        Deduplicate entities across different kinds.
+        
+        This merges generic entity kinds (like 'entity', 'unknown') into more
+        specific kinds (like 'person', 'company') when names match.
+        Uses the EntityKindRegistry to determine which kind should be preserved.
+        
+        Args:
+            threshold: Name similarity threshold (0-1)
+            
+        Returns:
+            Dictionary mapping source_id -> target_id for all merged entities
+        """
+        try:
+            from ..types.entity import get_registry
+            registry = get_registry()
+        except ImportError:
+            self.logger.warning("EntityKindRegistry not available, skipping cross-kind deduplication")
+            return {}
+        
+        merged_map = {}
+        
+        with self.Session() as s:
+            # Get all entities
+            all_entities = s.execute(select(Entity)).scalars().all()
+            
+            # Group by normalized name for matching
+            entities_by_name = {}
+            for entity in all_entities:
+                if not entity.name:
+                    continue
+                normalized = entity.name.lower().strip()
+                if normalized not in entities_by_name:
+                    entities_by_name[normalized] = []
+                entities_by_name[normalized].append(entity)
+        
+        # Process each group of same-name entities
+        for name, entities in entities_by_name.items():
+            if len(entities) <= 1:
+                continue
+            
+            self.logger.debug(f"Processing {len(entities)} entities with name '{name}'")
+            
+            # Find the entity with the highest priority kind
+            best_entity = None
+            best_priority = -1
+            
+            for entity in entities:
+                priority = registry.get_priority(entity.kind or 'entity')
+                if priority > best_priority:
+                    best_priority = priority
+                    best_entity = entity
+            
+            if not best_entity:
+                continue
+            
+            # Merge other entities into the best one
+            for entity in entities:
+                if str(entity.id) == str(best_entity.id):
+                    continue
+                
+                # Check if they should be merged based on kind
+                should_merge, winning_kind = registry.should_merge_kinds(
+                    entity.kind or 'entity',
+                    best_entity.kind or 'entity'
+                )
+                
+                if should_merge:
+                    if self.merge_entities(str(entity.id), str(best_entity.id)):
+                        merged_map[str(entity.id)] = str(best_entity.id)
+                        self.logger.info(
+                            f"Cross-kind merge: {entity.name} ({entity.kind}) -> "
+                            f"{best_entity.name} ({best_entity.kind})"
+                        )
+        
+        self.logger.info(f"Cross-kind deduplication complete: {len(merged_map)} entities merged")
+        return merged_map
+
     # -------- Relationship Queries (Phase 3) --------
     def get_relationship_by_entities(
         self, 

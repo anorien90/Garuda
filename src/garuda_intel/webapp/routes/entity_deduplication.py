@@ -85,4 +85,32 @@ def init_deduplication_routes(api_key_required, store):
             logger.exception("Similar entities lookup failed")
             return jsonify({"error": str(e)}), 500
     
+    @bp_dedup.post("/deduplicate-cross-kind")
+    @api_key_required
+    def api_deduplicate_cross_kind():
+        """
+        Deduplicate entities across different kinds.
+        
+        Merges generic entity kinds (like 'entity', 'unknown') into more
+        specific kinds (like 'person', 'company') when names match exactly.
+        Uses the EntityKindRegistry to determine which kind should be preserved.
+        """
+        body = request.get_json(silent=True) or {}
+        threshold = float(body.get("threshold", 0.95))
+        
+        emit_event("deduplication", f"cross-kind deduplicating with threshold {threshold}")
+        
+        try:
+            merge_map = store.deduplicate_cross_kind(threshold=threshold)
+            count = len(merge_map)
+            emit_event("deduplication", f"merged {count} cross-kind duplicate entities")
+            return jsonify({
+                "merged_count": count,
+                "merge_map": {str(k): str(v) for k, v in merge_map.items()}
+            })
+        except Exception as e:
+            emit_event("deduplication", f"cross-kind failed: {e}", level="error")
+            logger.exception("Cross-kind entity deduplication failed")
+            return jsonify({"error": str(e)}), 500
+    
     return bp_dedup
