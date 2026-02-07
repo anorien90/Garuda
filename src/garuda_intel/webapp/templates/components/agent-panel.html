@@ -23,6 +23,9 @@
         <button id="agent-tab-search" class="agent-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
           🔍 Multidimensional Search
         </button>
+        <button id="agent-tab-autonomous" class="agent-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
+          🤖 Autonomous Mode
+        </button>
       </nav>
     </div>
     
@@ -120,6 +123,55 @@
       </form>
       
       <div id="agent-search-results" class="space-y-3"></div>
+    </div>
+    
+    <!-- Autonomous Mode Panel -->
+    <div id="agent-panel-autonomous" class="agent-panel hidden space-y-4">
+      <div class="p-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
+        <p class="text-xs text-indigo-800 dark:text-indigo-200">
+          <strong>Autonomous Mode</strong> discovers dead-end entities and knowledge gaps, then generates targeted crawl plans. It uses graph exploration to find entities with missing data and can automatically trigger web crawls to fill those gaps.
+        </p>
+      </div>
+      
+      <form id="agent-autonomous-form" class="space-y-3">
+        <!-- Toggle -->
+        <div class="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800">
+          <div>
+            <label class="text-sm font-medium text-slate-800 dark:text-slate-100">Enable Autonomous Crawling</label>
+            <p class="text-xs text-slate-500 dark:text-slate-400">When enabled, discovered entities will be automatically crawled</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input id="autonomous-auto-crawl" type="checkbox" class="sr-only peer">
+            <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-slate-600 peer-checked:bg-indigo-600"></div>
+          </label>
+        </div>
+        
+        <!-- Options Grid -->
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Max Entities
+            <input id="autonomous-max-entities" type="number" min="1" max="50" value="10" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-indigo-500 focus:ring-indigo-500"/>
+          </label>
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Priority Threshold
+            <input id="autonomous-priority-threshold" type="number" min="0" max="1" step="0.05" value="0.3" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-indigo-500 focus:ring-indigo-500"/>
+          </label>
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Max Depth
+            <input id="autonomous-max-depth" type="number" min="1" max="5" value="3" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-indigo-500 focus:ring-indigo-500"/>
+          </label>
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Max Pages per Crawl
+            <input id="autonomous-max-pages" type="number" min="5" max="100" value="25" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-indigo-500 focus:ring-indigo-500"/>
+          </label>
+        </div>
+        
+        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-indigo-500">
+          🤖 Run Autonomous Discovery
+        </button>
+      </form>
+      
+      <div id="autonomous-results" class="space-y-3"></div>
     </div>
   </article>
 </div>
@@ -451,6 +503,178 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   
+  // Autonomous Form
+  const autonomousForm = document.getElementById('agent-autonomous-form');
+  autonomousForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const maxEntities = parseInt(document.getElementById('autonomous-max-entities').value) || 10;
+    const priorityThreshold = parseFloat(document.getElementById('autonomous-priority-threshold').value) || 0.3;
+    const maxDepth = parseInt(document.getElementById('autonomous-max-depth').value) || 3;
+    const autoCrawl = document.getElementById('autonomous-auto-crawl').checked;
+    const maxPages = parseInt(document.getElementById('autonomous-max-pages').value) || 25;
+    
+    const resultsContainer = document.getElementById('autonomous-results');
+    resultsContainer.innerHTML = '<div class="text-sm text-indigo-600 p-4">🤖 Running autonomous discovery...</div>';
+    
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      const apiKey = getApiKey();
+      if (apiKey) headers['X-API-Key'] = apiKey;
+      
+      const response = await fetch('/api/agent/autonomous', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+          max_entities: maxEntities,
+          priority_threshold: priorityThreshold,
+          max_depth: maxDepth,
+          auto_crawl: autoCrawl,
+          max_pages: maxPages
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${data.error}</div>`;
+        return;
+      }
+      
+      const stats = data.statistics || {};
+      const deadEnds = data.dead_ends || [];
+      const gaps = data.knowledge_gaps || [];
+      const plans = data.crawl_plans || [];
+      const crawlResults = data.crawl_results || [];
+      
+      resultsContainer.innerHTML = `
+        <div class="space-y-4">
+          <!-- Statistics -->
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div class="p-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 text-center">
+              <div class="text-2xl font-bold text-indigo-700 dark:text-indigo-300">${stats.entities_analyzed || 0}</div>
+              <div class="text-xs text-indigo-600 dark:text-indigo-400">Analyzed</div>
+            </div>
+            <div class="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-center">
+              <div class="text-2xl font-bold text-red-700 dark:text-red-300">${stats.dead_ends_found || 0}</div>
+              <div class="text-xs text-red-600 dark:text-red-400">Dead Ends</div>
+            </div>
+            <div class="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-center">
+              <div class="text-2xl font-bold text-amber-700 dark:text-amber-300">${stats.gaps_found || 0}</div>
+              <div class="text-xs text-amber-600 dark:text-amber-400">Gaps Found</div>
+            </div>
+            <div class="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-center">
+              <div class="text-2xl font-bold text-blue-700 dark:text-blue-300">${stats.crawl_plans_generated || 0}</div>
+              <div class="text-xs text-blue-600 dark:text-blue-400">Crawl Plans</div>
+            </div>
+            <div class="p-3 rounded-lg bg-green-50 dark:bg-green-900/20 text-center">
+              <div class="text-2xl font-bold text-green-700 dark:text-green-300">${stats.crawls_executed || 0}</div>
+              <div class="text-xs text-green-600 dark:text-green-400">Crawls Run</div>
+            </div>
+          </div>
+          
+          ${data.message ? `<div class="text-sm text-slate-500 p-2">${data.message}</div>` : ''}
+          
+          <!-- Dead Ends -->
+          ${deadEnds.length > 0 ? `
+            <div>
+              <h5 class="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">🔴 Dead-End Entities</h5>
+              <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                  <thead class="bg-slate-100 dark:bg-slate-800">
+                    <tr>
+                      <th class="px-2 py-1 text-left">Entity</th>
+                      <th class="px-2 py-1 text-left">Kind</th>
+                      <th class="px-2 py-1 text-center">Outgoing</th>
+                      <th class="px-2 py-1 text-center">Incoming</th>
+                      <th class="px-2 py-1 text-center">Dead End</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-200 dark:divide-slate-700">
+                    ${deadEnds.slice(0, 15).map((de, i) => `
+                      <tr class="${i % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-800/50'}">
+                        <td class="px-2 py-1 font-medium text-slate-900 dark:text-white">${de.name || 'Unknown'}</td>
+                        <td class="px-2 py-1 text-slate-600 dark:text-slate-400">${de.kind || '-'}</td>
+                        <td class="px-2 py-1 text-center">${de.outgoing_relations || 0}</td>
+                        <td class="px-2 py-1 text-center">${de.incoming_relations || 0}</td>
+                        <td class="px-2 py-1 text-center">${de.is_dead_end ? '<span class="text-red-600 font-bold">Yes</span>' : 'No'}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ` : ''}
+          
+          <!-- Knowledge Gaps -->
+          ${gaps.length > 0 ? `
+            <div>
+              <h5 class="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">⚠️ Knowledge Gaps</h5>
+              <div class="space-y-2 max-h-60 overflow-y-auto">
+                ${gaps.slice(0, 10).map(gap => `
+                  <div class="p-2 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/10 text-xs">
+                    <div class="flex justify-between items-start">
+                      <div class="font-medium text-amber-800 dark:text-amber-200">${gap.entity_name || 'Unknown'}</div>
+                      <span class="px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-800 text-amber-700 dark:text-amber-200 text-xs">Gap Score: ${gap.gap_score || 0}</span>
+                    </div>
+                    <div class="text-amber-600 dark:text-amber-400 mt-1">
+                      Intel: ${gap.intelligence_count || 0} | Missing: ${(gap.missing_fields || []).join(', ') || 'none'}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+          
+          <!-- Crawl Plans -->
+          ${plans.length > 0 ? `
+            <div>
+              <h5 class="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">📋 Generated Crawl Plans</h5>
+              <div class="space-y-2 max-h-60 overflow-y-auto">
+                ${plans.map(plan => `
+                  <div class="p-2 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/10 text-xs">
+                    <div class="flex justify-between items-start">
+                      <div class="font-medium text-blue-800 dark:text-blue-200">${plan.entity_name || 'Unknown'}</div>
+                      <span class="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 text-xs">Priority: ${(plan.priority_score || 0).toFixed(3)}</span>
+                    </div>
+                    <div class="text-blue-600 dark:text-blue-400 mt-1">
+                      Mode: ${plan.mode || '-'} | Strategy: ${plan.strategy || '-'}
+                    </div>
+                    ${(plan.queries && plan.queries.length > 0) ? `
+                      <div class="mt-1 text-slate-600 dark:text-slate-400">
+                        Queries: ${plan.queries.slice(0, 3).join(', ')}${plan.queries.length > 3 ? ` +${plan.queries.length - 3} more` : ''}
+                      </div>
+                    ` : ''}
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+          
+          <!-- Crawl Results -->
+          ${crawlResults.length > 0 ? `
+            <div>
+              <h5 class="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">✅ Crawl Results</h5>
+              <div class="space-y-2 max-h-60 overflow-y-auto">
+                ${crawlResults.map(cr => `
+                  <div class="p-2 rounded border ${cr.error ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10' : 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/10'} text-xs">
+                    <div class="font-medium ${cr.error ? 'text-red-800 dark:text-red-200' : 'text-green-800 dark:text-green-200'}">${cr.entity_name || 'Unknown'}</div>
+                    ${cr.error 
+                      ? `<div class="text-red-600 dark:text-red-400 mt-1">Error: ${cr.error}</div>`
+                      : `<div class="text-green-600 dark:text-green-400 mt-1">Mode: ${cr.plan_mode || '-'} | Pages: ${(cr.result || {}).pages_discovered || 0} | Intel: ${(cr.result || {}).intel_extracted || 0}</div>`
+                    }
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    } catch (err) {
+      resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
+    }
+  });
+  
   // Load agent status on page load
   async function loadAgentStatus() {
     try {
@@ -470,6 +694,24 @@ document.addEventListener('DOMContentLoaded', () => {
         badge.textContent = 'Agent Disabled';
         badge.classList.remove('bg-green-100', 'text-green-700');
         badge.classList.add('bg-red-100', 'text-red-700');
+      }
+      
+      // Populate autonomous mode defaults from server config
+      const auto = data.autonomous || {};
+      if (auto.max_entities !== undefined) {
+        document.getElementById('autonomous-max-entities').value = auto.max_entities;
+      }
+      if (auto.priority_threshold !== undefined) {
+        document.getElementById('autonomous-priority-threshold').value = auto.priority_threshold;
+      }
+      if (auto.max_depth !== undefined) {
+        document.getElementById('autonomous-max-depth').value = auto.max_depth;
+      }
+      if (auto.auto_crawl !== undefined) {
+        document.getElementById('autonomous-auto-crawl').checked = auto.auto_crawl;
+      }
+      if (auto.max_pages !== undefined) {
+        document.getElementById('autonomous-max-pages').value = auto.max_pages;
       }
     } catch (err) {
       console.warn('Could not load agent status:', err);

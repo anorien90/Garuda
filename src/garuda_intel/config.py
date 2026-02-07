@@ -88,6 +88,15 @@ class Settings:
     agent_entity_merge_threshold: float = 0.85  # Similarity threshold for entity merging
     agent_priority_unknown_weight: float = 0.7  # Weight for prioritizing unknown entities
     agent_priority_relation_weight: float = 0.3  # Weight for relation count in priority
+    
+    # Autonomous mode settings
+    agent_autonomous_enabled: bool = False  # Whether autonomous mode is active
+    agent_autonomous_interval: int = 300  # Seconds between autonomous cycles
+    agent_autonomous_max_entities: int = 10  # Max entities to process per cycle
+    agent_autonomous_priority_threshold: float = 0.3  # Min priority score to trigger crawl
+    agent_autonomous_max_depth: int = 3  # Max exploration depth for autonomous discovery
+    agent_autonomous_auto_crawl: bool = False  # Whether to automatically trigger crawls
+    agent_autonomous_max_pages: int = 25  # Max pages per autonomous crawl
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -147,6 +156,14 @@ class Settings:
             agent_entity_merge_threshold=float(os.environ.get("GARUDA_AGENT_ENTITY_MERGE_THRESHOLD", "0.85")),
             agent_priority_unknown_weight=float(os.environ.get("GARUDA_AGENT_PRIORITY_UNKNOWN_WEIGHT", "0.7")),
             agent_priority_relation_weight=float(os.environ.get("GARUDA_AGENT_PRIORITY_RELATION_WEIGHT", "0.3")),
+            # Autonomous mode settings
+            agent_autonomous_enabled=_as_bool(os.environ.get("GARUDA_AGENT_AUTONOMOUS_ENABLED"), False),
+            agent_autonomous_interval=int(os.environ.get("GARUDA_AGENT_AUTONOMOUS_INTERVAL", "300")),
+            agent_autonomous_max_entities=int(os.environ.get("GARUDA_AGENT_AUTONOMOUS_MAX_ENTITIES", "10")),
+            agent_autonomous_priority_threshold=float(os.environ.get("GARUDA_AGENT_AUTONOMOUS_PRIORITY_THRESHOLD", "0.3")),
+            agent_autonomous_max_depth=int(os.environ.get("GARUDA_AGENT_AUTONOMOUS_MAX_DEPTH", "3")),
+            agent_autonomous_auto_crawl=_as_bool(os.environ.get("GARUDA_AGENT_AUTONOMOUS_AUTO_CRAWL"), False),
+            agent_autonomous_max_pages=int(os.environ.get("GARUDA_AGENT_AUTONOMOUS_MAX_PAGES", "25")),
         )
 
     @property

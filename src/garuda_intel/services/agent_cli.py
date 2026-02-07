@@ -271,6 +271,75 @@ def cmd_chat(settings: Settings, args: argparse.Namespace) -> None:
 
 
 # ============================================================================
+# Autonomous Commands
+# ============================================================================
+
+def cmd_autonomous(settings: Settings, args: argparse.Namespace) -> None:
+    """Run autonomous discovery mode."""
+    logger = setup_logging(args.verbose)
+    logger.info("Starting autonomous discovery mode...")
+
+    _, _, _, agent = get_services(settings)
+
+    report = agent.autonomous_discover(
+        max_entities=args.max_entities,
+        priority_threshold=args.priority_threshold,
+        max_depth=args.depth,
+        auto_crawl=args.auto_crawl,
+        max_pages=args.max_pages,
+    )
+
+    if args.format == "json":
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        print("\n" + "=" * 60)
+        print("AUTONOMOUS DISCOVERY REPORT")
+        print("=" * 60)
+
+        stats = report.get("statistics", {})
+        print(f"\nEntities analyzed: {stats.get('entities_analyzed', 0)}")
+        print(f"Dead ends found: {stats.get('dead_ends_found', 0)}")
+        print(f"Knowledge gaps found: {stats.get('gaps_found', 0)}")
+        print(f"Crawl plans generated: {stats.get('crawl_plans_generated', 0)}")
+        print(f"Crawls executed: {stats.get('crawls_executed', 0)}")
+
+        dead_ends = report.get("dead_ends", [])
+        if dead_ends:
+            print(f"\n--- Dead-End Entities ({len(dead_ends)}) ---")
+            print(f"\n{'Name':<30} {'Kind':<15} {'Out':<5} {'In':<5} {'Dead End':<10}")
+            print("-" * 65)
+            for de in dead_ends[:15]:
+                print(
+                    f"{(de.get('name') or '')[:28]:<30} "
+                    f"{(de.get('kind') or 'N/A'):<15} "
+                    f"{de.get('outgoing_relations', 0):<5} "
+                    f"{de.get('incoming_relations', 0):<5} "
+                    f"{'Yes' if de.get('is_dead_end') else 'No':<10}"
+                )
+
+        gaps = report.get("knowledge_gaps", [])
+        if gaps:
+            print(f"\n--- Knowledge Gaps ({len(gaps)}) ---")
+            for gap in gaps[:10]:
+                print(f"\n  {gap.get('entity_name', 'Unknown')} (gap score: {gap.get('gap_score', 0)})")
+                print(f"    Intel: {gap.get('intelligence_count', 0)} | Missing: {', '.join(gap.get('missing_fields', []))}")
+
+        plans = report.get("crawl_plans", [])
+        if plans:
+            print(f"\n--- Crawl Plans ({len(plans)}) ---")
+            for plan in plans[:10]:
+                print(f"\n  {plan.get('entity_name', 'Unknown')} (priority: {plan.get('priority_score', 0):.3f})")
+                print(f"    Mode: {plan.get('mode', '-')} | Strategy: {plan.get('strategy', '-')}")
+
+        if report.get("message"):
+            print(f"\n{report['message']}")
+        if report.get("error"):
+            print(f"\nError: {report['error']}")
+
+        print("\n" + "=" * 60)
+
+
+# ============================================================================
 # Interactive Mode
 # ============================================================================
 
@@ -465,6 +534,41 @@ def main():
         help="Interactive chat session"
     )
     
+    # Autonomous command
+    autonomous_parser = subparsers.add_parser(
+        "autonomous",
+        help="Autonomous discovery: find dead-ends, gaps, and generate crawl plans"
+    )
+    autonomous_parser.add_argument(
+        "-n", "--max-entities",
+        type=int,
+        default=10,
+        help="Max entities to process (default: 10)"
+    )
+    autonomous_parser.add_argument(
+        "-t", "--priority-threshold",
+        type=float,
+        default=0.3,
+        help="Minimum priority score (default: 0.3)"
+    )
+    autonomous_parser.add_argument(
+        "-d", "--depth",
+        type=int,
+        default=3,
+        help="Max exploration depth (default: 3)"
+    )
+    autonomous_parser.add_argument(
+        "--auto-crawl",
+        action="store_true",
+        help="Automatically trigger crawls for discovered entities"
+    )
+    autonomous_parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=25,
+        help="Max pages per crawl (default: 25)"
+    )
+    
     args = parser.parse_args()
     
     if not args.command:
@@ -491,6 +595,8 @@ def main():
         cmd_chat(settings, args)
     elif args.command == "interactive":
         cmd_interactive(settings, args)
+    elif args.command == "autonomous":
+        cmd_autonomous(settings, args)
     else:
         parser.print_help()
 

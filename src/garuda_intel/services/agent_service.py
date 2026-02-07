@@ -1004,3 +1004,270 @@ class AgentService:
             f"Found {stats.get('unique_entities', 0)} related entities. "
             f"Top priorities for exploration: {top_entities}"
         )
+
+    # =========================================================================
+    # MODE 4: AUTONOMOUS EXPLORATION
+    # =========================================================================
+
+    def autonomous_discover(
+        self,
+        max_entities: int = 10,
+        priority_threshold: float = 0.3,
+        max_depth: int = 3,
+        auto_crawl: bool = False,
+        max_pages: int = 25,
+    ) -> Dict[str, Any]:
+        """
+        Autonomous discovery mode.
+
+        Identifies dead-end entities and knowledge gaps, then generates
+        targeted crawl plans to fill those gaps.
+
+        Flow:
+        1. Find dead-end entities (few outgoing relationships)
+        2. Find entities with incomplete data (knowledge gaps)
+        3. Use explore_and_prioritize to rank candidates
+        4. Generate crawl queries for top candidates
+        5. Optionally trigger crawls automatically
+
+        Args:
+            max_entities: Maximum entities to process per cycle
+            priority_threshold: Minimum priority score to include
+            max_depth: Max graph traversal depth
+            auto_crawl: Whether to actually execute crawls
+            max_pages: Max pages per entity crawl
+
+        Returns:
+            Discovery report with dead-ends, gaps, crawl plans, and results
+        """
+        self.logger.info("Starting autonomous discovery cycle")
+
+        report: Dict[str, Any] = {
+            "mode": "autonomous_discover",
+            "started_at": datetime.now().isoformat(),
+            "dead_ends": [],
+            "knowledge_gaps": [],
+            "crawl_plans": [],
+            "crawl_results": [],
+            "statistics": {
+                "dead_ends_found": 0,
+                "gaps_found": 0,
+                "crawl_plans_generated": 0,
+                "crawls_executed": 0,
+                "entities_analyzed": 0,
+            },
+        }
+
+        try:
+            with self.store.Session() as session:
+                # Step 1: Find dead-end entities (few outgoing relations)
+                dead_ends = self._find_dead_end_entities(session, max_entities * 2)
+                report["dead_ends"] = dead_ends
+                report["statistics"]["dead_ends_found"] = len(dead_ends)
+
+                # Step 2: Find entities with knowledge gaps
+                knowledge_gaps = self._find_knowledge_gaps(session, max_entities * 2)
+                report["knowledge_gaps"] = knowledge_gaps
+                report["statistics"]["gaps_found"] = len(knowledge_gaps)
+
+                # Step 3: Build a combined candidate list
+                candidate_names: List[str] = []
+                seen: Set[str] = set()
+                for de in dead_ends:
+                    name = de.get("name", "")
+                    if name and name not in seen:
+                        candidate_names.append(name)
+                        seen.add(name)
+                for gap in knowledge_gaps:
+                    name = gap.get("entity_name", "")
+                    if name and name not in seen:
+                        candidate_names.append(name)
+                        seen.add(name)
+
+                report["statistics"]["entities_analyzed"] = len(candidate_names)
+
+                if not candidate_names:
+                    report["message"] = "No dead-ends or knowledge gaps found"
+                    report["completed_at"] = datetime.now().isoformat()
+                    return report
+
+                # Step 4: Run explore from dead-end entities to find prioritized targets
+                explore_report = self.explore_and_prioritize(
+                    root_entities=candidate_names[:max_entities],
+                    max_depth=max_depth,
+                    top_n=max_entities,
+                )
+
+                prioritized = explore_report.get("prioritized_entities", [])
+
+                # Step 5: Generate crawl plans for high-priority entities
+                from .entity_gap_analyzer import EntityGapAnalyzer
+                gap_analyzer = EntityGapAnalyzer(self.store)
+
+                for entity_info in prioritized:
+                    if entity_info.get("priority_score", 0) < priority_threshold:
+                        continue
+
+                    entity_name = entity_info.get("name", "")
+                    entity_kind = entity_info.get("kind")
+                    if not entity_name:
+                        continue
+
+                    plan = gap_analyzer.generate_crawl_plan(entity_name, entity_kind)
+                    plan["priority_score"] = entity_info.get("priority_score", 0)
+                    plan["relation_count"] = entity_info.get("relation_count", 0)
+                    plan["depth_from_root"] = entity_info.get("depth_from_root", 0)
+                    report["crawl_plans"].append(plan)
+                    report["statistics"]["crawl_plans_generated"] += 1
+
+                # Step 6: Optionally execute crawls
+                if auto_crawl and report["crawl_plans"]:
+                    for plan in report["crawl_plans"][:max_entities]:
+                        crawl_result = self._execute_autonomous_crawl(
+                            plan, max_pages=max_pages
+                        )
+                        if crawl_result:
+                            report["crawl_results"].append(crawl_result)
+                            report["statistics"]["crawls_executed"] += 1
+
+        except Exception as e:
+            self.logger.error(f"Autonomous discovery failed: {e}", exc_info=True)
+            report["error"] = str(e)
+
+        report["completed_at"] = datetime.now().isoformat()
+        return report
+
+    def _find_dead_end_entities(
+        self, session: Session, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Find entities with few or no outgoing relationships (dead-ends)."""
+        dead_ends = []
+
+        # Get entities and their outgoing relation counts
+        stmt = (
+            select(
+                Entity.id,
+                Entity.name,
+                Entity.kind,
+                func.count(Relationship.id).label("outgoing_count"),
+            )
+            .outerjoin(Relationship, Relationship.source_id == Entity.id)
+            .group_by(Entity.id, Entity.name, Entity.kind)
+            .order_by(func.count(Relationship.id).asc())
+            .limit(limit)
+        )
+
+        for row in session.execute(stmt).all():
+            entity_id, name, kind, outgoing_count = row
+            # Also get incoming count for context
+            incoming_count = (
+                session.execute(
+                    select(func.count()).select_from(Relationship).where(
+                        Relationship.target_id == str(entity_id)
+                    )
+                ).scalar()
+                or 0
+            )
+
+            dead_ends.append({
+                "entity_id": str(entity_id),
+                "name": name,
+                "kind": kind,
+                "outgoing_relations": outgoing_count,
+                "incoming_relations": incoming_count,
+                "total_relations": outgoing_count + incoming_count,
+                "is_dead_end": outgoing_count == 0,
+            })
+
+        return dead_ends
+
+    def _find_knowledge_gaps(
+        self, session: Session, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Find entities with missing or incomplete data."""
+        gaps = []
+
+        entities = (
+            session.execute(
+                select(Entity).order_by(Entity.updated_at.asc()).limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+
+        for entity in entities:
+            # Count intelligence records for this entity
+            intel_count = (
+                session.execute(
+                    select(func.count())
+                    .select_from(Intelligence)
+                    .where(Intelligence.entity_id == str(entity.id))
+                ).scalar()
+                or 0
+            )
+
+            # Check for missing critical fields
+            missing_fields = []
+            if not entity.kind:
+                missing_fields.append("kind")
+            data = entity.data or {}
+            meta = entity.metadata_json or {}
+            combined = {**data, **meta}
+
+            if not combined.get("description") and not combined.get("bio"):
+                missing_fields.append("description")
+            if not combined.get("website") and not combined.get("url"):
+                missing_fields.append("website")
+
+            if missing_fields or intel_count == 0:
+                gaps.append({
+                    "entity_id": str(entity.id),
+                    "entity_name": entity.name,
+                    "entity_kind": entity.kind,
+                    "intelligence_count": intel_count,
+                    "missing_fields": missing_fields,
+                    "gap_score": len(missing_fields) + (1 if intel_count == 0 else 0),
+                })
+
+        # Sort by gap_score descending (most gaps first)
+        gaps.sort(key=lambda x: x["gap_score"], reverse=True)
+        return gaps[:limit]
+
+    def _execute_autonomous_crawl(
+        self, plan: Dict[str, Any], max_pages: int = 25
+    ) -> Optional[Dict[str, Any]]:
+        """Execute a crawl from an autonomous plan."""
+        entity_name = plan.get("entity_name", "")
+        if not entity_name:
+            return None
+
+        try:
+            from .adaptive_crawler import AdaptiveCrawlerService
+            from ..discover.crawl_learner import CrawlLearner
+
+            crawl_learner = CrawlLearner()
+            crawler = AdaptiveCrawlerService(
+                store=self.store,
+                llm=self.llm,
+                crawl_learner=crawl_learner,
+                vector_store=self.vector_store,
+            )
+
+            result = crawler.intelligent_crawl(
+                entity_name=entity_name,
+                entity_type=plan.get("entity_type"),
+                max_pages=max_pages,
+                max_depth=2,
+            )
+
+            return {
+                "entity_name": entity_name,
+                "plan_mode": plan.get("mode", "unknown"),
+                "result": result,
+            }
+        except Exception as e:
+            self.logger.warning(f"Autonomous crawl failed for '{entity_name}': {e}")
+            return {
+                "entity_name": entity_name,
+                "error": str(e),
+            }

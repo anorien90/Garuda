@@ -240,6 +240,62 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             logger.exception("Agent chat failed")
             return jsonify({"error": str(e)}), 500
     
+    @bp_agent.post("/autonomous")
+    @api_key_required
+    def api_agent_autonomous():
+        """
+        Run autonomous discovery cycle.
+
+        Finds dead-end entities, knowledge gaps, generates crawl plans,
+        and optionally triggers crawls.
+
+        Request body (JSON):
+            max_entities: Max entities to process (default: 10)
+            priority_threshold: Min priority score (default: 0.3)
+            max_depth: Max graph traversal depth (default: 3)
+            auto_crawl: Whether to trigger crawls (default: false)
+            max_pages: Max pages per crawl (default: 25)
+
+        Returns:
+            Discovery report with dead-ends, gaps, plans, and results
+        """
+        body = request.get_json(silent=True) or {}
+
+        max_entities = int(body.get("max_entities", 10))
+        priority_threshold = float(body.get("priority_threshold", 0.3))
+        max_depth = int(body.get("max_depth", 3))
+        auto_crawl = body.get("auto_crawl", False)
+        max_pages = int(body.get("max_pages", 25))
+
+        emit_event("agent", "autonomous discovery started", payload={
+            "max_entities": max_entities,
+            "priority_threshold": priority_threshold,
+            "auto_crawl": auto_crawl,
+        })
+
+        try:
+            report = agent.autonomous_discover(
+                max_entities=max_entities,
+                priority_threshold=priority_threshold,
+                max_depth=max_depth,
+                auto_crawl=auto_crawl,
+                max_pages=max_pages,
+            )
+
+            emit_event("agent", "autonomous discovery completed", payload={
+                "dead_ends": report["statistics"]["dead_ends_found"],
+                "gaps": report["statistics"]["gaps_found"],
+                "plans": report["statistics"]["crawl_plans_generated"],
+                "crawls": report["statistics"]["crawls_executed"],
+            })
+
+            return jsonify(report)
+
+        except Exception as e:
+            emit_event("agent", f"autonomous discovery failed: {e}", level="error")
+            logger.exception("Autonomous discovery failed")
+            return jsonify({"error": str(e)}), 500
+
     @bp_agent.get("/status")
     @api_key_required
     def api_agent_status():
@@ -257,6 +313,15 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
                 "entity_merge_threshold": getattr(settings, 'agent_entity_merge_threshold', 0.85),
                 "priority_unknown_weight": getattr(settings, 'agent_priority_unknown_weight', 0.7),
                 "priority_relation_weight": getattr(settings, 'agent_priority_relation_weight', 0.3),
+            },
+            "autonomous": {
+                "enabled": getattr(settings, 'agent_autonomous_enabled', False),
+                "interval": getattr(settings, 'agent_autonomous_interval', 300),
+                "max_entities": getattr(settings, 'agent_autonomous_max_entities', 10),
+                "priority_threshold": getattr(settings, 'agent_autonomous_priority_threshold', 0.3),
+                "max_depth": getattr(settings, 'agent_autonomous_max_depth', 3),
+                "auto_crawl": getattr(settings, 'agent_autonomous_auto_crawl', False),
+                "max_pages": getattr(settings, 'agent_autonomous_max_pages', 25),
             },
             "components": {
                 "llm_available": llm is not None,
