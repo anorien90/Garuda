@@ -115,10 +115,17 @@ async function fetchSchema() {
 
 /**
  * Get node color, falling back to defaults
+ * Priority: node.kind > node.type > meta.entity_kind > unknown
  */
 function getNodeColor(node) {
+  // First try the explicit kind field (most specific)
+  const kind = node.kind || node.meta?.kind;
+  if (kind && COLORS[kind]) {
+    return COLORS[kind];
+  }
+  // Then try the type field (type may already be derived from meta.entity_kind on backend)
   const type = node.type || node.meta?.entity_kind;
-  return COLORS[type] || COLORS[node.meta?.entity_kind] || COLORS.unknown;
+  return COLORS[type] || COLORS.unknown;
 }
 
 /**
@@ -329,10 +336,10 @@ function renderDetailBody(node) {
       : '';
 
   const entityBadge =
-    node.type === 'entity' || node.meta?.entity_kind
+    node.type === 'entity' || node.meta?.entity_kind || node.kind
       ? `<div class="text-xs uppercase text-slate-500">Entity</div>
          <div class="flex flex-wrap gap-1 text-xs">
-           ${pill(node.meta?.entity_kind || node.type || 'entity')}
+           ${pill(node.kind || node.meta?.entity_kind || node.type || 'entity')}
            ${node.score ? pill(`score ${node.score}`) : ''}
            ${node.count ? pill(`count ${node.count}`) : ''}
          </div>`
@@ -376,7 +383,7 @@ function renderDetails(node, links) {
         <div class="text-xs uppercase tracking-wide text-slate-500">Details</div>
         <div class="text-sm font-semibold break-all">${escapeHtml(node.label || node.id)}</div>
         <div class="text-xs text-slate-500">
-          ${escapeHtml(node.type || 'unknown')} • score ${escapeHtml(fmt(node.score))} • count ${escapeHtml(fmt(node.count))}
+          ${escapeHtml(node.kind || node.type || 'unknown')} • score ${escapeHtml(fmt(node.score))} • count ${escapeHtml(fmt(node.count))}
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -392,7 +399,7 @@ function renderDetails(node, links) {
           data-action="expand-node"
           data-node-id="${escapeHtml(node.id)}"
           data-node-label="${escapeHtml(node.label || node.id)}"
-          data-node-type="${escapeHtml(node.type || 'unknown')}"
+          data-node-type="${escapeHtml(node.kind || node.type || 'unknown')}"
           class="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-100 hover:border-brand-400 dark:hover:border-brand-500"
         >
           Expand
@@ -928,8 +935,10 @@ function applyFilters(rawNodes, rawLinks) {
 
   let nodes = rawNodes.filter((n) => {
     const t = (n.type || 'unknown').toLowerCase();
+    const k = (n.kind || '').toLowerCase();
     const ek = (n.meta?.entity_kind || '').toLowerCase();
-    return nodeTypes.has(t) || nodeTypes.has(ek) || (nodeTypes.has('entity') && t === 'unknown');
+    // Check if any of the type/kind identifiers match the filter
+    return nodeTypes.has(t) || nodeTypes.has(k) || nodeTypes.has(ek) || (nodeTypes.has('entity') && t === 'unknown');
   });
 
   let links = rawLinks

@@ -101,14 +101,25 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 for a, b in itertools.combinations(unique_keys, 2):
                     add_edge(a, b, kind="cooccurrence", weight=1)
 
-            def ensure_node(node_id: str, label: str, node_type: str, score: float | None = None, count_inc: int = 1, meta: dict | None = None):
+            def ensure_node(node_id: str, label: str, node_type: str, score: float | None = None, count_inc: int = 1, meta: dict | None = None, kind: str | None = None):
                 if not node_id:
                     return None
                 node_id = str(node_id)
+                # Initialize node with defaults
                 node = nodes.get(node_id, {"id": node_id, "label": label or node_id, "type": node_type, "score": 0, "count": 0, "meta": {}})
                 node["count"] = (node.get("count") or 0) + (count_inc or 0)
                 if score is not None:
                     node["score"] = max(node.get("score") or 0, score)
+                # Set kind field: prefer specific kinds over generic ones
+                if kind:
+                    existing_kind = node.get("kind")
+                    is_specific_kind = kind not in ("entity", "unknown")
+                    is_existing_generic = not existing_kind or existing_kind in ("entity", "unknown")
+                    # Update kind if new kind is more specific, or if no kind exists yet
+                    if is_specific_kind and is_existing_generic:
+                        node["kind"] = kind
+                    elif not existing_kind:
+                        node["kind"] = kind
                 if meta:
                     node_meta = node.get("meta") or {}
                     node_meta.update({k: v for k, v in meta.items() if v is not None})
@@ -125,13 +136,21 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 norm_kind = _norm_kind(kind)
                 variants.setdefault(canon, Counter()).update([raw_name])
                 ent_uuid = entity_ids.get(canon)
+                # Get stored kind from database if available (may have more specific kind like "founder")
+                stored_kind = entity_kinds.get(canon)
+                # Priority: stored_kind (if specific) > norm_kind (if specific) > norm_kind (generic) > "entity"
+                is_stored_specific = stored_kind and stored_kind not in ("entity", "unknown")
+                effective_kind = stored_kind if is_stored_specific else (norm_kind or "entity")
                 node_key = str(ent_uuid) if ent_uuid else canon
-                node_meta = {"entity_kind": norm_kind, "canonical": canon, "entity_id": ent_uuid, "source_id": node_key}
+                # entity_kind in meta stores normalized kind for filtering; falls back to effective_kind
+                node_meta = {"entity_kind": norm_kind or effective_kind or "entity", "canonical": canon, "entity_id": ent_uuid, "source_id": node_key}
                 if meta:
                     node_meta.update(meta)
-                node_id = ensure_node(node_key, raw_name, node_type=norm_kind or "entity", score=score, meta=node_meta)
-                if norm_kind:
-                    canonical_type[canon] = canonical_type.get(canon) or norm_kind
+                node_id = ensure_node(node_key, raw_name, node_type=effective_kind, score=score, meta=node_meta, kind=effective_kind)
+                if effective_kind:
+                    canonical_type[canon] = canonical_type.get(canon) or effective_kind
+                    # type may be updated here for canonical consistency across merged nodes;
+                    # kind is already set in ensure_node with smart update logic
                     nodes[node_id]["type"] = canonical_type[canon]
                 return node_id
 
@@ -481,7 +500,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 with store.Session() as session:
                     entity = session.query(db_models.Entity).filter_by(id=node_id).first()
                     if entity:
-                        node_type = "entity"
+                        node_type = entity.kind or "entity"  # Use entity kind as type
+                        entity_kind = entity.kind  # Separate kind field for more specific categorization
                         label = entity.name
                         
                         # Get entity data and metadata
@@ -534,6 +554,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                         return jsonify({
                             "id": node_id, 
                             "type": node_type, 
+                            "kind": entity_kind,  # Include kind at top level
                             "label": label, 
                             "meta": meta,
                             "relationships": relationships,
