@@ -312,6 +312,8 @@ class ExtractionQualityValidator:
         # Check event years
         events = extracted_intel.get('events', [])
         for event in events:
+            if not isinstance(event, dict):
+                continue
             if 'year' in event:
                 year = self._extract_year(event.get('year'))
                 if year and (year > current_year + 10 or year < 1900):
@@ -327,6 +329,8 @@ class ExtractionQualityValidator:
         # Check employee count
         metrics = extracted_intel.get('metrics', [])
         for metric in metrics:
+            if not isinstance(metric, dict):
+                continue
             metric_type = metric.get('type') or ''
             if 'employees' in metric_type.lower():
                 value_str = metric.get('value', '')

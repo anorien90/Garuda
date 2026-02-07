@@ -488,3 +488,52 @@ class TestExtractionQualityValidator:
         assert report is not None
         assert report.overall_score >= 0.0
         assert report.consistency_score >= 0.0
+
+    def test_handle_string_metrics_in_plausibility(self, validator):
+        """Test that string metrics in the metrics list don't cause AttributeError."""
+        intel = {
+            "basic_info": {"description": "Test"},
+            "persons": [],
+            "locations": [],
+            "metrics": [
+                "employees: 500",       # String instead of dict
+                "revenue: $1M",          # Another string
+                {"type": "employees", "value": "100"},  # Normal dict
+            ],
+            "financials": [],
+            "products": [],
+            "events": [],
+            "jobs": [],
+            "relationships": []
+        }
+        
+        # Should not raise AttributeError
+        report = validator.validate(intel, "Test Company", "Company")
+        
+        # Should complete validation without errors
+        assert report is not None
+        assert report.plausibility_score >= 0.0
+
+    def test_handle_string_events_in_plausibility(self, validator):
+        """Test that string events in the events list don't cause AttributeError."""
+        intel = {
+            "basic_info": {"description": "Test"},
+            "persons": [],
+            "locations": [],
+            "metrics": [],
+            "financials": [],
+            "products": [],
+            "events": [
+                "Founded in 2020",       # String instead of dict
+                {"year": "2050", "description": "Future event"},  # Dict with implausible year
+            ],
+            "jobs": [],
+            "relationships": []
+        }
+        
+        # Should not raise AttributeError
+        report = validator.validate(intel, "Test Company", "Company")
+        
+        # Should complete validation without errors
+        assert report is not None
+        assert report.plausibility_score >= 0.0

@@ -91,7 +91,7 @@ class CrawlLearner:
     - Temporal trends
     """
     
-    def __init__(self, store: PersistenceStore, learning_rate: float = 0.1, decay_days: float = 30.0):
+    def __init__(self, store: Optional[PersistenceStore] = None, learning_rate: float = 0.1, decay_days: float = 30.0):
         """
         Initialize the crawl learner.
         
