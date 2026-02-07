@@ -73,16 +73,20 @@ class EntityMerger:
     and properly track specialized entity types.
     """
     
-    def __init__(self, session_maker, logger: Optional[logging.Logger] = None):
+    def __init__(self, session_maker, logger: Optional[logging.Logger] = None, vector_store=None, llm=None):
         """
         Initialize EntityMerger.
         
         Args:
             session_maker: SQLAlchemy session maker
             logger: Optional logger instance
+            vector_store: Optional VectorStore instance for deep RAG entity lookups
+            llm: Optional LLMIntelExtractor instance for embedding generation
         """
         self.Session = session_maker
         self.logger = logger or logging.getLogger(__name__)
+        self.vector_store = vector_store
+        self.llm = llm
     
     def find_existing_entity(
         self,
@@ -125,7 +129,29 @@ class EntityMerger:
             if entity:
                 return self._entity_to_dict(entity)
             
-            # 2. Try fuzzy match if enabled
+            # 2. Try vector/semantic search if available
+            if self.vector_store and self.llm:
+                try:
+                    vec = self.llm.embed_text(name)
+                    if vec:
+                        vector_results = self.vector_store.search(vec, top_k=5)
+                        for r in vector_results:
+                            entity_name = r.payload.get("entity", "")
+                            if entity_name and self._calculate_name_similarity(
+                                name_normalized, entity_name.lower()
+                            ) >= threshold:
+                                # Found a semantic match - look up the actual entity
+                                vec_entity = session.execute(
+                                    select(Entity).where(
+                                        func.lower(Entity.name) == entity_name.lower()
+                                    )
+                                ).scalar_one_or_none()
+                                if vec_entity:
+                                    return self._entity_to_dict(vec_entity)
+                except Exception as e:
+                    self.logger.debug(f"Vector entity lookup failed: {e}")
+            
+            # 3. Try fuzzy match if enabled
             if fuzzy_match:
                 stmt = select(Entity).where(
                     func.lower(Entity.name).like(f"%{name_normalized}%")

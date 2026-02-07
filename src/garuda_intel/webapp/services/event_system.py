@@ -90,8 +90,12 @@ def _event_stream() -> Generator:
         _event_listeners.append(q)
     try:
         while True:
-            evt = q.get()
-            yield f"data: {json.dumps(evt)}\n\n"
+            try:
+                evt = q.get(timeout=30)
+                yield f"data: {json.dumps(evt)}\n\n"
+            except queue.Empty:
+                # Send heartbeat comment to keep connection alive
+                yield ": heartbeat\n\n"
     except GeneratorExit:
         with _event_lock:
             if q in _event_listeners:

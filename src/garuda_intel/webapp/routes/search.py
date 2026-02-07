@@ -63,6 +63,13 @@ def _looks_like_refusal(text: str) -> bool:
 
 def init_routes(api_key_required, settings, store, llm, vector_store):
     """Initialize routes with required dependencies."""
+    # Initialize agent service for deep RAG (graph + embedding) search
+    from ...services.agent_service import AgentService
+    agent_service = AgentService(
+        store=store,
+        llm=llm,
+        vector_store=vector_store,
+    )
     
     @bp.get("/intel")
     @api_key_required
@@ -307,21 +314,62 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 logger.warning(f"SQL search failed: {e}")
                 emit_event("chat", f"SQL search failed: {e}", level="warning")
             
-            # Step 3: Merge and prioritize results
-            if prioritize_rag and vec_hits:
-                # RAG-first: Use semantic results primarily, SQL as supplement
-                merged = vec_hits[:limit]
-                # Add top SQL results if we need more context
-                if len(merged) < limit:
-                    merged.extend(sql_hits[:limit - len(merged)])
-                emit_event("chat", "Using RAG-prioritized results", 
-                         payload={"rag_count": len([h for h in merged if h.get("source") == "rag"]),
-                                "sql_count": len([h for h in merged if h.get("source") == "sql"])})
-            else:
-                # Fallback: Mix both sources
-                merged = vec_hits + sql_hits
-                merged = merged[:limit]
+            # Step 2b: Graph-based search (deep RAG)
+            graph_hits = []
+            try:
+                graph_result = agent_service.multidimensional_search(
+                    query=q,
+                    top_k=limit,
+                    include_graph=True,
+                    graph_depth=2,
+                )
+                for r in graph_result.get("combined_results", []):
+                    graph_hits.append({
+                        "url": r.get("url", ""),
+                        "snippet": r.get("text", ""),
+                        "score": r.get("combined_score", r.get("score", 0)),
+                        "source": "graph",
+                        "kind": r.get("kind", "unknown"),
+                        "entity": r.get("entity", ""),
+                    })
+                if graph_hits:
+                    emit_event("chat", f"Graph search found {len(graph_hits)} results",
+                             payload={"count": len(graph_hits)})
+            except Exception as e:
+                logger.warning(f"Graph search failed: {e}")
+                emit_event("chat", f"Graph search failed: {e}", level="warning")
             
+            # Step 3: Merge and prioritize results from all sources
+            all_hits = []
+            all_hits.extend(vec_hits)
+            all_hits.extend(graph_hits)
+            all_hits.extend(sql_hits)
+
+            # Deduplicate by URL, keeping highest-scoring version
+            seen_urls = {}
+            no_url_hits = []
+            for hit in all_hits:
+                url = hit.get("url", "")
+                if url:
+                    if url not in seen_urls or hit.get("score", 0) > seen_urls[url].get("score", 0):
+                        seen_urls[url] = hit
+                else:
+                    no_url_hits.append(hit)
+
+            # Combine deduplicated URL hits with non-URL hits
+            merged = list(seen_urls.values()) + no_url_hits
+            # Sort by score descending and take top results
+            merged.sort(key=lambda x: x.get("score", 0), reverse=True)
+            merged = merged[:limit]
+
+            emit_event("chat", "Deep RAG results merged",
+                     payload={
+                         "rag_count": len([h for h in merged if h.get("source") == "rag"]),
+                         "graph_count": len([h for h in merged if h.get("source") == "graph"]),
+                         "sql_count": len([h for h in merged if h.get("source") == "sql"]),
+                         "total": len(merged),
+                     })
+
             return merged
         
         def run_search_cycle(
@@ -572,6 +620,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 "live_urls": live_urls,
                 "crawl_reason": crawl_reason,
                 "rag_hits_count": len([h for h in merged_hits if h.get("source") == "rag"]),
+                "graph_hits_count": len([h for h in merged_hits if h.get("source") == "graph"]),
                 "sql_hits_count": len([h for h in merged_hits if h.get("source") == "sql"]),
                 "search_cycles_completed": search_cycles_completed,
                 "max_search_cycles": max_search_cycles,

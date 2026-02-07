@@ -53,6 +53,8 @@ class IntelExtractor:
         session_maker=None,
         extract_related_entities: bool = True,
         enable_comprehensive_extraction: bool = True,
+        vector_store=None,
+        llm_extractor=None,
     ):
         self.ollama_url = ollama_url
         self.model = model
@@ -69,6 +71,8 @@ class IntelExtractor:
         self.session_maker = session_maker
         self.extract_related_entities = extract_related_entities
         self.enable_comprehensive_extraction = enable_comprehensive_extraction
+        self.vector_store = vector_store
+        self.llm_extractor = llm_extractor
         
         # Initialize entity kind registry for dynamic kind management
         self.kind_registry = get_registry()
@@ -98,7 +102,11 @@ class IntelExtractor:
         self.entity_merger = None
         self.field_tracker = None
         if enable_entity_merging and session_maker:
-            self.entity_merger = EntityMerger(session_maker, self.logger)
+            self.entity_merger = EntityMerger(
+                session_maker, self.logger,
+                vector_store=vector_store,
+                llm=llm_extractor,
+            )
             self.field_tracker = FieldDiscoveryTracker(session_maker, self.logger)
 
     def extract_intelligence(

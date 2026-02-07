@@ -229,7 +229,7 @@ def cmd_chat(settings: Settings, args: argparse.Namespace) -> None:
     import asyncio
     
     logger = setup_logging(args.verbose)
-    logger.info(f"Chat mode: {args.mode}")
+    logger.info("Chat: deep RAG search (embedding + graph + SQL)")
     
     _, _, _, agent = get_services(settings)
     
@@ -238,7 +238,6 @@ def cmd_chat(settings: Settings, args: argparse.Namespace) -> None:
         return await agent.chat_async(
             question=args.question,
             entity=args.entity,
-            mode=args.mode,
         )
     
     response = asyncio.run(run_chat())
@@ -247,7 +246,7 @@ def cmd_chat(settings: Settings, args: argparse.Namespace) -> None:
         print(json.dumps(response, indent=2, default=str))
     else:
         print("\n" + "=" * 60)
-        print(f"AGENT CHAT ({response.get('mode', 'search').upper()} MODE)")
+        print("AGENT CHAT (DEEP RAG)")
         print("=" * 60)
         
         print(f"\nQuestion: {response.get('question')}")
@@ -284,24 +283,21 @@ def cmd_interactive(settings: Settings, args: argparse.Namespace) -> None:
     _, _, _, agent = get_services(settings)
     
     print("\n" + "=" * 60)
-    print("GARUDA AGENT - INTERACTIVE MODE")
+    print("GARUDA AGENT - DEEP RAG INTERACTIVE MODE")
     print("=" * 60)
+    print("\nDeep RAG search (embedding + graph + SQL) is always active.")
     print("\nCommands:")
-    print("  /mode <search|reflect|explore>  - Change mode")
     print("  /entity <name>                  - Set entity context")
     print("  /help                           - Show help")
     print("  /quit or /exit                  - Exit")
-    print("\nCurrent mode: search")
     print("-" * 60)
     
-    current_mode = "search"
     current_entity = None
     
     async def process_question(question: str) -> dict:
         return await agent.chat_async(
             question=question,
             entity=current_entity,
-            mode=current_mode,
         )
     
     while True:
@@ -320,22 +316,15 @@ def cmd_interactive(settings: Settings, args: argparse.Namespace) -> None:
                 if cmd in ["/quit", "/exit", "/q"]:
                     print("\nGoodbye!")
                     break
-                elif cmd == "/mode":
-                    if arg in ["search", "reflect", "explore"]:
-                        current_mode = arg
-                        print(f"Mode changed to: {current_mode}")
-                    else:
-                        print("Invalid mode. Use: search, reflect, or explore")
                 elif cmd == "/entity":
                     current_entity = arg if arg else None
                     print(f"Entity context: {current_entity or 'None'}")
                 elif cmd == "/help":
+                    print("\nDeep RAG search (embedding + graph + SQL) is always active.")
                     print("\nCommands:")
-                    print("  /mode <search|reflect|explore>  - Change mode")
                     print("  /entity <name>                  - Set entity context")
                     print("  /quit or /exit                  - Exit")
-                    print(f"\nCurrent mode: {current_mode}")
-                    print(f"Current entity: {current_entity or 'None'}")
+                    print(f"\nCurrent entity: {current_entity or 'None'}")
                 else:
                     print(f"Unknown command: {cmd}")
                 continue
@@ -464,12 +453,6 @@ def main():
     chat_parser.add_argument(
         "question",
         help="Question to ask"
-    )
-    chat_parser.add_argument(
-        "-m", "--mode",
-        choices=["search", "reflect", "explore"],
-        default="search",
-        help="Chat mode (default: search)"
     )
     chat_parser.add_argument(
         "-e", "--entity",

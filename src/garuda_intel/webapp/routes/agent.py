@@ -186,12 +186,13 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
     @api_key_required
     def api_agent_chat():
         """
-        Async chat with agent capabilities.
+        Async chat with deep RAG search (embedding + graph + SQL).
+        
+        Both embedding and graph search modes are always enabled automatically.
         
         Request body (JSON):
             question: User question (required)
             entity: Optional entity context
-            mode: Operation mode - "search" (default), "reflect", or "explore"
         
         Returns:
             Chat response with answer and context
@@ -205,13 +206,9 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             return jsonify({"error": "question required"}), 400
         
         entity = body.get("entity")
-        mode = body.get("mode", "search")
-        
-        if mode not in ["search", "reflect", "explore"]:
-            return jsonify({"error": f"Invalid mode: {mode}. Use 'search', 'reflect', or 'explore'"}), 400
         
         emit_event("agent", "chat started", payload={
-            "mode": mode,
+            "mode": "deep_rag",
             "question": question[:100],
             "entity": entity,
         })
@@ -225,14 +222,13 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
                     agent.chat_async(
                         question=question,
                         entity=entity,
-                        mode=mode,
                     )
                 )
             finally:
                 loop.close()
             
             emit_event("agent", "chat completed", payload={
-                "mode": mode,
+                "mode": "deep_rag",
                 "has_answer": bool(response.get("answer")),
                 "context_count": len(response.get("context", [])),
             })
@@ -255,7 +251,7 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         """
         return jsonify({
             "enabled": getattr(settings, 'agent_enabled', True),
-            "modes": ["search", "reflect", "explore"],
+            "modes": ["deep_rag"],
             "config": {
                 "max_exploration_depth": getattr(settings, 'agent_max_exploration_depth', 3),
                 "entity_merge_threshold": getattr(settings, 'agent_entity_merge_threshold', 0.85),

@@ -888,30 +888,26 @@ class AgentService:
         self,
         question: str,
         entity: Optional[str] = None,
-        mode: str = "search",
         stream: bool = False,
     ) -> Dict[str, Any]:
         """
         Async chat response with agent capabilities.
         
-        Modes:
-        - search: Use multidimensional RAG search
-        - reflect: Analyze and refine data related to question
-        - explore: Explore entities mentioned in question
+        Always uses deep RAG search (embedding + graph) automatically.
+        Reflect insights are included as supplementary metadata.
         
         Args:
             question: User question
             entity: Optional entity context
-            mode: Operation mode
             stream: Whether to stream the response
             
         Returns:
             Chat response with relevant data
         """
-        self.logger.info(f"Async chat: mode={mode}, question={question[:50]}...")
+        self.logger.info(f"Async chat: question={question[:50]}...")
         
         response = {
-            "mode": mode,
+            "mode": "deep_rag",
             "question": question,
             "entity": entity,
             "answer": "",
@@ -920,10 +916,32 @@ class AgentService:
         }
         
         try:
-            if mode == "reflect":
-                # Reflect mode: analyze entities in question
-                entities_in_question = self._extract_entity_mentions(question)
-                if entities_in_question:
+            # Always run deep RAG search (embedding + graph combined)
+            search_result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self.multidimensional_search(
+                    query=question,
+                    top_k=10,
+                    include_graph=True
+                )
+            )
+            response["context"] = search_result.get("combined_results", [])
+            response["metadata"]["search_stats"] = search_result.get("statistics", {})
+            
+            # Synthesize answer from context
+            if self.llm and response["context"]:
+                answer = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: self.llm.synthesize_answer(question, response["context"])
+                )
+                response["answer"] = answer
+            else:
+                response["answer"] = "No relevant information found."
+            
+            # Automatically add reflect insights if entities are found
+            entities_in_question = self._extract_entity_mentions(question)
+            if entities_in_question:
+                try:
                     reflect_result = await asyncio.get_event_loop().run_in_executor(
                         None,
                         lambda: self.reflect_and_refine(
@@ -932,49 +950,8 @@ class AgentService:
                         )
                     )
                     response["metadata"]["reflect_report"] = reflect_result
-                    response["answer"] = self._summarize_reflect_report(reflect_result)
-                else:
-                    response["answer"] = "No entities found in question for reflection."
-                    
-            elif mode == "explore":
-                # Explore mode: prioritize related entities
-                entities_in_question = self._extract_entity_mentions(question)
-                if entities_in_question:
-                    explore_result = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: self.explore_and_prioritize(
-                            root_entities=entities_in_question,
-                            top_n=10
-                        )
-                    )
-                    response["metadata"]["explore_report"] = explore_result
-                    response["context"] = explore_result.get("prioritized_entities", [])
-                    response["answer"] = self._summarize_explore_report(explore_result)
-                else:
-                    response["answer"] = "No entities found in question for exploration."
-                    
-            else:
-                # Default search mode: multidimensional RAG
-                search_result = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self.multidimensional_search(
-                        query=question,
-                        top_k=10,
-                        include_graph=True
-                    )
-                )
-                response["context"] = search_result.get("combined_results", [])
-                response["metadata"]["search_stats"] = search_result.get("statistics", {})
-                
-                # Synthesize answer from context
-                if self.llm and response["context"]:
-                    answer = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: self.llm.synthesize_answer(question, response["context"])
-                    )
-                    response["answer"] = answer
-                else:
-                    response["answer"] = "No relevant information found."
+                except Exception as e:
+                    self.logger.debug(f"Reflect insights failed: {e}")
                     
         except Exception as e:
             self.logger.error(f"Async chat failed: {e}", exc_info=True)
