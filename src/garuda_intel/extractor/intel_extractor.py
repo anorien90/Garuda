@@ -309,8 +309,8 @@ class IntelExtractor:
             if p.get("name"):
                 # Detect specialized person types (CEO, founder, etc.)
                 person_kind = "person"
-                title = p.get("title", "").lower()
-                role = p.get("role", "").lower()
+                title = (p.get("title") or "").lower()
+                role = (p.get("role") or "").lower()
                 
                 if any(kw in title or kw in role for kw in ["ceo", "chief executive"]):
                     person_kind = "ceo"
