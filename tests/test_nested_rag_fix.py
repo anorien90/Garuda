@@ -160,7 +160,8 @@ def test_nested_intelligence_data_handling():
         # Validate it's valid JSON for dict/list cases
         if isinstance(data, (dict, list)):
             try:
-                parsed = json.loads(text)
+                # Verify JSON is valid and parseable
+                json.loads(text)
                 print(f"  Case {i+1}: {type(data).__name__} → {len(text)} chars (valid JSON)")
             except json.JSONDecodeError:
                 # Might be truncated, that's OK

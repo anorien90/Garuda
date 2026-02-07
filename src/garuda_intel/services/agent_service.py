@@ -8,12 +8,13 @@ Provides two main operation modes:
 Also provides multidimensional RAG search combining embedding and graph-based search.
 """
 
+import asyncio
+import json
 import logging
-from typing import Dict, Any, List, Optional, Tuple, Set
+import uuid
 from collections import defaultdict
 from datetime import datetime
-import asyncio
-import uuid
+from typing import Dict, Any, List, Optional, Tuple, Set
 
 from sqlalchemy import select, func, desc, and_, or_
 from sqlalchemy.orm import Session
@@ -795,7 +796,6 @@ class AgentService:
                     
                     if intel and intel.data:
                         # Convert nested data structures to readable JSON format
-                        import json
                         try:
                             if isinstance(intel.data, (dict, list)):
                                 result_item["text"] = json.dumps(intel.data, ensure_ascii=False, separators=(',', ':'))[:500]

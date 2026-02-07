@@ -1,5 +1,6 @@
 """Search and chat API routes."""
 
+import json
 import logging
 import re
 from typing import Any, List, Tuple
@@ -342,7 +343,6 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                         
                         # Ensure text is a string, not a nested structure
                         if isinstance(text, (dict, list)):
-                            import json
                             text = json.dumps(text, ensure_ascii=False, separators=(',', ':'))
                         text = str(text)[:1000]  # Limit text length
                         
