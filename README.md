@@ -84,6 +84,20 @@
   - Tracks full relationship chains: Seed → Page → Intel → Entities
   - Smart deduplication that preserves mandatory relationships
 - **🕸️ NEW: Unique Entity Graph**: Entities graph ensures only unique entities with full relations and aggregated details.
+- **🔄 NEW: Dynamic Entity Kind Registry**: 
+  - Supports entity kind inheritance (CEO → Person, Headquarters → Location)
+  - Runtime registration of new entity kinds discovered during extraction
+  - Automatic kind normalization with alias support
+  - Priority-based deduplication when multiple kinds apply
+- **👥 NEW: Related Entity Extraction**: 
+  - Extracts ALL entities mentioned on a page, not just the primary target
+  - Automatically creates relationships between primary target and related entities
+  - Detects specialized types (executives, headquarters) with parent type inheritance
+- **🔁 NEW: Configurable Chat Search Cycles**: 
+  - Multiple search/crawl cycles (default 3) for comprehensive answers
+  - Full pipeline execution per cycle (crawl → extract → embed → RAG query)
+  - Early termination when sufficient high-quality results found
+  - Different search angles per cycle for broader coverage
 
 ---
 
@@ -97,6 +111,8 @@
 - 🦾 **Cleaner repo structure**: All modules isolated under `src/`, for browser, extractor, vector, database, etc.
 - ⚡ **Enhanced extensibility**: Add new storage, LLM/vector backends, and UI components with ease.
 - 🧠 **Dynamic Intelligence Gathering**: Gap-aware crawling, cross-entity inference, and adaptive strategies.
+- 🔄 **Dynamic Entity Kind System**: Entity kinds with inheritance, automatic registration, and type hierarchy.
+- 🔁 **Multi-cycle Chat Pipeline**: Configurable search cycles with full pipeline execution.
 
 ---
 
@@ -565,6 +581,13 @@ GARUDA_MEDIA_EMBEDDINGS=true     # Generate embeddings from media text
 GARUDA_MEDIA_IMAGE_METHOD=tesseract    # Image: "tesseract" (OCR) or "image2text" (AI model)
 GARUDA_MEDIA_VIDEO_METHOD=speech       # Video: "speech" (audio) or "video2text" (AI model)
 GARUDA_MEDIA_AUDIO_METHOD=speech       # Audio: "speech" (speech recognition)
+
+# Chat pipeline settings (new in v2.2)
+GARUDA_CHAT_MAX_SEARCH_CYCLES=3        # Max search/crawl cycles for chat (default: 3)
+GARUDA_CHAT_MAX_PAGES=5                # Max pages per cycle (default: 5)
+GARUDA_CHAT_RAG_QUALITY_THRESHOLD=0.7  # Min RAG similarity score (default: 0.7)
+GARUDA_CHAT_USE_SELENIUM=false         # Use Selenium for chat crawling
+GARUDA_CHAT_EXTRACT_RELATED_ENTITIES=true  # Extract related entities during crawl
 ```
 
 ---

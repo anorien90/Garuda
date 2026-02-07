@@ -509,22 +509,26 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                         for rel in entity.outgoing_relationships:
                             target = session.query(db_models.Entity).filter_by(id=rel.target_id).first()
                             if target:
+                                # Get confidence from metadata_json since Relationship doesn't have a confidence attribute
+                                rel_meta = rel.metadata_json or {}
                                 relationships.append({
                                     "direction": "outgoing",
                                     "type": rel.relation_type,
                                     "target_name": target.name,
                                     "target_kind": target.kind,
-                                    "confidence": rel.confidence,
+                                    "confidence": rel_meta.get("confidence"),
                                 })
                         for rel in entity.incoming_relationships:
                             source = session.query(db_models.Entity).filter_by(id=rel.source_id).first()
                             if source:
+                                # Get confidence from metadata_json since Relationship doesn't have a confidence attribute
+                                rel_meta = rel.metadata_json or {}
                                 relationships.append({
                                     "direction": "incoming",
                                     "type": rel.relation_type,
                                     "source_name": source.name,
                                     "source_kind": source.kind,
-                                    "confidence": rel.confidence,
+                                    "confidence": rel_meta.get("confidence"),
                                 })
                         
                         return jsonify({
