@@ -75,6 +75,19 @@ class Settings:
     chat_rag_quality_threshold: float = 0.7  # Minimum RAG similarity score threshold
     chat_min_high_quality_hits: int = 2  # Minimum high-quality RAG hits before considering sufficient
     chat_extract_related_entities: bool = True  # Extract related entities during chat crawl
+    
+    # LLM timeout settings (in seconds) - default 15 minutes for long operations
+    llm_summarize_timeout: int = 900  # 15 minutes
+    llm_extract_timeout: int = 900  # 15 minutes
+    llm_reflect_timeout: int = 300  # 5 minutes
+    llm_summarize_retries: int = 3
+    
+    # Agent mode settings
+    agent_enabled: bool = True
+    agent_max_exploration_depth: int = 3  # Maximum relation depth for exploration
+    agent_entity_merge_threshold: float = 0.85  # Similarity threshold for entity merging
+    agent_priority_unknown_weight: float = 0.7  # Weight for prioritizing unknown entities
+    agent_priority_relation_weight: float = 0.3  # Weight for relation count in priority
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -123,6 +136,17 @@ class Settings:
             chat_rag_quality_threshold=float(os.environ.get("GARUDA_CHAT_RAG_QUALITY_THRESHOLD", "0.7")),
             chat_min_high_quality_hits=int(os.environ.get("GARUDA_CHAT_MIN_HIGH_QUALITY_HITS", "2")),
             chat_extract_related_entities=_as_bool(os.environ.get("GARUDA_CHAT_EXTRACT_RELATED_ENTITIES"), True),
+            # LLM timeout settings
+            llm_summarize_timeout=int(os.environ.get("GARUDA_LLM_SUMMARIZE_TIMEOUT", "900")),
+            llm_extract_timeout=int(os.environ.get("GARUDA_LLM_EXTRACT_TIMEOUT", "900")),
+            llm_reflect_timeout=int(os.environ.get("GARUDA_LLM_REFLECT_TIMEOUT", "300")),
+            llm_summarize_retries=int(os.environ.get("GARUDA_LLM_SUMMARIZE_RETRIES", "3")),
+            # Agent mode settings
+            agent_enabled=_as_bool(os.environ.get("GARUDA_AGENT_ENABLED"), True),
+            agent_max_exploration_depth=int(os.environ.get("GARUDA_AGENT_MAX_EXPLORATION_DEPTH", "3")),
+            agent_entity_merge_threshold=float(os.environ.get("GARUDA_AGENT_ENTITY_MERGE_THRESHOLD", "0.85")),
+            agent_priority_unknown_weight=float(os.environ.get("GARUDA_AGENT_PRIORITY_UNKNOWN_WEIGHT", "0.7")),
+            agent_priority_relation_weight=float(os.environ.get("GARUDA_AGENT_PRIORITY_RELATION_WEIGHT", "0.3")),
         )
 
     @property

@@ -44,7 +44,7 @@ class IntelExtractor:
         model: str = "granite3.1-dense:8b",
         extraction_chunk_chars: int = 4000,
         max_chunks: int = 20,
-        extract_timeout: int = 120,
+        extract_timeout: int = 900,  # 15 minutes default
         cache_manager: Optional[CacheManager] = None,
         use_semantic_chunking: bool = True,
         enable_quality_validation: bool = True,

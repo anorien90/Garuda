@@ -1,0 +1,1032 @@
+"""
+Agent Service for intelligent data exploration and refinement.
+
+Provides two main operation modes:
+1. Reflect & Refine: Merge entities, validate and clean data
+2. Explore & Prioritize: Analyze relations, find high-priority entities to explore
+
+Also provides multidimensional RAG search combining embedding and graph-based search.
+"""
+
+import logging
+from typing import Dict, Any, List, Optional, Tuple, Set
+from collections import defaultdict
+from datetime import datetime
+import asyncio
+import uuid
+
+from sqlalchemy import select, func, desc, and_, or_
+from sqlalchemy.orm import Session
+
+from ..database.store import PersistenceStore
+from ..database.models import Entity, Relationship, Intelligence, Page
+from ..extractor.llm import LLMIntelExtractor
+from ..extractor.entity_merger import EntityMerger, SemanticEntityDeduplicator, GraphSearchEngine
+from ..vector.base import VectorStore
+
+
+logger = logging.getLogger(__name__)
+
+
+class AgentService:
+    """
+    Intelligent agent for data exploration and refinement.
+    
+    Modes:
+    - reflect: Analyze and merge entities, validate data quality
+    - explore: Traverse entity graph, prioritize exploration based on relation depth
+    - search: Multidimensional RAG search combining embedding and graph traversal
+    """
+    
+    def __init__(
+        self,
+        store: PersistenceStore,
+        llm: LLMIntelExtractor,
+        vector_store: Optional[VectorStore] = None,
+        entity_merge_threshold: float = 0.85,
+        max_exploration_depth: int = 3,
+        priority_unknown_weight: float = 0.7,
+        priority_relation_weight: float = 0.3,
+    ):
+        """
+        Initialize the agent service.
+        
+        Args:
+            store: Database persistence store
+            llm: LLM extractor for semantic operations
+            vector_store: Optional vector store for RAG
+            entity_merge_threshold: Similarity threshold for entity merging
+            max_exploration_depth: Maximum depth for relation exploration
+            priority_unknown_weight: Weight for unknown entities in priority scoring
+            priority_relation_weight: Weight for relation count in priority scoring
+        """
+        self.store = store
+        self.llm = llm
+        self.vector_store = vector_store
+        self.entity_merge_threshold = entity_merge_threshold
+        self.max_exploration_depth = max_exploration_depth
+        self.priority_unknown_weight = priority_unknown_weight
+        self.priority_relation_weight = priority_relation_weight
+        self.logger = logging.getLogger(__name__)
+        
+        # Initialize sub-components
+        if hasattr(store, 'Session'):
+            self.entity_merger = EntityMerger(store.Session, self.logger)
+            self.graph_engine = GraphSearchEngine(store.Session, llm, self.logger)
+            self.deduplicator = SemanticEntityDeduplicator(store.Session, llm, self.logger)
+        else:
+            self.entity_merger = None
+            self.graph_engine = None
+            self.deduplicator = None
+    
+    # =========================================================================
+    # MODE 1: REFLECT & REFINE
+    # =========================================================================
+    
+    def reflect_and_refine(
+        self,
+        target_entities: Optional[List[str]] = None,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Reflect on existing data and refine it by merging duplicate entities.
+        
+        This mode:
+        1. Identifies similar entities (e.g., "Microsoft Corp" vs "Microsoft Corporation")
+        2. Merges duplicates while preserving all relationships and data
+        3. Validates data quality and reports issues
+        
+        Args:
+            target_entities: Optional list of entity names to focus on
+            dry_run: If True, only report what would be merged without executing
+            
+        Returns:
+            Report of merge operations and data quality findings
+        """
+        self.logger.info("Starting reflect & refine mode")
+        
+        report = {
+            "mode": "reflect_and_refine",
+            "started_at": datetime.now().isoformat(),
+            "duplicates_found": [],
+            "entities_merged": [],
+            "data_quality_issues": [],
+            "statistics": {
+                "entities_before": 0,
+                "entities_after": 0,
+                "merges_performed": 0,
+                "quality_issues_found": 0,
+            },
+            "dry_run": dry_run,
+        }
+        
+        try:
+            with self.store.Session() as session:
+                # Count entities before
+                report["statistics"]["entities_before"] = session.execute(
+                    select(func.count()).select_from(Entity)
+                ).scalar()
+                
+                # Step 1: Find duplicate candidates
+                duplicate_groups = self._find_duplicate_entities(session, target_entities)
+                report["duplicates_found"] = duplicate_groups
+                
+                # Step 2: Merge duplicates (unless dry run)
+                if not dry_run:
+                    for group in duplicate_groups:
+                        merge_result = self._merge_entity_group(session, group)
+                        if merge_result:
+                            report["entities_merged"].append(merge_result)
+                            report["statistics"]["merges_performed"] += 1
+                    session.commit()
+                
+                # Step 3: Validate data quality
+                quality_issues = self._validate_data_quality(session, target_entities)
+                report["data_quality_issues"] = quality_issues
+                report["statistics"]["quality_issues_found"] = len(quality_issues)
+                
+                # Count entities after
+                report["statistics"]["entities_after"] = session.execute(
+                    select(func.count()).select_from(Entity)
+                ).scalar()
+                
+        except Exception as e:
+            self.logger.error(f"Reflect & refine failed: {e}", exc_info=True)
+            report["error"] = str(e)
+        
+        report["completed_at"] = datetime.now().isoformat()
+        return report
+    
+    def _find_duplicate_entities(
+        self,
+        session: Session,
+        target_entities: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Find groups of potentially duplicate entities."""
+        duplicate_groups = []
+        
+        # Get all entities or filter by target
+        stmt = select(Entity)
+        if target_entities:
+            # Match any of the target names (case-insensitive partial match)
+            conditions = [
+                func.lower(Entity.name).like(f"%{name.lower()}%")
+                for name in target_entities
+            ]
+            stmt = stmt.where(or_(*conditions))
+        
+        entities = session.execute(stmt).scalars().all()
+        
+        # Group by normalized name patterns
+        name_groups = defaultdict(list)
+        for entity in entities:
+            # Create normalized key for grouping
+            normalized = self._normalize_entity_name(entity.name)
+            name_groups[normalized].append(entity)
+        
+        # Find groups with potential duplicates
+        for normalized_name, group_entities in name_groups.items():
+            if len(group_entities) > 1:
+                duplicate_groups.append({
+                    "normalized_name": normalized_name,
+                    "count": len(group_entities),
+                    "entities": [
+                        {
+                            "id": str(e.id),
+                            "name": e.name,
+                            "kind": e.kind,
+                            "relation_count": self._count_relations(session, str(e.id)),
+                        }
+                        for e in group_entities
+                    ],
+                })
+        
+        # Also use semantic similarity if LLM is available
+        if self.llm and len(entities) > 1:
+            semantic_dupes = self._find_semantic_duplicates(session, entities)
+            for dupe in semantic_dupes:
+                # Avoid duplicating groups already found
+                existing_ids = set()
+                for group in duplicate_groups:
+                    for e in group["entities"]:
+                        existing_ids.add(e["id"])
+                
+                new_entities = [e for e in dupe["entities"] if e["id"] not in existing_ids]
+                if len(new_entities) >= 2:
+                    duplicate_groups.append({
+                        "normalized_name": f"semantic:{dupe['entities'][0]['name']}",
+                        "count": len(new_entities),
+                        "entities": new_entities,
+                        "similarity_score": dupe.get("similarity_score", 0),
+                    })
+        
+        return duplicate_groups
+    
+    def _normalize_entity_name(self, name: str) -> str:
+        """Normalize entity name for duplicate detection."""
+        if not name:
+            return ""
+        
+        # Common company suffixes to remove
+        suffixes = [
+            "corporation", "corp", "inc", "incorporated", "llc", "ltd",
+            "limited", "co", "company", "plc", "ag", "gmbh", "sa"
+        ]
+        
+        normalized = name.lower().strip()
+        
+        # Remove common suffixes
+        for suffix in suffixes:
+            if normalized.endswith(f" {suffix}"):
+                normalized = normalized[:-len(suffix) - 1]
+            if normalized.endswith(f" {suffix}."):
+                normalized = normalized[:-len(suffix) - 2]
+        
+        # Remove punctuation and extra whitespace
+        import re
+        normalized = re.sub(r'[^\w\s]', '', normalized)
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        
+        return normalized
+    
+    def _find_semantic_duplicates(
+        self,
+        session: Session,
+        entities: List[Entity],
+    ) -> List[Dict[str, Any]]:
+        """Find semantically similar entities using embeddings."""
+        duplicates = []
+        
+        # Get embeddings for all entity names
+        embeddings = {}
+        for entity in entities:
+            vec = self.llm.embed_text(entity.name)
+            if vec:
+                embeddings[str(entity.id)] = (entity, vec)
+        
+        # Compare all pairs
+        checked_pairs = set()
+        for id1, (entity1, vec1) in embeddings.items():
+            for id2, (entity2, vec2) in embeddings.items():
+                if id1 >= id2:  # Skip self and already checked pairs
+                    continue
+                
+                pair_key = tuple(sorted([id1, id2]))
+                if pair_key in checked_pairs:
+                    continue
+                checked_pairs.add(pair_key)
+                
+                similarity = self.llm.calculate_similarity(vec1, vec2)
+                if similarity >= self.entity_merge_threshold:
+                    duplicates.append({
+                        "similarity_score": similarity,
+                        "entities": [
+                            {
+                                "id": id1,
+                                "name": entity1.name,
+                                "kind": entity1.kind,
+                                "relation_count": self._count_relations(session, id1),
+                            },
+                            {
+                                "id": id2,
+                                "name": entity2.name,
+                                "kind": entity2.kind,
+                                "relation_count": self._count_relations(session, id2),
+                            },
+                        ],
+                    })
+        
+        return duplicates
+    
+    def _count_relations(self, session: Session, entity_id: str) -> int:
+        """Count relationships for an entity."""
+        return session.execute(
+            select(func.count()).select_from(Relationship).where(
+                or_(
+                    Relationship.source_id == entity_id,
+                    Relationship.target_id == entity_id,
+                )
+            )
+        ).scalar() or 0
+    
+    def _merge_entity_group(
+        self,
+        session: Session,
+        group: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Merge a group of duplicate entities into one."""
+        entities = group.get("entities", [])
+        if len(entities) < 2:
+            return None
+        
+        # Select the primary entity (most relationships, or first in list)
+        sorted_entities = sorted(
+            entities,
+            key=lambda e: e.get("relation_count", 0),
+            reverse=True
+        )
+        
+        primary_id = sorted_entities[0]["id"]
+        secondary_ids = [e["id"] for e in sorted_entities[1:]]
+        
+        # Get actual entity objects
+        primary_entity = session.get(Entity, primary_id)
+        if not primary_entity:
+            return None
+        
+        merged_count = 0
+        for secondary_id in secondary_ids:
+            secondary_entity = session.get(Entity, secondary_id)
+            if not secondary_entity:
+                continue
+            
+            # Merge metadata
+            if secondary_entity.metadata_json:
+                if not primary_entity.metadata_json:
+                    primary_entity.metadata_json = {}
+                for key, value in secondary_entity.metadata_json.items():
+                    if key not in primary_entity.metadata_json and value:
+                        primary_entity.metadata_json[key] = value
+            
+            # Update relationships to point to primary entity
+            session.execute(
+                select(Relationship).where(Relationship.source_id == secondary_id)
+            )
+            for rel in session.execute(
+                select(Relationship).where(Relationship.source_id == secondary_id)
+            ).scalars().all():
+                rel.source_id = primary_id
+            
+            for rel in session.execute(
+                select(Relationship).where(Relationship.target_id == secondary_id)
+            ).scalars().all():
+                rel.target_id = primary_id
+            
+            # Update intelligence references
+            for intel in session.execute(
+                select(Intelligence).where(Intelligence.entity_id == secondary_id)
+            ).scalars().all():
+                intel.entity_id = primary_id
+            
+            # Delete secondary entity
+            session.delete(secondary_entity)
+            merged_count += 1
+        
+        return {
+            "primary_entity": {
+                "id": primary_id,
+                "name": primary_entity.name,
+            },
+            "merged_count": merged_count,
+            "merged_ids": secondary_ids,
+        }
+    
+    def _validate_data_quality(
+        self,
+        session: Session,
+        target_entities: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Validate data quality and find issues."""
+        issues = []
+        
+        # Get entities to validate
+        stmt = select(Entity)
+        if target_entities:
+            conditions = [
+                func.lower(Entity.name).like(f"%{name.lower()}%")
+                for name in target_entities
+            ]
+            stmt = stmt.where(or_(*conditions))
+        
+        entities = session.execute(stmt).scalars().all()
+        
+        for entity in entities:
+            entity_issues = []
+            
+            # Check for missing name
+            if not entity.name or not entity.name.strip():
+                entity_issues.append("Missing or empty name")
+            
+            # Check for missing kind/type
+            if not entity.kind:
+                entity_issues.append("Missing entity kind/type")
+            
+            # Check for orphan entities (no relationships)
+            rel_count = self._count_relations(session, str(entity.id))
+            if rel_count == 0:
+                entity_issues.append("Orphan entity (no relationships)")
+            
+            if entity_issues:
+                issues.append({
+                    "entity_id": str(entity.id),
+                    "entity_name": entity.name,
+                    "issues": entity_issues,
+                })
+        
+        return issues
+    
+    # =========================================================================
+    # MODE 2: EXPLORE & PRIORITIZE
+    # =========================================================================
+    
+    def explore_and_prioritize(
+        self,
+        root_entities: List[str],
+        max_depth: Optional[int] = None,
+        top_n: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        Explore entity graph and prioritize entities for further research.
+        
+        This mode:
+        1. Starts from root entities (e.g., "Microsoft Corporation")
+        2. Traverses relations to find connected entities (e.g., "Bill Gates")
+        3. Calculates priority scores based on:
+           - Number of relations (more relations = more important)
+           - Unknown depth (less known entities = higher priority)
+        4. Returns prioritized list of entities to explore
+        
+        Args:
+            root_entities: Starting entity names for exploration
+            max_depth: Maximum relation depth to explore
+            top_n: Number of top-priority entities to return
+            
+        Returns:
+            Exploration report with prioritized entities
+        """
+        if max_depth is None:
+            max_depth = self.max_exploration_depth
+        
+        self.logger.info(f"Starting explore & prioritize mode with {len(root_entities)} root entities")
+        
+        report = {
+            "mode": "explore_and_prioritize",
+            "started_at": datetime.now().isoformat(),
+            "root_entities": root_entities,
+            "max_depth": max_depth,
+            "exploration_tree": {},
+            "prioritized_entities": [],
+            "statistics": {
+                "total_entities_found": 0,
+                "unique_entities": 0,
+                "max_depth_reached": 0,
+                "relations_traversed": 0,
+            },
+        }
+        
+        try:
+            with self.store.Session() as session:
+                # Step 1: Find root entity IDs
+                root_entity_ids = []
+                root_entity_map = {}
+                
+                for name in root_entities:
+                    entity = session.execute(
+                        select(Entity).where(
+                            func.lower(Entity.name).like(f"%{name.lower()}%")
+                        )
+                    ).scalar()
+                    
+                    if entity:
+                        root_entity_ids.append(str(entity.id))
+                        root_entity_map[str(entity.id)] = {
+                            "name": entity.name,
+                            "kind": entity.kind,
+                        }
+                
+                if not root_entity_ids:
+                    report["error"] = "No matching root entities found"
+                    return report
+                
+                # Step 2: Traverse graph from root entities
+                all_entities: Dict[str, Dict[str, Any]] = {}  # id -> entity info
+                depth_map: Dict[str, int] = {}  # id -> min depth from root
+                relation_counts: Dict[str, int] = defaultdict(int)  # id -> relation count
+                
+                # Initialize with root entities
+                for entity_id in root_entity_ids:
+                    all_entities[entity_id] = root_entity_map[entity_id]
+                    depth_map[entity_id] = 0
+                
+                current_level = set(root_entity_ids)
+                
+                for depth in range(1, max_depth + 1):
+                    next_level = set()
+                    
+                    for entity_id in current_level:
+                        # Find all related entities
+                        related = self._get_related_entities(session, entity_id)
+                        
+                        for rel_entity_id, rel_info in related.items():
+                            report["statistics"]["relations_traversed"] += 1
+                            relation_counts[rel_entity_id] += 1
+                            
+                            if rel_entity_id not in all_entities:
+                                all_entities[rel_entity_id] = rel_info
+                                depth_map[rel_entity_id] = depth
+                                next_level.add(rel_entity_id)
+                                report["statistics"]["max_depth_reached"] = max(
+                                    report["statistics"]["max_depth_reached"], depth
+                                )
+                    
+                    current_level = next_level
+                    if not current_level:
+                        break
+                
+                report["statistics"]["unique_entities"] = len(all_entities)
+                
+                # Step 3: Calculate priority scores
+                prioritized = []
+                for entity_id, entity_info in all_entities.items():
+                    if entity_id in root_entity_ids:
+                        continue  # Skip root entities
+                    
+                    depth = depth_map.get(entity_id, max_depth)
+                    rel_count = relation_counts.get(entity_id, 0)
+                    
+                    # Calculate priority:
+                    # - Higher priority for deeper entities (less known)
+                    # - Higher priority for entities with many relations (more important)
+                    unknown_score = depth / max_depth  # Normalized 0-1
+                    
+                    # Get total relation count for this entity
+                    total_relations = self._count_relations(session, entity_id)
+                    relation_score = min(total_relations / 10.0, 1.0)  # Cap at 10 relations
+                    
+                    priority_score = (
+                        self.priority_unknown_weight * unknown_score +
+                        self.priority_relation_weight * relation_score
+                    )
+                    
+                    prioritized.append({
+                        "entity_id": entity_id,
+                        "name": entity_info.get("name"),
+                        "kind": entity_info.get("kind"),
+                        "depth_from_root": depth,
+                        "relation_count": total_relations,
+                        "references_from_root": rel_count,
+                        "priority_score": round(priority_score, 3),
+                    })
+                
+                # Sort by priority score descending
+                prioritized.sort(key=lambda x: x["priority_score"], reverse=True)
+                report["prioritized_entities"] = prioritized[:top_n]
+                report["statistics"]["total_entities_found"] = len(prioritized)
+                
+                # Build exploration tree for visualization
+                report["exploration_tree"] = self._build_exploration_tree(
+                    root_entity_ids, all_entities, depth_map
+                )
+                
+        except Exception as e:
+            self.logger.error(f"Explore & prioritize failed: {e}", exc_info=True)
+            report["error"] = str(e)
+        
+        report["completed_at"] = datetime.now().isoformat()
+        return report
+    
+    def _get_related_entities(
+        self,
+        session: Session,
+        entity_id: str,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Get all entities related to the given entity."""
+        related = {}
+        
+        # Get entities where this is the source
+        for rel in session.execute(
+            select(Relationship).where(Relationship.source_id == entity_id)
+        ).scalars().all():
+            target = session.get(Entity, rel.target_id)
+            if target:
+                related[str(target.id)] = {
+                    "name": target.name,
+                    "kind": target.kind,
+                    "relation_type": rel.relation_type,
+                    "direction": "outgoing",
+                }
+        
+        # Get entities where this is the target
+        for rel in session.execute(
+            select(Relationship).where(Relationship.target_id == entity_id)
+        ).scalars().all():
+            source = session.get(Entity, rel.source_id)
+            if source and str(source.id) not in related:
+                related[str(source.id)] = {
+                    "name": source.name,
+                    "kind": source.kind,
+                    "relation_type": rel.relation_type,
+                    "direction": "incoming",
+                }
+        
+        return related
+    
+    def _build_exploration_tree(
+        self,
+        root_ids: List[str],
+        all_entities: Dict[str, Dict[str, Any]],
+        depth_map: Dict[str, int],
+    ) -> Dict[str, Any]:
+        """Build a tree structure for visualization."""
+        tree = {
+            "roots": [],
+            "depths": defaultdict(list),
+        }
+        
+        for entity_id, entity_info in all_entities.items():
+            depth = depth_map.get(entity_id, 0)
+            node = {
+                "id": entity_id,
+                "name": entity_info.get("name"),
+                "kind": entity_info.get("kind"),
+            }
+            
+            if entity_id in root_ids:
+                tree["roots"].append(node)
+            else:
+                tree["depths"][depth].append(node)
+        
+        # Convert defaultdict to regular dict for JSON serialization
+        tree["depths"] = dict(tree["depths"])
+        return tree
+    
+    # =========================================================================
+    # MODE 3: MULTIDIMENSIONAL RAG SEARCH
+    # =========================================================================
+    
+    def multidimensional_search(
+        self,
+        query: str,
+        top_k: int = 10,
+        include_graph: bool = True,
+        graph_depth: int = 2,
+    ) -> Dict[str, Any]:
+        """
+        Multidimensional RAG search combining embedding and graph-based search.
+        
+        This search method:
+        1. Performs traditional RAG embedding search
+        2. Extracts entities from query and traverses their graph relations
+        3. Combines and ranks results from both methods
+        
+        Args:
+            query: Search query string
+            top_k: Number of top results to return
+            include_graph: Whether to include graph traversal results
+            graph_depth: Depth for graph traversal
+            
+        Returns:
+            Combined search results with source information
+        """
+        self.logger.info(f"Multidimensional search: {query[:50]}...")
+        
+        result = {
+            "query": query,
+            "embedding_results": [],
+            "graph_results": [],
+            "combined_results": [],
+            "statistics": {
+                "embedding_hits": 0,
+                "graph_hits": 0,
+                "unique_results": 0,
+            },
+        }
+        
+        try:
+            # Step 1: Embedding-based RAG search
+            if self.vector_store and self.llm:
+                vec = self.llm.embed_text(query)
+                if vec:
+                    try:
+                        vector_results = self.vector_store.search(vec, top_k=top_k * 2)
+                        for r in vector_results:
+                            result["embedding_results"].append({
+                                "source": "embedding",
+                                "score": r.score,
+                                "url": r.payload.get("url"),
+                                "text": r.payload.get("text"),
+                                "entity": r.payload.get("entity"),
+                                "kind": r.payload.get("kind"),
+                                "page_id": r.payload.get("page_id"),
+                                "entity_id": r.payload.get("entity_id"),
+                            })
+                        result["statistics"]["embedding_hits"] = len(result["embedding_results"])
+                    except Exception as e:
+                        self.logger.warning(f"Embedding search failed: {e}")
+            
+            # Step 2: Graph-based search (entity traversal)
+            if include_graph:
+                graph_results = self._graph_based_search(query, graph_depth, top_k)
+                result["graph_results"] = graph_results
+                result["statistics"]["graph_hits"] = len(graph_results)
+            
+            # Step 3: Combine and deduplicate results
+            combined = self._combine_search_results(
+                result["embedding_results"],
+                result["graph_results"],
+                top_k
+            )
+            result["combined_results"] = combined
+            result["statistics"]["unique_results"] = len(combined)
+            
+        except Exception as e:
+            self.logger.error(f"Multidimensional search failed: {e}", exc_info=True)
+            result["error"] = str(e)
+        
+        return result
+    
+    def _graph_based_search(
+        self,
+        query: str,
+        depth: int,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """Search by traversing entity graph from query-mentioned entities."""
+        results = []
+        
+        try:
+            with self.store.Session() as session:
+                # Extract entity candidates from query
+                # Use simple word matching to find entities
+                query_words = set(query.lower().split())
+                
+                # Find entities that match words in query
+                matching_entities = []
+                for word in query_words:
+                    if len(word) > 2:  # Skip short words
+                        entities = session.execute(
+                            select(Entity).where(
+                                func.lower(Entity.name).like(f"%{word}%")
+                            ).limit(5)
+                        ).scalars().all()
+                        matching_entities.extend(entities)
+                
+                # Deduplicate
+                seen_ids = set()
+                unique_entities = []
+                for e in matching_entities:
+                    if str(e.id) not in seen_ids:
+                        seen_ids.add(str(e.id))
+                        unique_entities.append(e)
+                
+                # Traverse relations for each matched entity
+                all_related_ids = set()
+                for entity in unique_entities[:3]:  # Limit starting points
+                    related = self._traverse_relations(session, str(entity.id), depth)
+                    all_related_ids.update(related)
+                
+                # Get intelligence and page data for related entities
+                for entity_id in list(all_related_ids)[:limit]:
+                    entity = session.get(Entity, entity_id)
+                    if not entity:
+                        continue
+                    
+                    # Get related intelligence
+                    intel = session.execute(
+                        select(Intelligence).where(Intelligence.entity_id == entity_id).limit(1)
+                    ).scalar()
+                    
+                    result_item = {
+                        "source": "graph",
+                        "score": 0.5,  # Base score for graph results
+                        "entity": entity.name,
+                        "entity_id": entity_id,
+                        "kind": entity.kind,
+                        "text": "",
+                    }
+                    
+                    if intel and intel.data:
+                        result_item["text"] = str(intel.data)[:500]
+                        if intel.page_id:
+                            page = session.get(Page, intel.page_id)
+                            if page:
+                                result_item["url"] = page.url
+                    
+                    results.append(result_item)
+                    
+        except Exception as e:
+            self.logger.warning(f"Graph search failed: {e}")
+        
+        return results
+    
+    def _traverse_relations(
+        self,
+        session: Session,
+        entity_id: str,
+        max_depth: int,
+    ) -> Set[str]:
+        """Traverse relations from entity up to max_depth."""
+        visited = set()
+        current_level = {entity_id}
+        
+        for _ in range(max_depth):
+            next_level = set()
+            for eid in current_level:
+                if eid in visited:
+                    continue
+                visited.add(eid)
+                
+                # Get related entities
+                for rel in session.execute(
+                    select(Relationship).where(
+                        or_(
+                            Relationship.source_id == eid,
+                            Relationship.target_id == eid,
+                        )
+                    )
+                ).scalars().all():
+                    related_id = rel.target_id if rel.source_id == eid else rel.source_id
+                    if related_id not in visited:
+                        next_level.add(str(related_id))
+            
+            current_level = next_level
+            if not current_level:
+                break
+        
+        return visited
+    
+    def _combine_search_results(
+        self,
+        embedding_results: List[Dict[str, Any]],
+        graph_results: List[Dict[str, Any]],
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """Combine and deduplicate results from different sources."""
+        combined = {}
+        
+        # Add embedding results with boost
+        for r in embedding_results:
+            key = r.get("url") or r.get("entity_id") or r.get("text", "")[:50]
+            if key:
+                combined[key] = r
+                combined[key]["combined_score"] = r.get("score", 0) * 1.2  # Boost embedding results
+        
+        # Add graph results
+        for r in graph_results:
+            key = r.get("url") or r.get("entity_id") or r.get("text", "")[:50]
+            if key:
+                if key in combined:
+                    # Merge scores if already exists
+                    combined[key]["combined_score"] += r.get("score", 0)
+                    combined[key]["sources"] = ["embedding", "graph"]
+                else:
+                    combined[key] = r
+                    combined[key]["combined_score"] = r.get("score", 0)
+                    combined[key]["sources"] = ["graph"]
+        
+        # Sort by combined score
+        sorted_results = sorted(
+            combined.values(),
+            key=lambda x: x.get("combined_score", 0),
+            reverse=True
+        )
+        
+        return sorted_results[:limit]
+    
+    # =========================================================================
+    # ASYNC CHAT RESPONSE
+    # =========================================================================
+    
+    async def chat_async(
+        self,
+        question: str,
+        entity: Optional[str] = None,
+        mode: str = "search",
+        stream: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Async chat response with agent capabilities.
+        
+        Modes:
+        - search: Use multidimensional RAG search
+        - reflect: Analyze and refine data related to question
+        - explore: Explore entities mentioned in question
+        
+        Args:
+            question: User question
+            entity: Optional entity context
+            mode: Operation mode
+            stream: Whether to stream the response
+            
+        Returns:
+            Chat response with relevant data
+        """
+        self.logger.info(f"Async chat: mode={mode}, question={question[:50]}...")
+        
+        response = {
+            "mode": mode,
+            "question": question,
+            "entity": entity,
+            "answer": "",
+            "context": [],
+            "metadata": {},
+        }
+        
+        try:
+            if mode == "reflect":
+                # Reflect mode: analyze entities in question
+                entities_in_question = self._extract_entity_mentions(question)
+                if entities_in_question:
+                    reflect_result = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.reflect_and_refine(
+                            target_entities=entities_in_question,
+                            dry_run=True
+                        )
+                    )
+                    response["metadata"]["reflect_report"] = reflect_result
+                    response["answer"] = self._summarize_reflect_report(reflect_result)
+                else:
+                    response["answer"] = "No entities found in question for reflection."
+                    
+            elif mode == "explore":
+                # Explore mode: prioritize related entities
+                entities_in_question = self._extract_entity_mentions(question)
+                if entities_in_question:
+                    explore_result = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.explore_and_prioritize(
+                            root_entities=entities_in_question,
+                            top_n=10
+                        )
+                    )
+                    response["metadata"]["explore_report"] = explore_result
+                    response["context"] = explore_result.get("prioritized_entities", [])
+                    response["answer"] = self._summarize_explore_report(explore_result)
+                else:
+                    response["answer"] = "No entities found in question for exploration."
+                    
+            else:
+                # Default search mode: multidimensional RAG
+                search_result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: self.multidimensional_search(
+                        query=question,
+                        top_k=10,
+                        include_graph=True
+                    )
+                )
+                response["context"] = search_result.get("combined_results", [])
+                response["metadata"]["search_stats"] = search_result.get("statistics", {})
+                
+                # Synthesize answer from context
+                if self.llm and response["context"]:
+                    answer = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.llm.synthesize_answer(question, response["context"])
+                    )
+                    response["answer"] = answer
+                else:
+                    response["answer"] = "No relevant information found."
+                    
+        except Exception as e:
+            self.logger.error(f"Async chat failed: {e}", exc_info=True)
+            response["error"] = str(e)
+            response["answer"] = f"Error processing request: {str(e)}"
+        
+        return response
+    
+    def _extract_entity_mentions(self, text: str) -> List[str]:
+        """Extract potential entity mentions from text."""
+        # Simple extraction: look for capitalized phrases
+        import re
+        
+        # Find capitalized words/phrases
+        pattern = r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b'
+        matches = re.findall(pattern, text)
+        
+        # Filter common words that shouldn't be entities
+        stop_words = {"I", "The", "This", "What", "Who", "When", "Where", "How", "Why"}
+        entities = [m for m in matches if m not in stop_words and len(m) > 2]
+        
+        return list(set(entities))
+    
+    def _summarize_reflect_report(self, report: Dict[str, Any]) -> str:
+        """Summarize reflection report into readable answer."""
+        duplicates = report.get("duplicates_found", [])
+        issues = report.get("data_quality_issues", [])
+        
+        parts = []
+        if duplicates:
+            parts.append(f"Found {len(duplicates)} potential duplicate entity groups that could be merged.")
+        if issues:
+            parts.append(f"Found {len(issues)} data quality issues to address.")
+        
+        if not parts:
+            parts.append("Data looks clean - no duplicates or quality issues found.")
+        
+        return " ".join(parts)
+    
+    def _summarize_explore_report(self, report: Dict[str, Any]) -> str:
+        """Summarize exploration report into readable answer."""
+        prioritized = report.get("prioritized_entities", [])
+        stats = report.get("statistics", {})
+        
+        if not prioritized:
+            return "No related entities found to explore."
+        
+        top_entities = ", ".join([e["name"] for e in prioritized[:5]])
+        return (
+            f"Found {stats.get('unique_entities', 0)} related entities. "
+            f"Top priorities for exploration: {top_entities}"
+        )

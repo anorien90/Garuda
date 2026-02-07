@@ -86,6 +86,7 @@ garuda-search = "garuda_intel.search:main"
 garuda-intel-recorder = "garuda_intel.recorder.app:main"
 garuda-docker = "garuda_intel.docker.tool:main"
 garuda-db = "garuda_intel.database.cli:main"
+garuda-agent = "garuda_intel.services.agent_cli:main"
 
 [project.entry-points."console_scripts"]
 garuda-intel-web = "garuda_intel.webapp.app:main"
@@ -93,6 +94,7 @@ garuda-intel-search = "garuda_intel.search:main"
 garuda-search = "garuda_intel.search:main"
 garuda-docker = "garuda_intel.docker.tool:main"
 garuda-db = "garuda_intel.database.cli:main"
+garuda-agent = "garuda_intel.services.agent_cli:main"
 
 [tool.mypy]
 python_version = "3.10"

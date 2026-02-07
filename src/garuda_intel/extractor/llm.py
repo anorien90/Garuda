@@ -52,11 +52,11 @@ class LLMIntelExtractor:
         max_window_embeddings: int = 200,
         max_total_embeddings: int = 1200,
         min_text_length_for_embedding: int = 10,
-        # Timeouts / retries
-        summarize_timeout: int = 60,
-        summarize_retries: int = 2,
-        extract_timeout: int = 120,
-        reflect_timeout: int = 30,
+        # Timeouts / retries (default 15 minutes for long operations)
+        summarize_timeout: int = 900,
+        summarize_retries: int = 3,
+        extract_timeout: int = 900,
+        reflect_timeout: int = 300,
         # Entity merging (Phase 5)
         enable_entity_merging: bool = True,
         session_maker=None,
@@ -119,30 +119,154 @@ class LLMIntelExtractor:
     # --------- Summaries & embeddings ---------
     def summarize_page(self, text: str) -> str:
         """
-        Summarize the full text by processing it in chunks to avoid truncation.
+        Summarize the full text using hierarchical summarization with overlapping windows.
+        
+        For large texts that exceed LLM context:
+        1. Split into overlapping chunks for context preservation
+        2. Summarize each chunk compactly
+        3. Recursively summarize partial summaries
+        4. Final merge produces coherent summary
         """
         if not text:
             return ""
 
-        summaries: List[str] = []
-        for chunk in self.text_processor.chunk_text(text, self.summary_chunk_chars, self.max_chunks):
-            prompt = (
-                "Summarize the following text in 3-5 sentences, focusing on key facts and entities:\n\n"
-                f"{chunk}"
+        # Try direct summarization for small texts
+        if len(text) < self.summary_chunk_chars * 0.8:
+            return self._summarize_chunk(text)
+        
+        # Hierarchical summarization for large texts
+        return self._hierarchical_summarize(text)
+    
+    def _hierarchical_summarize(self, text: str, max_summary_length: int = 2000) -> str:
+        """
+        Hierarchical summarization with overlapping windows for large texts.
+        
+        Uses overlapping partial reflection and summarization windows that get
+        merged into increasingly compact summaries.
+        """
+        # Step 1: Create overlapping chunks with 25% overlap for context preservation
+        chunk_size = self.summary_chunk_chars
+        overlap = chunk_size // 4  # 25% overlap
+        chunks = []
+        
+        start = 0
+        while start < len(text):
+            end = min(start + chunk_size, len(text))
+            chunks.append(text[start:end])
+            start = end - overlap
+            if start >= len(text) - overlap:
+                break
+        
+        if not chunks:
+            return ""
+        
+        # Step 2: Summarize each chunk with compact output
+        partial_summaries = []
+        for i, chunk in enumerate(chunks):
+            summary = self._summarize_chunk_compact(
+                chunk, 
+                context=f"Part {i+1} of {len(chunks)}"
             )
-            for attempt in range(self.summarize_retries):
-                try:
-                    payload = {"model": self.model, "prompt": prompt, "stream": False}
-                    resp = requests.post(self.ollama_url, json=payload, timeout=self.summarize_timeout)
-                    part = resp.json().get("response", "").strip()
-                    if part:
-                        summaries.append(part)
-                    break
-                except Exception as e:
-                    if attempt == self.summarize_retries - 1:
-                        self.logger.warning(f"Summarization failed after retries: {e}")
-                    else:
-                        self.logger.debug(f"Summarization retry {attempt+1} due to {e}")
+            if summary:
+                partial_summaries.append(summary)
+        
+        if not partial_summaries:
+            return ""
+        
+        # Step 3: If we have few enough summaries, combine directly
+        if len(partial_summaries) <= 3:
+            combined = "\n\n".join(partial_summaries)
+            if len(combined) < max_summary_length:
+                return self._final_merge_summary(combined)
+            return self._summarize_chunk(combined)
+        
+        # Step 4: Recursive summarization for many partial summaries
+        # Group partial summaries with overlap for coherence
+        window_size = 3
+        stride = 2  # Overlap of 1 summary between windows
+        intermediate_summaries = []
+        
+        for i in range(0, len(partial_summaries), stride):
+            window = partial_summaries[i:i + window_size]
+            if len(window) > 1:
+                window_text = "\n\n---\n\n".join(window)
+                merged = self._summarize_chunk_compact(
+                    window_text,
+                    context="Merge partial summaries"
+                )
+                if merged:
+                    intermediate_summaries.append(merged)
+            elif window:
+                intermediate_summaries.append(window[0])
+        
+        # Step 5: Final merge of intermediate summaries
+        if len(intermediate_summaries) <= 3:
+            final_text = "\n\n".join(intermediate_summaries)
+            return self._final_merge_summary(final_text)
+        
+        # Recursively summarize if still too many
+        return self._hierarchical_summarize(
+            "\n\n---\n\n".join(intermediate_summaries),
+            max_summary_length
+        )
+    
+    def _summarize_chunk(self, text: str) -> str:
+        """Summarize a single chunk with standard prompting."""
+        prompt = (
+            "Summarize the following text in 3-5 sentences, focusing on key facts and entities:\n\n"
+            f"{text}"
+        )
+        return self._call_llm_with_retry(prompt)
+    
+    def _summarize_chunk_compact(self, text: str, context: str = "") -> str:
+        """Summarize a chunk compactly for hierarchical summarization."""
+        context_str = f" ({context})" if context else ""
+        prompt = (
+            f"Summarize this text{context_str} in 2-3 sentences, preserving key entities, "
+            "facts, relationships, and numbers. Be concise but complete:\n\n"
+            f"{text}"
+        )
+        return self._call_llm_with_retry(prompt)
+    
+    def _final_merge_summary(self, text: str) -> str:
+        """Create final merged summary from partial summaries."""
+        prompt = (
+            "Combine these partial summaries into a single coherent 3-5 sentence summary. "
+            "Preserve all key entities, facts, and relationships. Remove redundancy:\n\n"
+            f"{text}"
+        )
+        return self._call_llm_with_retry(prompt)
+    
+    def _call_llm_with_retry(self, prompt: str) -> str:
+        """Call LLM with retry logic and proper error handling."""
+        for attempt in range(self.summarize_retries):
+            try:
+                payload = {"model": self.model, "prompt": prompt, "stream": False}
+                resp = requests.post(self.ollama_url, json=payload, timeout=self.summarize_timeout)
+                
+                # Check for input length errors
+                if resp.status_code == 400:
+                    error_text = resp.text.lower()
+                    if "context" in error_text or "length" in error_text or "token" in error_text:
+                        self.logger.warning(f"Input too long for LLM, will segment: {resp.text[:200]}")
+                        # Return empty to trigger segmentation in caller
+                        return ""
+                
+                resp.raise_for_status()
+                return resp.json().get("response", "").strip()
+                
+            except requests.exceptions.Timeout as e:
+                if attempt == self.summarize_retries - 1:
+                    self.logger.warning(f"Summarization timed out after {self.summarize_timeout}s: {e}")
+                else:
+                    self.logger.debug(f"Summarization timeout retry {attempt+1}")
+            except Exception as e:
+                if attempt == self.summarize_retries - 1:
+                    self.logger.warning(f"Summarization failed after retries: {e}")
+                else:
+                    self.logger.debug(f"Summarization retry {attempt+1} due to {e}")
+        
+        return ""
 
         return "\n".join(summaries).strip()
 
