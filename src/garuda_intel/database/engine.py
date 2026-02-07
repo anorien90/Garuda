@@ -22,6 +22,7 @@ from .models import (
     Relationship,
 )
 from ..types.page.fingerprint import PageFingerprint
+from ..types.entity.registry import get_registry, EntityKindRegistry
 from .helpers import uuid5_url as _uuid5_url, uuid4 as _uuid4, as_dict as _as_dict
 from .repositories.page_repository import PageRepository
 
@@ -29,6 +30,23 @@ from .repositories.page_repository import PageRepository
 class SQLAlchemyStore(PersistenceStore):
     # Constants for graph traversal
     MAX_RECURSION_DEPTH = 10  # Maximum depth to prevent infinite loops in graph traversal
+    
+    @property
+    def ENTITY_KIND_PRIORITY(self) -> Dict[str, int]:
+        """
+        Get entity kind priorities from the dynamic registry.
+        
+        This property provides backwards compatibility while using the
+        centralized registry for kind priorities.
+        
+        Note: The uppercase name is maintained for backward compatibility.
+        New code should use get_entity_kind_priority() instead.
+        """
+        return self.get_entity_kind_priority()
+    
+    def get_entity_kind_priority(self) -> Dict[str, int]:
+        """Get entity kind priorities from the dynamic registry."""
+        return get_registry().get_kind_priority_map()
     
     def __init__(self, url: str = "sqlite:///crawler.db"):
         self.engine = create_engine(url, future=True)
@@ -345,6 +363,51 @@ class SQLAlchemyStore(PersistenceStore):
                 }
                 for r in rows
             ]
+
+    def get_unique_entity_kinds(self) -> List[str]:
+        """
+        Get all unique entity kinds currently in the database.
+        
+        This is used to sync the registry with discovered kinds and
+        to provide the UI with available filter options.
+        
+        Returns:
+            List of unique kind names
+        """
+        with self.Session() as s:
+            stmt = select(Entity.kind).distinct().where(Entity.kind.isnot(None))
+            rows = s.execute(stmt).scalars().all()
+            return sorted([k for k in rows if k])
+    
+    def get_unique_relation_types(self) -> List[str]:
+        """
+        Get all unique relation types currently in the database.
+        
+        Returns:
+            List of unique relation type names
+        """
+        with self.Session() as s:
+            stmt = select(Relationship.relation_type).distinct().where(Relationship.relation_type.isnot(None))
+            rows = s.execute(stmt).scalars().all()
+            return sorted([r for r in rows if r])
+    
+    def sync_registry_from_database(self):
+        """
+        Sync the entity kind registry with kinds discovered in the database.
+        
+        This ensures the registry stays current with dynamically discovered kinds.
+        """
+        registry = get_registry()
+        db_kinds = self.get_unique_entity_kinds()
+        registry.sync_from_database(db_kinds)
+        
+        db_relations = self.get_unique_relation_types()
+        for rel_type in db_relations:
+            if not registry.get_relation(rel_type):
+                registry.register_relation(
+                    name=rel_type,
+                    description=f"Dynamically discovered relation type: {rel_type}",
+                )
 
     # -------- Refresh helpers --------
     def get_pending_refresh(self, limit: int = 50) -> List[Dict]:
@@ -1152,6 +1215,11 @@ class SQLAlchemyStore(PersistenceStore):
         """
         Automatically find and merge duplicate entities.
         
+        This method performs two levels of deduplication:
+        1. Within-kind deduplication: Merges entities with similar names within the same kind
+        2. Cross-kind deduplication: Merges generic 'entity' kind entities into more specific
+           kinds (person, org, company, etc.) when they have the same name
+        
         Note: This implementation has O(n²) complexity within each entity kind.
         For large datasets (>1000 entities per kind), consider implementing
         clustering-based deduplication using embeddings.
@@ -1176,15 +1244,15 @@ class SQLAlchemyStore(PersistenceStore):
                     entities_by_kind[kind] = []
                 entities_by_kind[kind].append(entity)
         
-        # Process each kind separately
+        # Track which entities have been merged globally
+        global_merged_ids = set()
+        
+        # Process each kind separately (within-kind deduplication)
         for kind, entities in entities_by_kind.items():
             self.logger.info(f"Deduplicating {len(entities)} entities of kind '{kind}'")
             
-            # Track which entities have been merged
-            merged_ids = set()
-            
             for i, entity in enumerate(entities):
-                if str(entity.id) in merged_ids:
+                if str(entity.id) in global_merged_ids:
                     continue
                 
                 # Find similar entities
@@ -1199,14 +1267,67 @@ class SQLAlchemyStore(PersistenceStore):
                 for sim_entity in similar:
                     if str(sim_entity.id) == str(entity.id):
                         continue
-                    if str(sim_entity.id) in merged_ids:
+                    if str(sim_entity.id) in global_merged_ids:
                         continue
                     
                     # Merge sim_entity into entity
                     if self.merge_entities(str(sim_entity.id), str(entity.id)):
                         merged_map[str(sim_entity.id)] = str(entity.id)
-                        merged_ids.add(str(sim_entity.id))
+                        global_merged_ids.add(str(sim_entity.id))
                         self.logger.info(f"Merged duplicate: {sim_entity.name} -> {entity.name}")
+        
+        # Cross-kind deduplication: merge generic 'entity' kind into specific kinds
+        # Get specific kinds from registry (all kinds except 'entity' and 'unknown')
+        registry = get_registry()
+        specific_kinds = {k for k in registry.get_kind_names() if k not in ('entity', 'unknown')}
+        
+        # Refresh entities after within-kind deduplication
+        with self.Session() as s:
+            all_entities = s.execute(select(Entity)).scalars().all()
+            entities_by_kind = {}
+            for entity in all_entities:
+                kind = entity.kind or "unknown"
+                if kind not in entities_by_kind:
+                    entities_by_kind[kind] = []
+                entities_by_kind[kind].append(entity)
+        
+        # Get generic entities to potentially merge
+        generic_entities = entities_by_kind.get('entity', [])
+        
+        if generic_entities:
+            self.logger.info(f"Cross-kind deduplication: checking {len(generic_entities)} generic 'entity' entities")
+            
+            # Build a name -> (entity, kind) lookup for specific entities
+            specific_entity_by_name = {}
+            for kind in specific_kinds:
+                for entity in entities_by_kind.get(kind, []):
+                    if str(entity.id) not in global_merged_ids:
+                        name_key = entity.name.lower().strip() if entity.name else ''
+                        if name_key:
+                            # Prefer more specific kinds; if same name exists in multiple specific kinds,
+                            # prefer person > org > company > others
+                            current_priority = self.ENTITY_KIND_PRIORITY.get(kind, 99)
+                            existing_entry = specific_entity_by_name.get(name_key)
+                            if not existing_entry or self.ENTITY_KIND_PRIORITY.get(existing_entry[1], 99) > current_priority:
+                                specific_entity_by_name[name_key] = (entity, kind)
+            
+            # Merge generic entities into specific ones
+            for generic_entity in generic_entities:
+                if str(generic_entity.id) in global_merged_ids:
+                    continue
+                
+                name_key = generic_entity.name.lower().strip() if generic_entity.name else ''
+                if name_key and name_key in specific_entity_by_name:
+                    specific_entity, specific_kind = specific_entity_by_name[name_key]
+                    
+                    # Merge generic into specific
+                    if self.merge_entities(str(generic_entity.id), str(specific_entity.id)):
+                        merged_map[str(generic_entity.id)] = str(specific_entity.id)
+                        global_merged_ids.add(str(generic_entity.id))
+                        self.logger.info(
+                            f"Cross-kind merge: '{generic_entity.name}' (entity) -> "
+                            f"'{specific_entity.name}' ({specific_kind})"
+                        )
         
         self.logger.info(f"Deduplication complete: {len(merged_map)} entities merged")
         return merged_map

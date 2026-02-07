@@ -2,13 +2,18 @@ import { els, val } from './config.js';
 import { pill, collapsible, renderKeyValTable } from './ui.js';
 import { showModal, updateModal } from './modals.js';
 
-// Color maps for node/edge kinds
-const COLORS = {
+// Dynamic color maps - will be populated from API
+let COLORS = {
   person: '#0ea5e9',
   org: '#22c55e',
   location: '#a855f7',
   product: '#f97316',
   event: '#06b6d4',
+  technology: '#8b5cf6',
+  document: '#64748b',
+  concept: '#fbbf24',
+  infrastructure: '#14b8a6',
+  project: '#ec4899',
   'semantic-snippet': '#fbbf24',
   seed: '#84cc16',
   entity: '#14b8a6',
@@ -19,7 +24,7 @@ const COLORS = {
   unknown: '#94a3b8',
 };
 
-const EDGE_COLORS = {
+let EDGE_COLORS = {
   cooccurrence: 'rgba(148,163,184,0.22)',
   'page-mentions': 'rgba(34,197,94,0.28)',
   'intel-mentions': 'rgba(244,63,94,0.32)',
@@ -34,8 +39,17 @@ const EDGE_COLORS = {
   'has-person': 'rgba(14,165,233,0.35)',
   'has-location': 'rgba(168,85,247,0.35)',
   'has-product': 'rgba(249,115,22,0.35)',
+  'uses-technology': 'rgba(139,92,246,0.35)',
+  'related-entity': 'rgba(139,92,246,0.25)',
+  'associated-with': 'rgba(148,163,184,0.25)',
+  'part-of': 'rgba(34,197,94,0.30)',
+  'contains': 'rgba(34,197,94,0.30)',
   default: 'rgba(148,163,184,0.18)',
 };
+
+// Schema data cache
+let schemaCache = null;
+let schemaLoading = false;
 
 const PARTICLE_SPEED = 0.0002;
 const PARTICLE_WIDTH_BASE = 0.45;
@@ -59,6 +73,77 @@ const filterEls = {
   depth: () => document.getElementById('entities-graph-depth'),
   toggle3d: () => document.getElementById('entities-graph-toggle3d'),
 };
+
+/**
+ * Load schema from API and update color maps.
+ * This allows colors to be dynamic and new kinds to appear automatically.
+ */
+async function loadSchema(forceSync = false) {
+  if (schemaCache && !forceSync) return schemaCache;
+  if (schemaLoading) return null;
+  
+  schemaLoading = true;
+  try {
+    const baseUrl = els.baseUrl?.value || '';
+    const apiKey = els.apiKey?.value || '';
+    const headers = apiKey ? { 'X-API-Key': apiKey } : {};
+    
+    // Only sync on first load or when explicitly requested
+    const syncParam = !schemaCache ? 'sync=true' : '';
+    const res = await fetch(`${baseUrl}/api/schema/full${syncParam ? '?' + syncParam : ''}`, { headers });
+    if (!res.ok) {
+      console.warn('Failed to load schema, using defaults');
+      return null;
+    }
+    
+    const data = await res.json();
+    if (data.success) {
+      schemaCache = data;
+      
+      // Update entity kind colors
+      if (data.kind_colors) {
+        Object.assign(COLORS, data.kind_colors);
+      }
+      
+      // Update relation colors
+      if (data.relation_colors) {
+        Object.assign(EDGE_COLORS, data.relation_colors);
+      }
+      
+      console.log(`Schema loaded: ${Object.keys(data.kinds || {}).length} kinds, ${Object.keys(data.relations || {}).length} relations`);
+      return data;
+    }
+  } catch (e) {
+    console.warn('Schema load failed, using defaults:', e);
+  } finally {
+    schemaLoading = false;
+  }
+  return null;
+}
+
+/**
+ * Get schema data, loading from API if needed.
+ */
+async function getSchema() {
+  if (!schemaCache) {
+    await loadSchema();
+  }
+  return schemaCache;
+}
+
+/**
+ * Get color for a node type, with fallback to unknown.
+ */
+function getNodeColor(type) {
+  return COLORS[type] || COLORS[type?.toLowerCase()] || COLORS.unknown;
+}
+
+/**
+ * Get color for an edge type, with fallback to default.
+ */
+function getEdgeColor(kind) {
+  return EDGE_COLORS[kind] || EDGE_COLORS[kind?.toLowerCase()] || EDGE_COLORS.default;
+}
 
 function escapeHtml(val) {
   return String(val)
@@ -910,6 +995,10 @@ async function renderGraph() {
 async function loadAndRender(ev) {
   ev?.preventDefault();
   try {
+    // Load schema first to get dynamic colors
+    await loadSchema();
+    renderLegend();  // Re-render legend with new colors
+    
     const data = await fetchGraph();
     currentNodes = data.nodes || [];
     currentLinks = data.links || [];
@@ -923,6 +1012,10 @@ async function loadAndRender(ev) {
 
 export async function initEntitiesGraph() {
   if (!els.entitiesGraphForm || !els.entitiesGraphCanvas) return;
+  
+  // Load schema early to get colors
+  await loadSchema();
+  
   renderLegend();
   renderDetails(null, []);
   updateToggleButton();

@@ -308,6 +308,123 @@ def test_post_crawl_with_actual_orphans():
     print(f"  Note: Circular relationship also removed, so final count is 0 (1 circular + 2 orphaned = 3 removed)")
 
 
+def test_cross_kind_entity_deduplication():
+    """
+    Test that entities with the same name but different kinds
+    are merged when one is a generic 'entity' kind and the other
+    is a more specific kind (person, org, etc.).
+    
+    This addresses the issue where "Satya Nadella" appears twice:
+    - Once as 'person' with rich metadata (role, title, etc.)
+    - Once as 'entity' with minimal metadata
+    """
+    store = SQLAlchemyStore("sqlite:///:memory:")
+    
+    print("\nTesting cross-kind entity deduplication...")
+    
+    # Create entities with the same name but different kinds
+    # Simulate the scenario where the same person is discovered as both
+    # a generic 'entity' and a specific 'person'
+    entities = [
+        # Generic entity with minimal data (discovered first from relationships)
+        {"name": "Satya Nadella", "kind": "entity", "data": {}},
+        # Specific person entity with rich data (discovered later from extraction)
+        {
+            "name": "Satya Nadella", 
+            "kind": "person", 
+            "data": {"role": "executive", "title": "CEO", "bio": "Tech leader"}
+        },
+        # Another generic entity
+        {"name": "Microsoft Corporation", "kind": "entity", "data": {}},
+        # Specific org entity with rich data
+        {
+            "name": "Microsoft Corporation", 
+            "kind": "org", 
+            "data": {"industry": "Technology", "founded": "1975"}
+        },
+        # Person without a duplicate (should remain unchanged)
+        {"name": "Bill Gates", "kind": "person", "data": {"role": "founder"}},
+    ]
+    
+    # Save entities
+    entity_map = store.save_entities(entities)
+    
+    # Initially, we should have 5 entities with different (name, kind) combinations
+    with store.Session() as session:
+        count_before = session.execute(
+            select(func.count()).select_from(Entity)
+        ).scalar()
+    
+    print(f"✓ Created {count_before} entities before deduplication")
+    
+    # Verify we have both kinds for Satya Nadella
+    with store.Session() as session:
+        satya_entities = session.execute(
+            select(Entity).where(Entity.name == "Satya Nadella")
+        ).scalars().all()
+        print(f"✓ Satya Nadella entities before dedup: {len(satya_entities)} "
+              f"(kinds: {[e.kind for e in satya_entities]})")
+        assert len(satya_entities) == 2, f"Expected 2 Satya Nadella entities, got {len(satya_entities)}"
+    
+    # Run deduplication
+    merge_map = store.deduplicate_entities(threshold=0.85)
+    
+    print(f"✓ Deduplication merged {len(merge_map)} entities")
+    
+    # After deduplication, generic 'entity' kinds should be merged into specific kinds
+    with store.Session() as session:
+        count_after = session.execute(
+            select(func.count()).select_from(Entity)
+        ).scalar()
+    
+    print(f"✓ Entities after deduplication: {count_after}")
+    
+    # Verify Satya Nadella now only exists once
+    with store.Session() as session:
+        satya_entities = session.execute(
+            select(Entity).where(Entity.name == "Satya Nadella")
+        ).scalars().all()
+        print(f"✓ Satya Nadella entities after dedup: {len(satya_entities)} "
+              f"(kinds: {[e.kind for e in satya_entities]})")
+        
+        # Should only have the 'person' entity remaining
+        assert len(satya_entities) == 1, \
+            f"Expected 1 Satya Nadella entity after dedup, got {len(satya_entities)}"
+        assert satya_entities[0].kind == "person", \
+            f"Expected 'person' kind to be preserved, got '{satya_entities[0].kind}'"
+        # Verify rich data is preserved
+        assert satya_entities[0].data.get("role") == "executive", \
+            "Expected 'executive' role to be preserved"
+        assert satya_entities[0].data.get("title") == "CEO", \
+            "Expected 'CEO' title to be preserved"
+    
+    # Verify Microsoft Corporation is also deduplicated
+    with store.Session() as session:
+        microsoft_entities = session.execute(
+            select(Entity).where(Entity.name == "Microsoft Corporation")
+        ).scalars().all()
+        print(f"✓ Microsoft Corporation entities after dedup: {len(microsoft_entities)} "
+              f"(kinds: {[e.kind for e in microsoft_entities]})")
+        
+        assert len(microsoft_entities) == 1, \
+            f"Expected 1 Microsoft Corporation entity after dedup, got {len(microsoft_entities)}"
+        assert microsoft_entities[0].kind == "org", \
+            f"Expected 'org' kind to be preserved, got '{microsoft_entities[0].kind}'"
+    
+    # Verify Bill Gates was not affected (only one entity existed)
+    with store.Session() as session:
+        gates_entities = session.execute(
+            select(Entity).where(Entity.name == "Bill Gates")
+        ).scalars().all()
+        assert len(gates_entities) == 1, f"Bill Gates should still have 1 entity"
+        assert gates_entities[0].kind == "person", "Bill Gates should still be 'person' kind"
+    
+    print(f"\n✓ Cross-kind deduplication test PASSED!")
+    print(f"  - Generic 'entity' kinds merged into specific kinds")
+    print(f"  - Rich metadata preserved in the merged entity")
+    print(f"  - {count_before} entities reduced to {count_after}")
+
+
 if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("Testing PostCrawlProcessor Scenario")
@@ -315,6 +432,7 @@ if __name__ == "__main__":
     
     test_post_crawl_processing_scenario()
     test_post_crawl_with_actual_orphans()
+    test_cross_kind_entity_deduplication()
     
     print("\n" + "=" * 70)
     print("✓ All PostCrawlProcessor tests PASSED!")
