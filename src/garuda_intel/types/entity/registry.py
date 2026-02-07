@@ -10,7 +10,7 @@ A thread-safe singleton registry for managing entity kinds with:
 
 import logging
 import threading
-from typing import Dict, Optional, List, Any, Set
+from typing import Dict, Optional, List, Any, Set, Tuple
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -411,7 +411,7 @@ class EntityKindRegistry:
         
         return self.is_subtype_of(info.parent_kind, parent)
     
-    def should_merge_kinds(self, kind1: str, kind2: str) -> tuple[bool, str]:
+    def should_merge_kinds(self, kind1: str, kind2: str) -> Tuple[bool, str]:
         """
         Determine if two kinds should be merged and which one to keep.
         

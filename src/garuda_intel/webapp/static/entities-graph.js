@@ -444,12 +444,17 @@ async function fetchNodeDetail(node) {
 /**
  * Format a metadata value for human-readable display
  */
-function formatMetaValue(value) {
+function formatMetaValue(value, depth = 0) {
   if (value === null || value === undefined) return '—';
+  // Limit recursion depth to prevent performance issues
+  if (depth > 3) return '…';
   if (typeof value === 'object') {
     // Format nested objects
     if (Array.isArray(value)) {
-      return value.map(v => formatMetaValue(v)).join(', ');
+      // Limit array length for performance
+      const maxItems = 10;
+      const items = value.slice(0, maxItems).map(v => formatMetaValue(v, depth + 1));
+      return items.join(', ') + (value.length > maxItems ? ` (+${value.length - maxItems} more)` : '');
     }
     // Extract meaningful fields from object
     const meaningful = ['name', 'title', 'label', 'type', 'role', 'value', 'description'];
@@ -459,7 +464,7 @@ function formatMetaValue(value) {
     // Fallback: show first few key-value pairs
     const entries = Object.entries(value).slice(0, 3);
     if (entries.length === 0) return '—';
-    return entries.map(([k, v]) => `${k}: ${formatMetaValue(v)}`).join(', ');
+    return entries.map(([k, v]) => `${k}: ${formatMetaValue(v, depth + 1)}`).join(', ');
   }
   return escapeHtml(String(value));
 }
@@ -469,7 +474,10 @@ function formatMetaValue(value) {
  */
 function lookupNodeLabel(nodeId) {
   if (!nodeId) return null;
-  const node = filteredNodes.find(n => n.id === nodeId || n.id === nodeId?.id);
+  // Handle both string IDs and object references with id property
+  const searchId = typeof nodeId === 'object' && nodeId !== null ? nodeId.id : nodeId;
+  if (!searchId) return null;
+  const node = filteredNodes.find(n => n.id === searchId);
   return node?.label || node?.meta?.name || null;
 }
 

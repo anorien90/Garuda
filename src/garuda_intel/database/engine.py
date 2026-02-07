@@ -1338,7 +1338,7 @@ class SQLAlchemyStore(PersistenceStore):
         
         return overlap / total if total > 0 else 0.0
 
-    def deduplicate_cross_kind(self, threshold: float = 0.95) -> Dict[str, str]:
+    def deduplicate_cross_kind(self, threshold: float = 0.95, batch_size: int = 1000) -> Dict[str, str]:
         """
         Deduplicate entities across different kinds.
         
@@ -1348,6 +1348,7 @@ class SQLAlchemyStore(PersistenceStore):
         
         Args:
             threshold: Name similarity threshold (0-1)
+            batch_size: Number of entities to process per batch
             
         Returns:
             Dictionary mapping source_id -> target_id for all merged entities
@@ -1359,23 +1360,40 @@ class SQLAlchemyStore(PersistenceStore):
             self.logger.warning("EntityKindRegistry not available, skipping cross-kind deduplication")
             return {}
         
-        merged_map = {}
+        # First pass: collect entity info in batches and group by name
+        entities_by_name = {}
+        offset = 0
         
-        with self.Session() as s:
-            # Get all entities
-            all_entities = s.execute(select(Entity)).scalars().all()
-            
-            # Group by normalized name for matching
-            entities_by_name = {}
-            for entity in all_entities:
-                if not entity.name:
-                    continue
-                normalized = entity.name.lower().strip()
-                if normalized not in entities_by_name:
-                    entities_by_name[normalized] = []
-                entities_by_name[normalized].append(entity)
+        while True:
+            with self.Session() as s:
+                batch = s.execute(
+                    select(Entity).offset(offset).limit(batch_size)
+                ).scalars().all()
+                
+                if not batch:
+                    break
+                
+                for entity in batch:
+                    if not entity.name:
+                        continue
+                    normalized = entity.name.lower().strip()
+                    if normalized not in entities_by_name:
+                        entities_by_name[normalized] = []
+                    # Store only the info we need, not the ORM object
+                    entities_by_name[normalized].append({
+                        "id": str(entity.id),
+                        "name": entity.name,
+                        "kind": entity.kind or 'entity',
+                    })
+                
+                offset += batch_size
+                
+                # Clear session to avoid memory issues
+                s.expunge_all()
         
-        # Process each group of same-name entities
+        # Second pass: determine merge pairs
+        merge_pairs = []  # List of (source_id, target_id) tuples
+        
         for name, entities in entities_by_name.items():
             if len(entities) <= 1:
                 continue
@@ -1387,7 +1405,7 @@ class SQLAlchemyStore(PersistenceStore):
             best_priority = -1
             
             for entity in entities:
-                priority = registry.get_priority(entity.kind or 'entity')
+                priority = registry.get_priority(entity["kind"])
                 if priority > best_priority:
                     best_priority = priority
                     best_entity = entity
@@ -1395,24 +1413,28 @@ class SQLAlchemyStore(PersistenceStore):
             if not best_entity:
                 continue
             
-            # Merge other entities into the best one
+            # Collect merge pairs
             for entity in entities:
-                if str(entity.id) == str(best_entity.id):
+                if entity["id"] == best_entity["id"]:
                     continue
                 
                 # Check if they should be merged based on kind
                 should_merge, winning_kind = registry.should_merge_kinds(
-                    entity.kind or 'entity',
-                    best_entity.kind or 'entity'
+                    entity["kind"],
+                    best_entity["kind"]
                 )
                 
                 if should_merge:
-                    if self.merge_entities(str(entity.id), str(best_entity.id)):
-                        merged_map[str(entity.id)] = str(best_entity.id)
-                        self.logger.info(
-                            f"Cross-kind merge: {entity.name} ({entity.kind}) -> "
-                            f"{best_entity.name} ({best_entity.kind})"
-                        )
+                    merge_pairs.append((entity["id"], best_entity["id"], entity["name"], entity["kind"], best_entity["kind"]))
+        
+        # Third pass: execute merges
+        merged_map = {}
+        for source_id, target_id, name, source_kind, target_kind in merge_pairs:
+            if self.merge_entities(source_id, target_id):
+                merged_map[source_id] = target_id
+                self.logger.info(
+                    f"Cross-kind merge: {name} ({source_kind}) -> ({target_kind})"
+                )
         
         self.logger.info(f"Cross-kind deduplication complete: {len(merged_map)} entities merged")
         return merged_map
