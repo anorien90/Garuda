@@ -47,64 +47,6 @@
     <div id="entities-graph-status" class="text-xs text-slate-500 dark:text-slate-300" aria-live="polite"></div>
   </form>
 
-  <!-- Deep RAG Graph Exploration Controls -->
-  <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3 p-3 rounded-lg border-2 border-brand-300 dark:border-brand-700 bg-brand-50/30 dark:bg-brand-900/10">
-    <div class="lg:col-span-3">
-      <div class="text-sm font-semibold text-brand-700 dark:text-brand-300 mb-2">🚀 Deep RAG Graph Exploration</div>
-    </div>
-    
-    <!-- Semantic Entity Search -->
-    <div class="space-y-2">
-      <label class="text-xs font-medium text-slate-700 dark:text-slate-200">Semantic Entity Search</label>
-      <div class="flex gap-2">
-        <input id="graph-semantic-search" type="text" placeholder="Search entities..." 
-               class="flex-1 rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2 text-sm">
-        <button id="graph-semantic-search-btn" type="button"
-                class="px-3 py-2 rounded-lg bg-brand-500 text-white text-xs font-semibold hover:bg-brand-600">
-          Search
-        </button>
-      </div>
-      <div class="flex gap-2 text-xs">
-        <input id="graph-semantic-threshold" type="number" min="0" max="1" step="0.05" value="0.7" 
-               class="w-20 rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-1 text-xs">
-        <span class="text-slate-500 self-center">threshold</span>
-      </div>
-    </div>
-
-    <!-- Graph Traversal -->
-    <div class="space-y-2">
-      <label class="text-xs font-medium text-slate-700 dark:text-slate-200">Graph Traversal</label>
-      <button id="graph-traverse-btn" type="button" disabled
-              class="w-full px-3 py-2 rounded-lg bg-purple-500 text-white text-xs font-semibold hover:bg-purple-600 disabled:bg-slate-300 disabled:cursor-not-allowed">
-        Traverse from Selected
-      </button>
-      <div class="flex gap-2 text-xs">
-        <label class="flex-1">
-          <span class="text-slate-600 dark:text-slate-400">Max Depth</span>
-          <input id="graph-traverse-depth" type="number" min="1" max="5" value="2" 
-                 class="w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-1 text-xs">
-        </label>
-        <label class="flex-1">
-          <span class="text-slate-600 dark:text-slate-400">Top N</span>
-          <input id="graph-traverse-topn" type="number" min="5" max="50" value="10" 
-                 class="w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-1 text-xs">
-        </label>
-      </div>
-    </div>
-
-    <!-- Path Finding -->
-    <div class="space-y-2">
-      <label class="text-xs font-medium text-slate-700 dark:text-slate-200">Find Path Between Entities</label>
-      <button id="graph-path-btn" type="button" disabled
-              class="w-full px-3 py-2 rounded-lg bg-cyan-500 text-white text-xs font-semibold hover:bg-cyan-600 disabled:bg-slate-300 disabled:cursor-not-allowed">
-        Find Path
-      </button>
-      <div class="text-xs text-slate-500">
-        <span id="graph-path-status">Select 2 nodes to find path</span>
-      </div>
-    </div>
-  </div>
-
   <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
     <div class="space-y-3 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
       <div class="text-xs uppercase tracking-wide text-slate-500">Node Filters</div>
