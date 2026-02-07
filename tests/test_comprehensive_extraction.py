@@ -4,7 +4,7 @@ from garuda_intel.extractor.intel_extractor import IntelExtractor
 
 
 def test_comprehensive_extraction_enabled():
-    """Test that comprehensive extraction mode extracts all entities."""
+    """Test that comprehensive extraction mode is enabled by default."""
     
     extractor = IntelExtractor(enable_comprehensive_extraction=True)
     assert extractor.enable_comprehensive_extraction is True
@@ -42,8 +42,9 @@ def test_extract_entities_from_finding_with_organizations():
     entity_kinds = [e["kind"] for e in entities]
     
     # Check that organizations are extracted
+    # Expect exactly 4 organizations: Microsoft (from basic_info) + LinkedIn, GitHub, Activision Blizzard
     org_count = sum(1 for k in entity_kinds if k in ["company", "organization"])
-    assert org_count >= 3, f"Expected at least 3 organizations, got {org_count}. Entities: {entities}"
+    assert org_count == 4, f"Expected 4 organizations, got {org_count}. Entities: {entities}"
     
     # Check specific organizations
     org_names = [e["name"] for e in entities if e["kind"] in ["company", "organization"]]

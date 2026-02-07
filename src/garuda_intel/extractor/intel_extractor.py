@@ -1014,18 +1014,16 @@ class IntelExtractor:
         org1_lower = org1.lower()
         org2_lower = org2.lower()
         
-        # Build a segment around both organization mentions
-        segment_start = min(
-            context_lower.find(org1_lower) if org1_lower in context_lower else len(context_lower),
-            context_lower.find(org2_lower) if org2_lower in context_lower else len(context_lower)
-        )
-        segment_end = max(
-            context_lower.find(org1_lower) + len(org1_lower) if org1_lower in context_lower else 0,
-            context_lower.find(org2_lower) + len(org2_lower) if org2_lower in context_lower else 0
-        )
-        
-        if segment_start >= segment_end:
+        # Return early if either organization is not found in context
+        if org1_lower not in context_lower or org2_lower not in context_lower:
             return None
+        
+        # Build a segment around both organization mentions
+        org1_pos = context_lower.find(org1_lower)
+        org2_pos = context_lower.find(org2_lower)
+        
+        segment_start = min(org1_pos, org2_pos)
+        segment_end = max(org1_pos + len(org1_lower), org2_pos + len(org2_lower))
         
         # Expand the segment by 100 chars on each side
         segment = context_lower[max(0, segment_start - 100):min(len(context_lower), segment_end + 100)]

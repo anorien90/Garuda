@@ -23,6 +23,13 @@ from ..extractor.iterative_refiner import IterativeRefiner
 from ..extractor.strategy_selector import StrategySelector
 
 
+# Configuration constants for relationship inference
+# Maximum characters of context to use for relationship inference (balance between coverage and performance)
+MAX_RELATIONSHIP_INFERENCE_CONTEXT = 8000
+# Confidence score assigned to inferred relationships (lower than LLM-extracted relationships)
+INFERRED_RELATIONSHIP_CONFIDENCE = 60.0
+
+
 def _uuid5_url(url: str) -> str:
     return str(uuid5(NAMESPACE_URL, url))
 
@@ -287,7 +294,7 @@ class IntelligentExplorer:
             if extracted_entities and hasattr(self.llm_extractor, 'infer_relationships_from_entities'):
                 inferred_rels = self.llm_extractor.infer_relationships_from_entities(
                     entities=extracted_entities,
-                    context_text=text_content[:8000] if text_content else ""
+                    context_text=text_content[:MAX_RELATIONSHIP_INFERENCE_CONTEXT] if text_content else ""
                 )
                 # Add inferred relationships to the findings for persistence
                 if inferred_rels:
@@ -305,7 +312,7 @@ class IntelligentExplorer:
                             "relationships": inferred_rels,
                         }
                         verified_findings.append(inferred_finding)
-                        verified_findings_with_scores.append((inferred_finding, 60.0))  # Medium confidence for inferred
+                        verified_findings_with_scores.append((inferred_finding, INFERRED_RELATIONSHIP_CONFIDENCE))
 
         summary = (
             self.llm_extractor.summarize_page(text_content)
