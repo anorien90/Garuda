@@ -60,6 +60,8 @@ class LLMIntelExtractor:
         # Entity merging (Phase 5)
         enable_entity_merging: bool = True,
         session_maker=None,
+        # Comprehensive extraction (Phase 6)
+        enable_comprehensive_extraction: bool = True,
     ):
         self.ollama_url = ollama_url
         self.model = model
@@ -73,6 +75,7 @@ class LLMIntelExtractor:
         self.summarize_retries = summarize_retries
         self.enable_entity_merging = enable_entity_merging
         self.session_maker = session_maker
+        self.enable_comprehensive_extraction = enable_comprehensive_extraction
 
         # Initialize component modules
         self.text_processor = TextProcessor()
@@ -95,6 +98,7 @@ class LLMIntelExtractor:
             extract_timeout=extract_timeout,
             enable_entity_merging=enable_entity_merging,
             session_maker=session_maker,
+            enable_comprehensive_extraction=enable_comprehensive_extraction,
         )
         
         self.qa_validator = QAValidator(
@@ -231,6 +235,29 @@ class LLMIntelExtractor:
             page_id=page_id,
             source_url=source_url,
             confidence=confidence,
+        )
+
+    def infer_relationships_from_entities(
+        self,
+        entities: List[Dict[str, Any]],
+        context_text: str = "",
+    ) -> List[Dict[str, Any]]:
+        """
+        Infer implicit relationships between extracted entities based on context.
+        
+        This method analyzes the extracted entities and the surrounding text to
+        discover relationships that may not have been explicitly stated.
+        
+        Args:
+            entities: List of extracted entity dictionaries
+            context_text: The original text from which entities were extracted
+            
+        Returns:
+            List of inferred relationship dictionaries
+        """
+        return self.intel_extractor.infer_relationships_from_entities(
+            entities=entities,
+            context_text=context_text,
         )
 
     # ---------- Embedding helpers ----------
