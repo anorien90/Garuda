@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any
+from typing import Any, List, Tuple
 
 from flask import Blueprint, jsonify, request
 from ..services.event_system import emit_event
@@ -231,11 +231,24 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         entity = body.get("entity") or request.args.get("entity")
         top_k = safe_int(body.get("top_k") or request.args.get("top_k"), 6)
         session_id = body.get("session_id") or request.args.get("session_id")
+        # Get configurable max search cycles (default from settings or body override)
+        max_search_cycles = safe_int(
+            body.get("max_search_cycles") or request.args.get("max_search_cycles"),
+            getattr(settings, "chat_max_search_cycles", 3)
+        )
         if not question:
             return jsonify({"error": "question required"}), 400
     
-        emit_event("chat", "chat request received", payload={"session_id": session_id, "question": question})
+        emit_event("chat", "chat request received", payload={
+            "session_id": session_id, 
+            "question": question,
+            "max_search_cycles": max_search_cycles
+        })
     
+        # Get configurable thresholds from settings
+        rag_quality_threshold = getattr(settings, "chat_rag_quality_threshold", 0.7)
+        min_high_quality_hits = getattr(settings, "chat_min_high_quality_hits", 2)
+        
         def gather_hits(q: str, limit: int, prioritize_rag: bool = True) -> list[dict[str, Any]]:
             """
             Gather context hits with RAG-first approach.
@@ -310,6 +323,84 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 merged = merged[:limit]
             
             return merged
+        
+        def run_search_cycle(
+            cycle_num: int, 
+            search_queries: List[str], 
+            previous_urls: set
+        ) -> Tuple[List[str], bool]:
+            """
+            Run a single search/crawl cycle.
+            
+            Args:
+                cycle_num: Current cycle number (1-indexed)
+                search_queries: Search queries to use
+                previous_urls: URLs already crawled in previous cycles
+                
+            Returns:
+                Tuple of (new_urls_crawled, success)
+            """
+            emit_event("chat", f"Search cycle {cycle_num}/{max_search_cycles} starting",
+                      payload={"queries": search_queries[:3], "cycle": cycle_num})
+            
+            # Collect candidate URLs from search
+            candidates = collect_candidates_simple(search_queries, limit=5)
+            new_urls = []
+            for cand in candidates:
+                url = None
+                if isinstance(cand, dict):
+                    url = cand.get("href") or cand.get("url")
+                elif isinstance(cand, str):
+                    url = cand
+                if url and url not in previous_urls:
+                    new_urls.append(url)
+                    previous_urls.add(url)
+            
+            if not new_urls:
+                emit_event("chat", f"Cycle {cycle_num}: No new URLs found", level="warning")
+                return [], False
+            
+            emit_event("chat", f"Cycle {cycle_num}: Found {len(new_urls)} new URLs to crawl",
+                      payload={"urls": new_urls})
+            
+            # Initialize intelligent crawler with embeddings enabled
+            profile = EntityProfile(name=entity or "General Research", entity_type=EntityType.TOPIC)
+            explorer = IntelligentExplorer(
+                profile=profile,
+                persistence=store,
+                vector_store=vector_store,
+                llm_extractor=llm,
+                max_total_pages=getattr(settings, "chat_max_pages", 5),
+                score_threshold=5.0,
+            )
+            
+            browser = None
+            try:
+                if getattr(settings, "chat_use_selenium", False):
+                    browser = SeleniumBrowser(headless=True)
+                    browser._init_driver()
+                
+                # Execute crawl - this triggers the full pipeline:
+                # 1. Fetch pages
+                # 2. Extract intelligence (including related entities)
+                # 3. Generate embeddings
+                # 4. Store in database and vector store
+                explorer.explore(new_urls, browser)
+                
+                emit_event("chat", f"Cycle {cycle_num}: Crawl and extraction complete",
+                          payload={"urls_crawled": len(new_urls)})
+                return new_urls, True
+                
+            except Exception as e:
+                logger.warning(f"Cycle {cycle_num} crawl failed: {e}")
+                emit_event("chat", f"Cycle {cycle_num} crawl failed: {e}", level="warning")
+                return new_urls, False
+            finally:
+                if browser:
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
     
         # Phase 1: Initial RAG lookup with prioritization
         emit_event("chat", "Phase 1: Initial RAG lookup", payload={"question": question})
@@ -317,7 +408,6 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         
         # Check if we have enough high-quality RAG results
         rag_hits = [h for h in merged_hits if h.get("source") == "rag"]
-        rag_quality_threshold = 0.7  # Minimum similarity score for RAG results
         high_quality_rag = [h for h in rag_hits if h.get("score", 0) >= rag_quality_threshold]
         
         emit_event("chat", f"RAG quality check: {len(high_quality_rag)}/{len(rag_hits)} high-quality hits",
@@ -326,16 +416,18 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
         online_triggered = False
         live_urls = []
+        all_crawled_urls = set()
         crawl_reason = None
         retry_attempted = False
         paraphrased_queries = []
+        search_cycles_completed = 0
     
         # Evaluate answer quality and determine if retry is needed
         is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
         quality_insufficient = len(high_quality_rag) == 0
         
         # Phase 2: Retry with paraphrasing and more hits if initial attempt insufficient
-        if quality_insufficient or (not is_sufficient and len(high_quality_rag) < 2):
+        if quality_insufficient or (not is_sufficient and len(high_quality_rag) < min_high_quality_hits):
             emit_event("chat", "Phase 2: Retry with paraphrasing and more hits",
                      payload={"reason": "Insufficient initial results"})
             retry_attempted = True
@@ -389,12 +481,12 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
             is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
         
-        # Phase 3: Intelligent crawling if still insufficient
+        # Phase 3: Intelligent crawling with multiple cycles if still insufficient
         if not is_sufficient or quality_insufficient:
             # Determine crawl trigger reasons
             if not rag_hits:
                 crawl_reason = "No RAG results found"
-            elif len(high_quality_rag) < 2:
+            elif len(high_quality_rag) < min_high_quality_hits:
                 if retry_attempted:
                     crawl_reason = f"Insufficient high-quality RAG results ({len(high_quality_rag)}) after retry"
                 else:
@@ -406,77 +498,57 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                     crawl_reason = "Answer insufficient despite RAG results"
             
             emit_event("chat", f"Phase 3: Intelligent crawling triggered - {crawl_reason}",
-                     payload={"reason": crawl_reason})
+                     payload={"reason": crawl_reason, "max_cycles": max_search_cycles})
             
-            profile = EntityProfile(name=entity or "General Research", entity_type=EntityType.TOPIC)
             online_triggered = True
     
-            # Generate targeted search queries (use paraphrased queries if available)
-            search_queries = paraphrased_queries if paraphrased_queries else llm.generate_seed_queries(question, profile.name)
+            # Generate initial search queries (use paraphrased queries if available)
+            search_queries = paraphrased_queries if paraphrased_queries else llm.generate_seed_queries(question, entity or "")
             emit_event("chat", f"Generated {len(search_queries)} search queries", 
                      payload={"queries": search_queries})
             
-            candidates = collect_candidates_simple(search_queries, limit=5)
-            live_urls = []
-            seen_urls = set()
-            for cand in candidates:
-                url = None
-                if isinstance(cand, dict):
-                    url = cand.get("href") or cand.get("url")
-                elif isinstance(cand, str):
-                    url = cand
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    live_urls.append(url)
-            
-            emit_event("chat", f"Found {len(live_urls)} candidate URLs", 
-                     payload={"urls": live_urls})
-    
-            if live_urls:
-                # Initialize intelligent crawler with embeddings enabled
-                explorer = IntelligentExplorer(
-                    profile=profile,
-                    persistence=store,
-                    vector_store=vector_store,
-                    llm_extractor=llm,
-                    max_total_pages=getattr(settings, "chat_max_pages", 5),
-                    score_threshold=5.0,
-                )
-    
-                browser = None
-                try:
-                    emit_event("chat", "Starting intelligent crawl with embedding generation",
-                             payload={"urls": live_urls, "max_pages": getattr(settings, "chat_max_pages", 5)})
-                    
-                    if getattr(settings, "chat_use_selenium", False):
-                        browser = SeleniumBrowser(headless=True)
-                        browser._init_driver()
-                    
-                    # Execute crawl - this will generate embeddings automatically
-                    explorer.explore(live_urls, browser)
-                    
-                    emit_event("chat", "Crawl complete - embeddings generated",
-                             payload={"urls": live_urls})
-                except Exception as e:
-                    logger.warning(f"Chat crawl failed: {e}")
-                    emit_event("chat", f"Crawl failed: {e}", level="warning")
-                finally:
-                    if browser:
-                        try:
-                            browser.close()
-                        except Exception:
-                            pass
-    
-                # Phase 4: Re-query with new embeddings
-                emit_event("chat", "Phase 4: Re-querying with newly crawled data")
-                merged_hits = gather_hits(question, top_k, prioritize_rag=True)
-                answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
+            # Run search/crawl cycles up to the configured maximum
+            for cycle_num in range(1, max_search_cycles + 1):
+                # Run the search cycle with full pipeline
+                cycle_urls, cycle_success = run_search_cycle(cycle_num, search_queries, all_crawled_urls)
+                live_urls.extend(cycle_urls)
                 
-                # Check improvement
-                new_rag_hits = [h for h in merged_hits if h.get("source") == "rag"]
-                emit_event("chat", f"After crawl: {len(new_rag_hits)} RAG results available",
-                         payload={"new_rag_count": len(new_rag_hits)})
-    
+                if cycle_success:
+                    search_cycles_completed = cycle_num
+                    
+                    # Re-query RAG after this cycle completes
+                    emit_event("chat", f"Cycle {cycle_num} complete - Re-querying RAG",
+                             payload={"total_urls_crawled": len(all_crawled_urls)})
+                    
+                    merged_hits = gather_hits(question, top_k, prioritize_rag=True)
+                    answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
+                    
+                    # Check if answer is now sufficient
+                    is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
+                    rag_hits = [h for h in merged_hits if h.get("source") == "rag"]
+                    high_quality_rag = [h for h in rag_hits if h.get("score", 0) >= rag_quality_threshold]
+                    
+                    emit_event("chat", f"After cycle {cycle_num}: {len(high_quality_rag)} high-quality RAG hits",
+                             payload={"high_quality": len(high_quality_rag), "is_sufficient": is_sufficient})
+                    
+                    if is_sufficient and len(high_quality_rag) >= min_high_quality_hits:
+                        emit_event("chat", f"Sufficient results after {cycle_num} cycles - stopping early",
+                                 payload={"cycles_completed": cycle_num})
+                        break
+                    
+                    # Generate new search queries with different angle for next cycle
+                    if cycle_num < max_search_cycles:
+                        new_angle_prompt = f"alternative search angle for: {question}"
+                        search_queries = llm.generate_seed_queries(new_angle_prompt, entity or "")
+                        emit_event("chat", f"Generated new search queries for cycle {cycle_num + 1}",
+                                 payload={"queries": search_queries})
+                else:
+                    # Cycle failed, still count it
+                    search_cycles_completed = cycle_num
+            
+            emit_event("chat", f"Search cycles completed: {search_cycles_completed}/{max_search_cycles}",
+                     payload={"cycles": search_cycles_completed, "total_urls": len(live_urls)})
+
             # Improve error messages
             answer = answer.replace(
                 "INSUFFICIENT_DATA",
@@ -487,7 +559,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
     
         emit_event("chat", "Chat completed successfully", 
                  payload={"session_id": session_id, "online_triggered": online_triggered, 
-                         "retry_attempted": retry_attempted})
+                         "retry_attempted": retry_attempted, "search_cycles": search_cycles_completed})
         
         return jsonify(
             {
@@ -501,6 +573,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 "crawl_reason": crawl_reason,
                 "rag_hits_count": len([h for h in merged_hits if h.get("source") == "rag"]),
                 "sql_hits_count": len([h for h in merged_hits if h.get("source") == "sql"]),
+                "search_cycles_completed": search_cycles_completed,
+                "max_search_cycles": max_search_cycles,
             }
         )
     

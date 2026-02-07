@@ -337,10 +337,12 @@ class SQLAlchemyStore(PersistenceStore):
                 )
                 
                 # If no exact match, try name-only lookup for potential merge
+                # Use .first() since multiple entities may have the same name with different kinds
                 if not existing:
                     existing = (
                         s.execute(select(Entity).where(func.lower(Entity.name) == name.lower()))
-                        .scalar_one_or_none()
+                        .scalars()
+                        .first()
                     )
                 
                 if existing:
