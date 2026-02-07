@@ -60,6 +60,11 @@
   - 🌐 **Crawler**: Intelligent web crawling with entity-awareness  
   - 📄 **Data**: Browse pages and recorded content
   - 🕸️ **Graph**: Interactive entity relationship visualization with unique entities
+    - **Deep RAG Graph Exploration**: Semantic entity search, graph traversal, and path finding
+    - **Semantic Search**: Find entities using hybrid SQL + embedding similarity matching
+    - **Graph Traversal**: Explore entity relationships with depth-based breadth-first search
+    - **Path Finding**: Discover shortest paths between any two entities in the knowledge graph
+    - **Visual Highlighting**: Interactive node selection and path visualization in 2D/3D
   - ✨ **Quality**: Entity gap analysis, deduplication, and data quality tools
   - 🎬 **Media**: Media processing (images, video, audio to text)
 - **Chrome Extension**: Record pages/elements/images directly in-browser, with fast search, preview, and session handling.
