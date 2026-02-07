@@ -13,18 +13,29 @@ export function renderChat(payload) {
   
   // Show RAG usage status
   const ragCount = payload.rag_hits_count || 0;
+  const graphCount = payload.graph_hits_count || 0;
   const sqlCount = payload.sql_hits_count || 0;
   
   if (ragCount > 0) {
     metaBadges.push(pill(`🧠 RAG: ${ragCount} semantic hits`, 'bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-200'));
   }
+  if (graphCount > 0) {
+    metaBadges.push(pill(`🕸️ Graph: ${graphCount} relation hits`, 'bg-teal-100 dark:bg-teal-900/30 text-teal-800 dark:text-teal-200'));
+  }
   if (sqlCount > 0) {
     metaBadges.push(pill(`📊 SQL: ${sqlCount} keyword hits`, 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200'));
   }
   
+  if (payload.retry_attempted) {
+    metaBadges.push(pill('🔄 Retry with paraphrasing', 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200'));
+  }
+  
   if (payload.online_search_triggered) {
     const reason = payload.crawl_reason || 'Insufficient local data';
-    metaBadges.push(pill(`🌐 Live Crawl: ${reason}`, 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'));
+    const cycles = payload.search_cycles_completed || 0;
+    const maxCycles = payload.max_search_cycles || 0;
+    const cycleInfo = cycles > 0 ? ` (${cycles}/${maxCycles} cycles)` : '';
+    metaBadges.push(pill(`🌐 Live Crawl: ${reason}${cycleInfo}`, 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'));
   }
   if (payload.entity) {
     metaBadges.push(pill(`Entity: ${payload.entity}`));
@@ -55,10 +66,17 @@ export function renderChat(payload) {
         <div class="space-y-2">
             ${(payload.context || []).length
               ? (payload.context || []).map(ctx => {
-                  const sourceClass = ctx.source === 'rag' 
-                    ? 'border-purple-200 dark:border-purple-800/50 bg-purple-50/50 dark:bg-purple-900/10'
-                    : 'border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900';
-                  const sourceLabel = ctx.source === 'rag' ? '🧠 RAG' : '📊 SQL';
+                  let sourceClass, sourceLabel;
+                  if (ctx.source === 'rag') {
+                    sourceClass = 'border-purple-200 dark:border-purple-800/50 bg-purple-50/50 dark:bg-purple-900/10';
+                    sourceLabel = '🧠 RAG';
+                  } else if (ctx.source === 'graph') {
+                    sourceClass = 'border-teal-200 dark:border-teal-800/50 bg-teal-50/50 dark:bg-teal-900/10';
+                    sourceLabel = '🕸️ Graph';
+                  } else {
+                    sourceClass = 'border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-900/10';
+                    sourceLabel = '📊 SQL';
+                  }
                   const scoreDisplay = ctx.score ? `Score: ${ctx.score.toFixed(3)}` : '';
                   const kindDisplay = ctx.kind ? ` • ${ctx.kind}` : '';
                   
