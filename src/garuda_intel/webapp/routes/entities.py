@@ -142,15 +142,16 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 is_stored_specific = stored_kind and stored_kind not in ("entity", "unknown")
                 effective_kind = stored_kind if is_stored_specific else (norm_kind or "entity")
                 node_key = str(ent_uuid) if ent_uuid else canon
-                # entity_kind in meta stores normalized kind, kind field stores effective kind for coloring
-                node_meta = {"entity_kind": norm_kind or effective_kind, "canonical": canon, "entity_id": ent_uuid, "source_id": node_key}
+                # entity_kind in meta stores normalized kind for filtering; falls back to effective_kind
+                node_meta = {"entity_kind": norm_kind or effective_kind or "entity", "canonical": canon, "entity_id": ent_uuid, "source_id": node_key}
                 if meta:
                     node_meta.update(meta)
                 node_id = ensure_node(node_key, raw_name, node_type=effective_kind, score=score, meta=node_meta, kind=effective_kind)
                 if effective_kind:
                     canonical_type[canon] = canonical_type.get(canon) or effective_kind
+                    # type may be updated here for canonical consistency across merged nodes;
+                    # kind is already set in ensure_node with smart update logic
                     nodes[node_id]["type"] = canonical_type[canon]
-                    # kind field is set in ensure_node, don't duplicate here
                 return node_id
 
             entry_type_map: dict[str, str] = {}
