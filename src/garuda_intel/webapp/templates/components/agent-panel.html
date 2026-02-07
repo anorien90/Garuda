@@ -124,7 +124,9 @@
   </article>
 </div>
 
-<script>
+<script type="module">
+import { getApiKey } from '/static/storage.js';
+
 document.addEventListener('DOMContentLoaded', () => {
   // Tab switching
   const tabs = document.querySelectorAll('.agent-tab');
@@ -169,9 +171,13 @@ document.addEventListener('DOMContentLoaded', () => {
     resultsContainer.innerHTML = '<div class="text-sm text-orange-600 p-4">🔄 Analyzing entities...</div>';
     
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      const apiKey = getApiKey();
+      if (apiKey) headers['X-API-Key'] = apiKey;
+      
       const response = await fetch('/api/agent/reflect', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify({
           target_entities: targetEntities,
           dry_run: dryRun
@@ -271,9 +277,13 @@ document.addEventListener('DOMContentLoaded', () => {
     resultsContainer.innerHTML = '<div class="text-sm text-teal-600 p-4">🗺️ Exploring entity graph...</div>';
     
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      const apiKey = getApiKey();
+      if (apiKey) headers['X-API-Key'] = apiKey;
+      
       const response = await fetch('/api/agent/explore', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify({
           root_entities: rootEntities,
           max_depth: maxDepth,
@@ -371,9 +381,13 @@ document.addEventListener('DOMContentLoaded', () => {
     resultsContainer.innerHTML = '<div class="text-sm text-purple-600 p-4">🔍 Searching multidimensionally...</div>';
     
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      const apiKey = getApiKey();
+      if (apiKey) headers['X-API-Key'] = apiKey;
+      
       const response = await fetch('/api/agent/search', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify({
           query: query,
           top_k: topK,
@@ -440,7 +454,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load agent status on page load
   async function loadAgentStatus() {
     try {
-      const response = await fetch('/api/agent/status');
+      const headers = {};
+      const apiKey = getApiKey();
+      if (apiKey) headers['X-API-Key'] = apiKey;
+      
+      const response = await fetch('/api/agent/status', { headers });
       const data = await response.json();
       
       const badge = document.getElementById('agent-status-badge');
