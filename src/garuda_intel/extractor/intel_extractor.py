@@ -88,8 +88,10 @@ class IntelExtractor:
                 preserve_paragraphs=True
             )
             chunks = [chunk.text for chunk in chunk_objects[:self.max_chunks]]
+            self.logger.info(f"Semantic chunking produced {len(chunks)} [{chunks[:5]}] chunks for extraction.")
         else:
             chunks = self.text_processor.chunk_text(cleaned_text, self.extraction_chunk_chars, self.max_chunks)
+            self.logger.info(f"Simple chunking produced {len(chunks)} chunks for extraction.")
 
         # Drop chunks that do not mention the entity name at all (reduces junk/prompt bleed).
         name_l = profile.name.lower().strip() if profile.name else ""

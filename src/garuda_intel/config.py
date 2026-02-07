@@ -60,7 +60,7 @@ class Settings:
     min_completeness_score: float = 0.3  # Minimum acceptable completeness score
     
     # Schema discovery settings
-    enable_schema_discovery: bool = False  # Use LLM to discover relevant fields dynamically
+    enable_schema_discovery: bool = True  # Use LLM to discover relevant fields dynamically
     cache_discovered_schemas: bool = True  # Cache schemas by entity type
     
     # Adaptive media processing settings
@@ -103,7 +103,7 @@ class Settings:
             use_semantic_chunking=_as_bool(os.environ.get("GARUDA_USE_SEMANTIC_CHUNKING"), True),
             enable_quality_validation=_as_bool(os.environ.get("GARUDA_ENABLE_QUALITY_VALIDATION"), True),
             min_completeness_score=float(os.environ.get("GARUDA_MIN_COMPLETENESS_SCORE", "0.3")),
-            enable_schema_discovery=_as_bool(os.environ.get("GARUDA_ENABLE_SCHEMA_DISCOVERY"), False),
+            enable_schema_discovery=_as_bool(os.environ.get("GARUDA_ENABLE_SCHEMA_DISCOVERY"), True),
             cache_discovered_schemas=_as_bool(os.environ.get("GARUDA_CACHE_DISCOVERED_SCHEMAS"), True),
             use_adaptive_media_processing=_as_bool(os.environ.get("GARUDA_USE_ADAPTIVE_MEDIA"), False),
             media_prefer_speed=_as_bool(os.environ.get("GARUDA_MEDIA_PREFER_SPEED"), False),

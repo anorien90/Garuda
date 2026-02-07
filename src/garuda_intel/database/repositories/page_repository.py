@@ -64,6 +64,7 @@ class PageRepository:
                 stmt = stmt.limit(limit)
                 results = s.execute(stmt).scalars().all()
                 return results or []
+
         except Exception as e:
             self.logger.error(f"get_all_pages failed: {e}")
             return []
