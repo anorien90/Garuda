@@ -347,21 +347,17 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
 
             # Deduplicate by URL, keeping highest-scoring version
             seen_urls = {}
-            unique_hits = []
+            no_url_hits = []
             for hit in all_hits:
                 url = hit.get("url", "")
-                if url and url in seen_urls:
-                    # Keep the higher-scoring version
-                    if hit.get("score", 0) > seen_urls[url].get("score", 0):
+                if url:
+                    if url not in seen_urls or hit.get("score", 0) > seen_urls[url].get("score", 0):
                         seen_urls[url] = hit
-                elif url:
-                    seen_urls[url] = hit
-                    unique_hits.append(hit)
                 else:
-                    unique_hits.append(hit)
+                    no_url_hits.append(hit)
 
-            # Replace entries with their highest-scoring versions
-            merged = [seen_urls.get(h.get("url", ""), h) if h.get("url") else h for h in unique_hits]
+            # Combine deduplicated URL hits with non-URL hits
+            merged = list(seen_urls.values()) + no_url_hits
             # Sort by score descending and take top results
             merged.sort(key=lambda x: x.get("score", 0), reverse=True)
             merged = merged[:limit]

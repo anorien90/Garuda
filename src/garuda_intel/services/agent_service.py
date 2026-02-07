@@ -888,19 +888,17 @@ class AgentService:
         self,
         question: str,
         entity: Optional[str] = None,
-        mode: str = "search",
         stream: bool = False,
     ) -> Dict[str, Any]:
         """
         Async chat response with agent capabilities.
         
         Always uses deep RAG search (embedding + graph) automatically.
-        Reflect and explore insights are included as supplementary metadata.
+        Reflect insights are included as supplementary metadata.
         
         Args:
             question: User question
             entity: Optional entity context
-            mode: Ignored - both modes are always enabled automatically
             stream: Whether to stream the response
             
         Returns:

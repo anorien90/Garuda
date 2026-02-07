@@ -80,8 +80,8 @@ class EntityMerger:
         Args:
             session_maker: SQLAlchemy session maker
             logger: Optional logger instance
-            vector_store: Optional vector store for deep RAG entity lookups
-            llm: Optional LLM extractor for embedding generation
+            vector_store: Optional VectorStore instance for deep RAG entity lookups
+            llm: Optional LLMIntelExtractor instance for embedding generation
         """
         self.Session = session_maker
         self.logger = logger or logging.getLogger(__name__)

@@ -229,7 +229,7 @@ def cmd_chat(settings: Settings, args: argparse.Namespace) -> None:
     import asyncio
     
     logger = setup_logging(args.verbose)
-    logger.info(f"Chat mode: {args.mode}")
+    logger.info("Chat: deep RAG search (embedding + graph + SQL)")
     
     _, _, _, agent = get_services(settings)
     
@@ -238,7 +238,6 @@ def cmd_chat(settings: Settings, args: argparse.Namespace) -> None:
         return await agent.chat_async(
             question=args.question,
             entity=args.entity,
-            mode=args.mode,
         )
     
     response = asyncio.run(run_chat())
@@ -247,7 +246,7 @@ def cmd_chat(settings: Settings, args: argparse.Namespace) -> None:
         print(json.dumps(response, indent=2, default=str))
     else:
         print("\n" + "=" * 60)
-        print(f"AGENT CHAT ({response.get('mode', 'search').upper()} MODE)")
+        print("AGENT CHAT (DEEP RAG)")
         print("=" * 60)
         
         print(f"\nQuestion: {response.get('question')}")
@@ -454,12 +453,6 @@ def main():
     chat_parser.add_argument(
         "question",
         help="Question to ask"
-    )
-    chat_parser.add_argument(
-        "-m", "--mode",
-        choices=["search", "reflect", "explore"],
-        default="search",
-        help="Chat mode (default: search)"
     )
     chat_parser.add_argument(
         "-e", "--entity",
