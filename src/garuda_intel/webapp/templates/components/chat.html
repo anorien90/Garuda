@@ -72,7 +72,9 @@
   <div id="chat-answer" class="space-y-3"></div>
 </article>
 
-<script>
+<script type="module">
+import { getApiKey } from '/static/storage.js';
+
 document.addEventListener('DOMContentLoaded', () => {
   const classicBtn = document.getElementById('chat-mode-classic');
   const advancedBtn = document.getElementById('chat-mode-advanced');
@@ -124,9 +126,13 @@ document.addEventListener('DOMContentLoaded', () => {
       answerContainer.innerHTML = '<div class="p-4 text-sm text-purple-600">🔄 Processing with Advanced RAG...</div>';
       
       try {
+        const headers = { 'Content-Type': 'application/json' };
+        const apiKey = getApiKey();
+        if (apiKey) headers['X-API-Key'] = apiKey;
+        
         const response = await fetch('/api/agent/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: headers,
           body: JSON.stringify({
             question: question,
             entity: entity,
