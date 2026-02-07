@@ -98,6 +98,16 @@
   - Full pipeline execution per cycle (crawl → extract → embed → RAG query)
   - Early termination when sufficient high-quality results found
   - Different search angles per cycle for broader coverage
+- **🤖 NEW: Intelligent Agent Mode**: 
+  - **Reflect & Refine**: Merge duplicate entities (Microsoft Corp → Microsoft Corporation), validate data quality
+  - **Explore & Prioritize**: Analyze entity graphs, find high-priority entities based on relation depth
+  - **Multidimensional RAG Search**: Combine embedding search with graph traversal for comprehensive results
+  - Async chat with agent capabilities for streaming responses
+  - CLI tool (`garuda-agent`) for command-line agent operations
+- **⏱️ NEW: Extended LLM Timeouts**: 
+  - Default timeouts increased to 15 minutes for long-running summarization
+  - Configurable via environment variables
+  - Hierarchical summarization for large texts that exceed context windows
 
 ---
 
@@ -113,6 +123,7 @@
 - 🧠 **Dynamic Intelligence Gathering**: Gap-aware crawling, cross-entity inference, and adaptive strategies.
 - 🔄 **Dynamic Entity Kind System**: Entity kinds with inheritance, automatic registration, and type hierarchy.
 - 🔁 **Multi-cycle Chat Pipeline**: Configurable search cycles with full pipeline execution.
+- 🤖 **Agent Mode**: Intelligent agent for data exploration, entity merging, and multidimensional search.
 
 ---
 
@@ -588,6 +599,17 @@ GARUDA_CHAT_MAX_PAGES=5                # Max pages per cycle (default: 5)
 GARUDA_CHAT_RAG_QUALITY_THRESHOLD=0.7  # Min RAG similarity score (default: 0.7)
 GARUDA_CHAT_USE_SELENIUM=false         # Use Selenium for chat crawling
 GARUDA_CHAT_EXTRACT_RELATED_ENTITIES=true  # Extract related entities during crawl
+
+# LLM timeout settings (new in v2.3) - longer timeouts for reliability
+GARUDA_LLM_SUMMARIZE_TIMEOUT=900       # 15 minutes default for summarization
+GARUDA_LLM_EXTRACT_TIMEOUT=900         # 15 minutes default for extraction
+GARUDA_LLM_REFLECT_TIMEOUT=300         # 5 minutes default for reflection
+GARUDA_LLM_SUMMARIZE_RETRIES=3         # Number of retry attempts
+
+# Agent mode settings (new in v2.3)
+GARUDA_AGENT_ENABLED=true              # Enable agent mode
+GARUDA_AGENT_MAX_EXPLORATION_DEPTH=3   # Max relation depth for exploration
+GARUDA_AGENT_ENTITY_MERGE_THRESHOLD=0.85  # Similarity threshold for merging
 ```
 
 ---

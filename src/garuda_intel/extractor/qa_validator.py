@@ -19,7 +19,7 @@ class QAValidator:
         self,
         ollama_url: str = "http://localhost:11434/api/generate",
         model: str = "granite3.1-dense:8b",
-        reflect_timeout: int = 30,
+        reflect_timeout: int = 300,  # 5 minutes default
     ):
         self.ollama_url = ollama_url
         self.model = model
