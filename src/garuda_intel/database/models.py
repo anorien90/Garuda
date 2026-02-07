@@ -513,3 +513,254 @@ Page.media_content = relationship(
     back_populates="page",
     foreign_keys="MediaContent.page_id",
 )
+
+
+class DynamicFieldDefinition(BasicDataEntry):
+    """
+    Stores dynamically discovered field definitions.
+    
+    This model tracks fields that are discovered through LLM analysis
+    and trial-and-error learning. Fields can be associated with entity
+    types (e.g., 'company', 'person') and evolve over time.
+    
+    Example: When analyzing a person, the system might discover that
+    'address' is a useful field with sub-fields like postal_code, city, etc.
+    """
+    __tablename__ = "dynamic_field_definitions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    # Field identification
+    field_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Type classification
+    entity_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    field_type: Mapped[str] = mapped_column(String(50), default="text")  # text, number, date, list, object
+    
+    # Discovery tracking
+    importance: Mapped[str] = mapped_column(String(20), default="supplementary")  # critical, important, supplementary
+    discovery_count: Mapped[int] = mapped_column(Integer, default=1)  # Times this field was discovered
+    success_rate: Mapped[float] = mapped_column(Float, default=0.0)  # Extraction success rate
+    
+    # Schema definition for complex fields
+    schema_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    
+    # Example values and validation
+    example_values: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    validation_pattern: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    
+    # Parent field for hierarchical structures (e.g., address.city)
+    parent_field_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("dynamic_field_definitions.id", ondelete="SET NULL"), nullable=True
+    )
+    
+    # Metadata
+    source: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # llm, heuristic, user
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # Self-referential relationship for hierarchical fields
+    parent_field: Mapped[Optional["DynamicFieldDefinition"]] = relationship(
+        "DynamicFieldDefinition",
+        foreign_keys=[parent_field_id],
+        remote_side="DynamicFieldDefinition.id",
+        backref="sub_fields"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("field_name", "entity_type", name="uq_field_name_entity_type"),
+        Index('ix_dynamic_field_entity_importance', 'entity_type', 'importance'),
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "dynamic_field_definition",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "id": str(self.id),
+            "field_name": self.field_name,
+            "display_name": self.display_name,
+            "description": self.description,
+            "entity_type": self.entity_type,
+            "field_type": self.field_type,
+            "importance": self.importance,
+            "discovery_count": self.discovery_count,
+            "success_rate": self.success_rate,
+            "schema_json": self.schema_json,
+            "example_values": self.example_values,
+            "validation_pattern": self.validation_pattern,
+            "parent_field_id": str(self.parent_field_id) if self.parent_field_id else None,
+            "source": self.source,
+            "is_active": self.is_active,
+            "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class EntityFieldValue(BasicDataEntry):
+    """
+    Stores discovered field values for entities.
+    
+    This model provides a flexible key-value store for entity attributes
+    that were discovered dynamically rather than pre-defined.
+    
+    Supports:
+    - Versioning/history tracking through timestamps
+    - Confidence scoring for extracted values
+    - Source tracking for provenance
+    - Multiple values per field (through separate records)
+    """
+    __tablename__ = "entity_field_values"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    
+    # Entity association
+    entity_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    
+    # Field definition association
+    field_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("dynamic_field_definitions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    
+    # For backward compatibility and quick lookups
+    field_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    
+    # Value storage - supports different types
+    value_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    value_number: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    value_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    value_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    # Quality metrics
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    extraction_method: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # llm, regex, heuristic
+    
+    # Provenance
+    source_page_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+    
+    # Version tracking
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True)
+    superseded_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("entity_field_values.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Relationships
+    entity: Mapped["Entity"] = relationship(
+        "Entity", foreign_keys=[entity_id], back_populates="dynamic_field_values"
+    )
+    field_definition: Mapped[Optional["DynamicFieldDefinition"]] = relationship(
+        "DynamicFieldDefinition", foreign_keys=[field_definition_id]
+    )
+    source_page: Mapped[Optional["Page"]] = relationship(
+        "Page", foreign_keys=[source_page_id]
+    )
+
+    __table_args__ = (
+        Index('ix_entity_field_current', 'entity_id', 'field_name', 'is_current'),
+        Index('ix_entity_field_confidence', 'entity_id', 'confidence'),
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "entity_field_value",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+    def get_value(self) -> Any:
+        """Get the value in its appropriate type."""
+        if self.value_json is not None:
+            return self.value_json
+        if self.value_number is not None:
+            return self.value_number
+        if self.value_date is not None:
+            return self.value_date
+        return self.value_text
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "id": str(self.id),
+            "entity_id": str(self.entity_id),
+            "field_definition_id": str(self.field_definition_id) if self.field_definition_id else None,
+            "field_name": self.field_name,
+            "value": self.get_value(),
+            "confidence": self.confidence,
+            "extraction_method": self.extraction_method,
+            "source_page_id": str(self.source_page_id) if self.source_page_id else None,
+            "source_url": self.source_url,
+            "is_current": self.is_current,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class FieldDiscoveryLog(BasicDataEntry):
+    """
+    Tracks field discovery attempts and outcomes for adaptive learning.
+    
+    This model enables the system to learn which fields are valuable
+    for which entity types and which extraction methods work best.
+    """
+    __tablename__ = "field_discovery_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    
+    # What was discovered
+    field_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    entity_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    
+    # Discovery context
+    page_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True
+    )
+    entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("entities.id", ondelete="SET NULL"), nullable=True
+    )
+    
+    # Outcome tracking
+    was_successful: Mapped[bool] = mapped_column(Boolean, default=False)
+    extraction_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    
+    # Method used
+    discovery_method: Mapped[str] = mapped_column(String(50), default="llm")  # llm, pattern, user
+    extraction_method: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    
+    # Context for learning
+    context_snippet: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    extraction_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Metadata
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index('ix_discovery_log_field_entity', 'field_name', 'entity_type'),
+        Index('ix_discovery_log_success', 'was_successful', 'discovery_method'),
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "field_discovery_log",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+
+# Add back-reference to Entity for dynamic field values
+Entity.dynamic_field_values = relationship(
+    "EntityFieldValue",
+    back_populates="entity",
+    foreign_keys="EntityFieldValue.entity_id",
+    cascade="all, delete-orphan",
+)
