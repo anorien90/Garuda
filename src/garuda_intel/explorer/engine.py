@@ -23,6 +23,13 @@ from ..extractor.iterative_refiner import IterativeRefiner
 from ..extractor.strategy_selector import StrategySelector
 
 
+# Configuration constants for relationship inference
+# Maximum characters of context to use for relationship inference (balance between coverage and performance)
+MAX_RELATIONSHIP_INFERENCE_CONTEXT = 8000
+# Confidence score assigned to inferred relationships (lower than LLM-extracted relationships)
+INFERRED_RELATIONSHIP_CONFIDENCE = 60.0
+
+
 def _uuid5_url(url: str) -> str:
     return str(uuid5(NAMESPACE_URL, url))
 
@@ -282,6 +289,30 @@ class IntelligentExplorer:
                 extracted_entities.extend(
                     self.llm_extractor.extract_entities_from_finding(raw_intel)
                 )
+            
+            # Infer additional relationships between extracted entities using context
+            if extracted_entities and hasattr(self.llm_extractor, 'infer_relationships_from_entities'):
+                inferred_rels = self.llm_extractor.infer_relationships_from_entities(
+                    entities=extracted_entities,
+                    context_text=text_content[:MAX_RELATIONSHIP_INFERENCE_CONTEXT] if text_content else ""
+                )
+                # Add inferred relationships to the findings for persistence
+                if inferred_rels:
+                    self.logger.info(f"Inferred {len(inferred_rels)} additional relationships from entity context")
+                    # Create a synthetic finding for inferred relationships
+                    if verified_findings:
+                        # Add to last finding
+                        if "relationships" not in verified_findings[-1]:
+                            verified_findings[-1]["relationships"] = []
+                        verified_findings[-1]["relationships"].extend(inferred_rels)
+                    else:
+                        # Create new finding for inferred relationships
+                        inferred_finding = {
+                            "basic_info": {},
+                            "relationships": inferred_rels,
+                        }
+                        verified_findings.append(inferred_finding)
+                        verified_findings_with_scores.append((inferred_finding, INFERRED_RELATIONSHIP_CONFIDENCE))
 
         summary = (
             self.llm_extractor.summarize_page(text_content)
