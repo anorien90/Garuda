@@ -22,6 +22,7 @@ from .models import (
     Relationship,
 )
 from ..types.page.fingerprint import PageFingerprint
+from ..types.entity.registry import get_registry, EntityKindRegistry
 from .helpers import uuid5_url as _uuid5_url, uuid4 as _uuid4, as_dict as _as_dict
 from .repositories.page_repository import PageRepository
 
@@ -30,17 +31,15 @@ class SQLAlchemyStore(PersistenceStore):
     # Constants for graph traversal
     MAX_RECURSION_DEPTH = 10  # Maximum depth to prevent infinite loops in graph traversal
     
-    # Kind priority for cross-kind entity deduplication
-    # Lower values = higher priority. Used to decide which entity kind to keep when merging.
-    ENTITY_KIND_PRIORITY = {
-        'person': 1, 
-        'org': 2, 
-        'organization': 2, 
-        'company': 3, 
-        'product': 4, 
-        'location': 5, 
-        'event': 6
-    }
+    @property
+    def ENTITY_KIND_PRIORITY(self) -> Dict[str, int]:
+        """
+        Get entity kind priorities from the dynamic registry.
+        
+        This property provides backwards compatibility while using the
+        centralized registry for kind priorities.
+        """
+        return get_registry().get_kind_priority_map()
     
     def __init__(self, url: str = "sqlite:///crawler.db"):
         self.engine = create_engine(url, future=True)
@@ -357,6 +356,51 @@ class SQLAlchemyStore(PersistenceStore):
                 }
                 for r in rows
             ]
+
+    def get_unique_entity_kinds(self) -> List[str]:
+        """
+        Get all unique entity kinds currently in the database.
+        
+        This is used to sync the registry with discovered kinds and
+        to provide the UI with available filter options.
+        
+        Returns:
+            List of unique kind names
+        """
+        with self.Session() as s:
+            stmt = select(Entity.kind).distinct().where(Entity.kind.isnot(None))
+            rows = s.execute(stmt).scalars().all()
+            return sorted([k for k in rows if k])
+    
+    def get_unique_relation_types(self) -> List[str]:
+        """
+        Get all unique relation types currently in the database.
+        
+        Returns:
+            List of unique relation type names
+        """
+        with self.Session() as s:
+            stmt = select(Relationship.relation_type).distinct().where(Relationship.relation_type.isnot(None))
+            rows = s.execute(stmt).scalars().all()
+            return sorted([r for r in rows if r])
+    
+    def sync_registry_from_database(self):
+        """
+        Sync the entity kind registry with kinds discovered in the database.
+        
+        This ensures the registry stays current with dynamically discovered kinds.
+        """
+        registry = get_registry()
+        db_kinds = self.get_unique_entity_kinds()
+        registry.sync_from_database(db_kinds)
+        
+        db_relations = self.get_unique_relation_types()
+        for rel_type in db_relations:
+            if not registry.get_relation(rel_type):
+                registry.register_relation(
+                    name=rel_type,
+                    description=f"Dynamically discovered relation type: {rel_type}",
+                )
 
     # -------- Refresh helpers --------
     def get_pending_refresh(self, limit: int = 50) -> List[Dict]:
@@ -1226,8 +1270,9 @@ class SQLAlchemyStore(PersistenceStore):
                         self.logger.info(f"Merged duplicate: {sim_entity.name} -> {entity.name}")
         
         # Cross-kind deduplication: merge generic 'entity' kind into specific kinds
-        # Specific kinds that should absorb generic 'entity' duplicates
-        specific_kinds = {'person', 'org', 'company', 'organization', 'product', 'location', 'event'}
+        # Get specific kinds from registry (all kinds except 'entity' and 'unknown')
+        registry = get_registry()
+        specific_kinds = {k for k in registry.get_kind_names() if k not in ('entity', 'unknown')}
         
         # Refresh entities after within-kind deduplication
         with self.Session() as s:

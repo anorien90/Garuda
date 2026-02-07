@@ -28,6 +28,7 @@ from ..utils.helpers import (
 )
 from ...database import models as db_models
 from ...search import EntityProfile, EntityType, CrawlMode
+from ...types.entity.registry import get_registry
 
 
 bp = Blueprint('entities', __name__, url_prefix='/api/entities')
@@ -48,13 +49,24 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
         depth_limit = safe_int(request.args.get("depth"), 1)
         include_meta = (request.args.get("include_meta") or "1").strip() != "0"
 
+        # Get entity kinds from registry plus non-entity node types
+        registry = get_registry()
+        entity_kinds = set(registry.get_kind_names())
+        non_entity_types = {"page", "intel", "image", "media", "semantic-snippet", "seed"}
+        default_node_types = entity_kinds | non_entity_types
+        
+        # Get relation types from registry plus system relations
+        relation_types = set(registry.get_relation_names())
+        system_edge_kinds = {"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet", "seed-entity"}
+        default_edge_kinds = relation_types | system_edge_kinds
+
         node_type_filters = _parse_list_param(
             request.args.get("node_types"),
-            default={"entity", "person", "org", "organization", "corporation", "location", "product", "event", "page", "intel", "image", "media", "semantic-snippet", "seed"},
+            default=default_node_types,
         )
         edge_kind_filters = _parse_list_param(
             request.args.get("edge_kinds"),
-            default={"cooccurrence", "page-mentions", "intel-mentions", "intel-primary", "page-image", "link", "relationship", "semantic-hit", "page-entity", "page-media", "entity-media", "semantic-snippet", "seed-entity", "has-person", "has-location", "has-product", "participated-in-event", "works-at", "located-at", "produced-by", "associated-with-person", "related-entity"},
+            default=default_edge_kinds,
         )
 
         emit_event(
