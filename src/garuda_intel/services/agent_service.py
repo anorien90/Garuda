@@ -786,17 +786,28 @@ class AgentService:
                     result_item = {
                         "source": "graph",
                         "score": 0.5,  # Base score for graph results
-                        "entity": entity.name,
+                        "entity": entity.name if entity.name else "",
                         "entity_id": entity_id,
-                        "kind": entity.kind,
+                        "kind": entity.kind if entity.kind else "unknown",
                         "text": "",
+                        "url": "",
                     }
                     
                     if intel and intel.data:
-                        result_item["text"] = str(intel.data)[:500]
+                        # Convert nested data structures to readable JSON format
+                        import json
+                        try:
+                            if isinstance(intel.data, (dict, list)):
+                                result_item["text"] = json.dumps(intel.data, ensure_ascii=False, separators=(',', ':'))[:500]
+                            else:
+                                result_item["text"] = str(intel.data)[:500]
+                        except (TypeError, ValueError):
+                            # Fallback to string conversion if JSON serialization fails
+                            result_item["text"] = str(intel.data)[:500]
+                        
                         if intel.page_id:
                             page = session.get(Page, intel.page_id)
-                            if page:
+                            if page and page.url:
                                 result_item["url"] = page.url
                     
                     results.append(result_item)
@@ -848,15 +859,32 @@ class AgentService:
         graph_results: List[Dict[str, Any]],
         limit: int,
     ) -> List[Dict[str, Any]]:
-        """Combine and deduplicate results from different sources."""
+        """Combine and deduplicate results from different sources.
+        
+        Merges embedding and graph results, deduplicating by URL/entity_id/text,
+        and combining scores for items found in multiple sources.
+        """
         combined = {}
         
         # Add embedding results with boost
         for r in embedding_results:
+            # Create a unique key for deduplication
             key = r.get("url") or r.get("entity_id") or r.get("text", "")[:50]
             if key:
-                combined[key] = r
-                combined[key]["combined_score"] = r.get("score", 0) * 1.2  # Boost embedding results
+                # Create a clean copy to avoid modifying original
+                result_copy = {
+                    "source": r.get("source", "embedding"),
+                    "score": r.get("score", 0),
+                    "url": r.get("url", ""),
+                    "text": r.get("text", ""),
+                    "entity": r.get("entity", ""),
+                    "kind": r.get("kind", ""),
+                    "page_id": r.get("page_id", ""),
+                    "entity_id": r.get("entity_id", ""),
+                }
+                combined[key] = result_copy
+                combined[key]["combined_score"] = result_copy["score"] * 1.2  # Boost embedding results
+                combined[key]["source_types"] = "embedding"
         
         # Add graph results
         for r in graph_results:
@@ -865,11 +893,22 @@ class AgentService:
                 if key in combined:
                     # Merge scores if already exists
                     combined[key]["combined_score"] += r.get("score", 0)
-                    combined[key]["sources"] = ["embedding", "graph"]
+                    combined[key]["source_types"] = "embedding+graph"
                 else:
-                    combined[key] = r
-                    combined[key]["combined_score"] = r.get("score", 0)
-                    combined[key]["sources"] = ["graph"]
+                    # Create a clean copy
+                    result_copy = {
+                        "source": r.get("source", "graph"),
+                        "score": r.get("score", 0),
+                        "url": r.get("url", ""),
+                        "text": r.get("text", ""),
+                        "entity": r.get("entity", ""),
+                        "kind": r.get("kind", ""),
+                        "page_id": r.get("page_id", ""),
+                        "entity_id": r.get("entity_id", ""),
+                    }
+                    combined[key] = result_copy
+                    combined[key]["combined_score"] = result_copy["score"]
+                    combined[key]["source_types"] = "graph"
         
         # Sort by combined score
         sorted_results = sorted(

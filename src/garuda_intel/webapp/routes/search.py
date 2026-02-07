@@ -323,15 +323,41 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                     include_graph=True,
                     graph_depth=2,
                 )
+                # Process and flatten graph results
                 for r in graph_result.get("combined_results", []):
-                    graph_hits.append({
-                        "url": r.get("url", ""),
-                        "snippet": r.get("text", ""),
-                        "score": r.get("combined_score", r.get("score", 0)),
-                        "source": "graph",
-                        "kind": r.get("kind", "unknown"),
-                        "entity": r.get("entity", ""),
-                    })
+                    # Ensure all fields are properly extracted and flattened
+                    # Handle potential nested structures by explicitly extracting needed fields
+                    try:
+                        url = r.get("url", "") or ""
+                        text = r.get("text", "") or ""
+                        entity = r.get("entity", "") or ""
+                        kind = r.get("kind", "") or "unknown"
+                        
+                        # Get score with proper fallback chain
+                        score = r.get("combined_score")
+                        if score is None:
+                            score = r.get("score", 0)
+                        if not isinstance(score, (int, float)):
+                            score = 0
+                        
+                        # Ensure text is a string, not a nested structure
+                        if isinstance(text, (dict, list)):
+                            import json
+                            text = json.dumps(text, ensure_ascii=False, separators=(',', ':'))
+                        text = str(text)[:1000]  # Limit text length
+                        
+                        graph_hits.append({
+                            "url": url,
+                            "snippet": text,
+                            "score": score,
+                            "source": "graph",
+                            "kind": kind,
+                            "entity": entity,
+                        })
+                    except Exception as result_error:
+                        logger.warning(f"Failed to process graph result item: {result_error}")
+                        continue
+                
                 if graph_hits:
                     emit_event("chat", f"Graph search found {len(graph_hits)} results",
                              payload={"count": len(graph_hits)})
