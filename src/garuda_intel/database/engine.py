@@ -1152,6 +1152,11 @@ class SQLAlchemyStore(PersistenceStore):
         """
         Automatically find and merge duplicate entities.
         
+        This method performs two levels of deduplication:
+        1. Within-kind deduplication: Merges entities with similar names within the same kind
+        2. Cross-kind deduplication: Merges generic 'entity' kind entities into more specific
+           kinds (person, org, company, etc.) when they have the same name
+        
         Note: This implementation has O(n²) complexity within each entity kind.
         For large datasets (>1000 entities per kind), consider implementing
         clustering-based deduplication using embeddings.
@@ -1176,15 +1181,15 @@ class SQLAlchemyStore(PersistenceStore):
                     entities_by_kind[kind] = []
                 entities_by_kind[kind].append(entity)
         
-        # Process each kind separately
+        # Track which entities have been merged globally
+        global_merged_ids = set()
+        
+        # Process each kind separately (within-kind deduplication)
         for kind, entities in entities_by_kind.items():
             self.logger.info(f"Deduplicating {len(entities)} entities of kind '{kind}'")
             
-            # Track which entities have been merged
-            merged_ids = set()
-            
             for i, entity in enumerate(entities):
-                if str(entity.id) in merged_ids:
+                if str(entity.id) in global_merged_ids:
                     continue
                 
                 # Find similar entities
@@ -1199,14 +1204,68 @@ class SQLAlchemyStore(PersistenceStore):
                 for sim_entity in similar:
                     if str(sim_entity.id) == str(entity.id):
                         continue
-                    if str(sim_entity.id) in merged_ids:
+                    if str(sim_entity.id) in global_merged_ids:
                         continue
                     
                     # Merge sim_entity into entity
                     if self.merge_entities(str(sim_entity.id), str(entity.id)):
                         merged_map[str(sim_entity.id)] = str(entity.id)
-                        merged_ids.add(str(sim_entity.id))
+                        global_merged_ids.add(str(sim_entity.id))
                         self.logger.info(f"Merged duplicate: {sim_entity.name} -> {entity.name}")
+        
+        # Cross-kind deduplication: merge generic 'entity' kind into specific kinds
+        # Specific kinds that should absorb generic 'entity' duplicates
+        specific_kinds = {'person', 'org', 'company', 'organization', 'product', 'location', 'event'}
+        
+        # Refresh entities after within-kind deduplication
+        with self.Session() as s:
+            all_entities = s.execute(select(Entity)).scalars().all()
+            entities_by_kind = {}
+            for entity in all_entities:
+                kind = entity.kind or "unknown"
+                if kind not in entities_by_kind:
+                    entities_by_kind[kind] = []
+                entities_by_kind[kind].append(entity)
+        
+        # Get generic entities to potentially merge
+        generic_entities = entities_by_kind.get('entity', [])
+        
+        if generic_entities:
+            self.logger.info(f"Cross-kind deduplication: checking {len(generic_entities)} generic 'entity' entities")
+            
+            # Build a name -> (entity, kind) lookup for specific entities
+            specific_entity_by_name = {}
+            for kind in specific_kinds:
+                for entity in entities_by_kind.get(kind, []):
+                    if str(entity.id) not in global_merged_ids:
+                        name_key = entity.name.lower().strip() if entity.name else ''
+                        if name_key:
+                            # Prefer more specific kinds; if same name exists in multiple specific kinds,
+                            # prefer person > org > company > others
+                            kind_priority = {'person': 1, 'org': 2, 'organization': 2, 'company': 3, 
+                                           'product': 4, 'location': 5, 'event': 6}
+                            current_priority = kind_priority.get(kind, 99)
+                            existing_entry = specific_entity_by_name.get(name_key)
+                            if not existing_entry or kind_priority.get(existing_entry[1], 99) > current_priority:
+                                specific_entity_by_name[name_key] = (entity, kind)
+            
+            # Merge generic entities into specific ones
+            for generic_entity in generic_entities:
+                if str(generic_entity.id) in global_merged_ids:
+                    continue
+                
+                name_key = generic_entity.name.lower().strip() if generic_entity.name else ''
+                if name_key and name_key in specific_entity_by_name:
+                    specific_entity, specific_kind = specific_entity_by_name[name_key]
+                    
+                    # Merge generic into specific
+                    if self.merge_entities(str(generic_entity.id), str(specific_entity.id)):
+                        merged_map[str(generic_entity.id)] = str(specific_entity.id)
+                        global_merged_ids.add(str(generic_entity.id))
+                        self.logger.info(
+                            f"Cross-kind merge: '{generic_entity.name}' (entity) -> "
+                            f"'{specific_entity.name}' ({specific_kind})"
+                        )
         
         self.logger.info(f"Deduplication complete: {len(merged_map)} entities merged")
         return merged_map

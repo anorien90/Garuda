@@ -398,7 +398,14 @@ class ExtractionQualityValidator:
             seen_names = set()
             unique_persons = []
             for person in corrected['persons']:
-                name = person.get('name', '').lower()
+                # Handle both dict and string items
+                if isinstance(person, dict):
+                    name = person.get('name', '').lower()
+                elif isinstance(person, str):
+                    name = person.strip().lower()
+                else:
+                    name = str(person).strip().lower() if person else ''
+                
                 if name and name not in seen_names:
                     seen_names.add(name)
                     unique_persons.append(person)
@@ -409,7 +416,14 @@ class ExtractionQualityValidator:
             seen_locations = set()
             unique_locations = []
             for loc in corrected['locations']:
-                location = loc.get('location', '').lower()
+                # Handle both dict and string items
+                if isinstance(loc, dict):
+                    location = loc.get('location', '').lower()
+                elif isinstance(loc, str):
+                    location = loc.strip().lower()
+                else:
+                    location = str(loc).strip().lower() if loc else ''
+                
                 if location and location not in seen_locations:
                     seen_locations.add(location)
                     unique_locations.append(loc)

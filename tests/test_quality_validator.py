@@ -488,3 +488,38 @@ class TestExtractionQualityValidator:
         assert report is not None
         assert report.overall_score >= 0.0
         assert report.consistency_score >= 0.0
+
+    def test_remove_duplicates_with_string_items(self, validator):
+        """Test that _remove_duplicates handles string items in lists without raising AttributeError."""
+        intel = {
+            "basic_info": {"description": "Test"},
+            "persons": [
+                "Satya Nadella",  # String item
+                {"name": "Satya Nadella", "role": "CEO"},  # Dict with same name - should be deduped
+                {"name": "Bill Gates", "role": "Founder"},
+                "Bill Gates",  # String duplicate - should be deduped
+            ],
+            "locations": [
+                "New York",  # String item
+                {"location": "New York"},  # Dict with same location - should be deduped
+                "Boston",
+            ],
+            "metrics": [],
+            "financials": [],
+            "products": [],
+            "events": [],
+            "jobs": [],
+            "relationships": []
+        }
+        
+        # Should not raise AttributeError when calling auto_correct
+        corrected = validator.auto_correct(intel, [])
+        
+        # Should complete without errors
+        assert corrected is not None
+        
+        # Should have deduplicated persons (by name, case-insensitive)
+        assert len(corrected["persons"]) == 2  # Satya Nadella and Bill Gates
+        
+        # Should have deduplicated locations
+        assert len(corrected["locations"]) == 2  # New York and Boston
