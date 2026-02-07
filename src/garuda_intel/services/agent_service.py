@@ -1284,7 +1284,7 @@ class AgentService:
             from .adaptive_crawler import AdaptiveCrawlerService
             from ..discover.crawl_learner import CrawlLearner
 
-            crawl_learner = CrawlLearner()
+            crawl_learner = CrawlLearner(store=self.store)
             crawler = AdaptiveCrawlerService(
                 store=self.store,
                 llm=self.llm,

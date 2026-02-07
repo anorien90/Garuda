@@ -631,6 +631,18 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             if _looks_like_refusal(answer):
                 answer = "I searched online but still couldn't find a definitive answer."
     
+        # Final fallback - ensure there's always an answer
+        if not answer or _looks_like_refusal(answer):
+            if merged_hits:
+                # Try to build an answer from context
+                snippets = [h.get("snippet", "") for h in merged_hits[:3] if h.get("snippet")]
+                if snippets:
+                    answer = f"Based on the available information:\n\n" + "\n\n".join(snippets)
+                else:
+                    answer = "I searched through local data and online sources but couldn't find a definitive answer. Try refining your question or providing more context."
+            else:
+                answer = "No relevant information was found in local data or online sources. Try a different question or crawl some relevant pages first."
+    
         emit_event("chat", "Chat completed successfully", 
                  payload={"session_id": session_id, "online_triggered": online_triggered, 
                          "retry_attempted": retry_attempted, "search_cycles": search_cycles_completed})
