@@ -30,6 +30,18 @@ class SQLAlchemyStore(PersistenceStore):
     # Constants for graph traversal
     MAX_RECURSION_DEPTH = 10  # Maximum depth to prevent infinite loops in graph traversal
     
+    # Kind priority for cross-kind entity deduplication
+    # Lower values = higher priority. Used to decide which entity kind to keep when merging.
+    ENTITY_KIND_PRIORITY = {
+        'person': 1, 
+        'org': 2, 
+        'organization': 2, 
+        'company': 3, 
+        'product': 4, 
+        'location': 5, 
+        'event': 6
+    }
+    
     def __init__(self, url: str = "sqlite:///crawler.db"):
         self.engine = create_engine(url, future=True)
         self.logger = logging.getLogger(__name__)
@@ -1242,11 +1254,9 @@ class SQLAlchemyStore(PersistenceStore):
                         if name_key:
                             # Prefer more specific kinds; if same name exists in multiple specific kinds,
                             # prefer person > org > company > others
-                            kind_priority = {'person': 1, 'org': 2, 'organization': 2, 'company': 3, 
-                                           'product': 4, 'location': 5, 'event': 6}
-                            current_priority = kind_priority.get(kind, 99)
+                            current_priority = self.ENTITY_KIND_PRIORITY.get(kind, 99)
                             existing_entry = specific_entity_by_name.get(name_key)
-                            if not existing_entry or kind_priority.get(existing_entry[1], 99) > current_priority:
+                            if not existing_entry or self.ENTITY_KIND_PRIORITY.get(existing_entry[1], 99) > current_priority:
                                 specific_entity_by_name[name_key] = (entity, kind)
             
             # Merge generic entities into specific ones

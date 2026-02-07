@@ -404,6 +404,7 @@ class ExtractionQualityValidator:
                 elif isinstance(person, str):
                     name = person.strip().lower()
                 else:
+                    self.logger.warning(f"Unexpected type in persons list: {type(person)}")
                     name = str(person).strip().lower() if person else ''
                 
                 if name and name not in seen_names:
@@ -422,6 +423,7 @@ class ExtractionQualityValidator:
                 elif isinstance(loc, str):
                     location = loc.strip().lower()
                 else:
+                    self.logger.warning(f"Unexpected type in locations list: {type(loc)}")
                     location = str(loc).strip().lower() if loc else ''
                 
                 if location and location not in seen_locations:
