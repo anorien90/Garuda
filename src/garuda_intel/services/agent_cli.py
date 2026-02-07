@@ -284,24 +284,21 @@ def cmd_interactive(settings: Settings, args: argparse.Namespace) -> None:
     _, _, _, agent = get_services(settings)
     
     print("\n" + "=" * 60)
-    print("GARUDA AGENT - INTERACTIVE MODE")
+    print("GARUDA AGENT - DEEP RAG INTERACTIVE MODE")
     print("=" * 60)
+    print("\nDeep RAG search (embedding + graph + SQL) is always active.")
     print("\nCommands:")
-    print("  /mode <search|reflect|explore>  - Change mode")
     print("  /entity <name>                  - Set entity context")
     print("  /help                           - Show help")
     print("  /quit or /exit                  - Exit")
-    print("\nCurrent mode: search")
     print("-" * 60)
     
-    current_mode = "search"
     current_entity = None
     
     async def process_question(question: str) -> dict:
         return await agent.chat_async(
             question=question,
             entity=current_entity,
-            mode=current_mode,
         )
     
     while True:
@@ -320,22 +317,15 @@ def cmd_interactive(settings: Settings, args: argparse.Namespace) -> None:
                 if cmd in ["/quit", "/exit", "/q"]:
                     print("\nGoodbye!")
                     break
-                elif cmd == "/mode":
-                    if arg in ["search", "reflect", "explore"]:
-                        current_mode = arg
-                        print(f"Mode changed to: {current_mode}")
-                    else:
-                        print("Invalid mode. Use: search, reflect, or explore")
                 elif cmd == "/entity":
                     current_entity = arg if arg else None
                     print(f"Entity context: {current_entity or 'None'}")
                 elif cmd == "/help":
+                    print("\nDeep RAG search (embedding + graph + SQL) is always active.")
                     print("\nCommands:")
-                    print("  /mode <search|reflect|explore>  - Change mode")
                     print("  /entity <name>                  - Set entity context")
                     print("  /quit or /exit                  - Exit")
-                    print(f"\nCurrent mode: {current_mode}")
-                    print(f"Current entity: {current_entity or 'None'}")
+                    print(f"\nCurrent entity: {current_entity or 'None'}")
                 else:
                     print(f"Unknown command: {cmd}")
                 continue
