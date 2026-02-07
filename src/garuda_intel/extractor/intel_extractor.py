@@ -557,7 +557,10 @@ class IntelExtractor:
 
             if org.get("name"):
                 # Determine organization kind based on type field
-                org_type = (org.get("type") or "").lower()
+                raw_org_type = org.get("type") or ""
+                if isinstance(raw_org_type, list):
+                    raw_org_type = " ".join(str(t) for t in raw_org_type)
+                org_type = str(raw_org_type).lower()
                 if any(kw in org_type for kw in ["company", "corporation", "corp"]):
                     org_kind = "company"
                 elif any(kw in org_type for kw in ["government", "agency", "ministry"]):
