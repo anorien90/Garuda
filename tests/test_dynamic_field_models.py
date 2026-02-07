@@ -493,7 +493,9 @@ class TestFieldDiscoveryLog:
         
         assert success_count == 2
         assert total_count == 3
-        assert success_count / total_count == pytest.approx(0.667, rel=0.01)
+        # Calculate expected success rate from test data for clarity
+        expected_success_rate = success_count / total_count  # 2/3
+        assert expected_success_rate == pytest.approx(2 / 3, rel=0.01)
 
 
 class TestIntegration:

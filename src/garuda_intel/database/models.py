@@ -567,7 +567,14 @@ class DynamicFieldDefinition(BasicDataEntry):
         "DynamicFieldDefinition",
         foreign_keys=[parent_field_id],
         remote_side="DynamicFieldDefinition.id",
-        backref="sub_fields"
+        back_populates="sub_fields",
+    )
+    
+    # Child fields (for hierarchical structures like address.city)
+    sub_fields: Mapped[list["DynamicFieldDefinition"]] = relationship(
+        "DynamicFieldDefinition",
+        foreign_keys="DynamicFieldDefinition.parent_field_id",
+        back_populates="parent_field",
     )
 
     __table_args__ = (
