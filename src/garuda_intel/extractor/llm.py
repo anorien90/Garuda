@@ -22,12 +22,19 @@ from .query_generator import QueryGenerator
 class LLMIntelExtractor:
     """
     The cognitive core of the crawler.
+    
     Handles:
     1. Semantic Embedding (for redundancy checks)
     2. Search Query Generation & Result Ranking
     3. Link Prioritization (Navigation)
     4. Intelligence Extraction (Data Gathering)
     5. Reflection & Verification (Quality Control)
+    6. Entity Merging & Type Hierarchy (Phase 5)
+    
+    Enhanced with entity merging capabilities to:
+    - Find and update existing entities by name
+    - Detect specialized entity types (e.g., address → headquarters)
+    - Track field discovery for adaptive learning
     """
 
     def __init__(
@@ -50,6 +57,9 @@ class LLMIntelExtractor:
         summarize_retries: int = 2,
         extract_timeout: int = 120,
         reflect_timeout: int = 30,
+        # Entity merging (Phase 5)
+        enable_entity_merging: bool = True,
+        session_maker=None,
     ):
         self.ollama_url = ollama_url
         self.model = model
@@ -61,6 +71,8 @@ class LLMIntelExtractor:
         self.max_chunks = max_chunks
         self.summarize_timeout = summarize_timeout
         self.summarize_retries = summarize_retries
+        self.enable_entity_merging = enable_entity_merging
+        self.session_maker = session_maker
 
         # Initialize component modules
         self.text_processor = TextProcessor()
@@ -81,6 +93,8 @@ class LLMIntelExtractor:
             extraction_chunk_chars=extraction_chunk_chars,
             max_chunks=max_chunks,
             extract_timeout=extract_timeout,
+            enable_entity_merging=enable_entity_merging,
+            session_maker=session_maker,
         )
         
         self.qa_validator = QAValidator(
@@ -170,9 +184,54 @@ class LLMIntelExtractor:
         return self.query_generator.rank_search_results(profile, search_results)
 
     # ---------- Entity helpers ----------
-    def extract_entities_from_finding(self, finding: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract entity mentions from a finding."""
-        return self.intel_extractor.extract_entities_from_finding(finding)
+    def extract_entities_from_finding(
+        self, 
+        finding: Dict[str, Any],
+        primary_entity_name: Optional[str] = None,
+        context_text: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract entity mentions from a finding with type hierarchy detection.
+        
+        Args:
+            finding: The extracted finding dictionary
+            primary_entity_name: Name of the primary entity for relationship context
+            context_text: Original text for specialized type detection
+            
+        Returns:
+            List of entity dictionaries with enhanced type information
+        """
+        return self.intel_extractor.extract_entities_from_finding(
+            finding, 
+            primary_entity_name=primary_entity_name,
+            context_text=context_text,
+        )
+    
+    def process_entities_with_merging(
+        self,
+        entities: List[Dict[str, Any]],
+        page_id: Optional[str] = None,
+        source_url: Optional[str] = None,
+        confidence: float = 0.5,
+    ) -> Dict[Tuple[str, str], str]:
+        """
+        Process extracted entities with intelligent merging.
+        
+        Args:
+            entities: List of entity dictionaries from extract_entities_from_finding
+            page_id: Source page ID for provenance
+            source_url: Source URL for provenance
+            confidence: Extraction confidence score
+            
+        Returns:
+            Mapping of (name, kind) to entity_id
+        """
+        return self.intel_extractor.process_entities_with_merging(
+            entities=entities,
+            page_id=page_id,
+            source_url=source_url,
+            confidence=confidence,
+        )
 
     # ---------- Embedding helpers ----------
     def build_embeddings_for_page(

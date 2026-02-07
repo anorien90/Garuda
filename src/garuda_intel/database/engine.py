@@ -273,37 +273,113 @@ class SQLAlchemyStore(PersistenceStore):
     # -------- Entities --------
     def save_entities(self, entities: List[Dict]) -> Dict[tuple, str]:
         """
-        Merge/enrich entity nodes across pages. Entity identity: (name, kind).
+        Merge/enrich entity nodes across pages with intelligent type handling.
+        
+        Enhanced with:
+        - Entity type hierarchy: Upgrades generic types to specific ones
+        - Cross-kind lookup: Finds existing entities even if kind differs slightly
+        - Suggested relationships: Creates relationships based on entity context
+        
+        Entity identity: (name, kind) but also looks up by name alone for merging.
         Returns mapping {(name, kind): id}.
+        
         If the entity dict carries contextual ids, persist relationships:
           - page_id -> entity (relation_type="mentions_entity")
-          - primary_entity_id -> entity (relation_type="related_entity" or override via entity['relation_type'])
+          - primary_entity_id -> entity (relation_type="related_entity" or override)
+          - suggested_relationship -> creates relationship to target entity
         """
         if not entities:
             return {}
+        
+        # Type hierarchy for determining if new type is more specific
+        type_hierarchy = {
+            "headquarters": "location",
+            "branch_office": "location",
+            "registered_address": "location",
+            "ceo": "person",
+            "founder": "person",
+            "executive": "person",
+            "board_member": "person",
+            "subsidiary": "company",
+            "division": "organization",
+        }
+        
+        def is_more_specific(new_kind: str, existing_kind: str) -> bool:
+            """Check if new_kind is more specific than existing_kind."""
+            if existing_kind in ["entity", "general", ""]:
+                return new_kind not in ["entity", "general", ""]
+            if new_kind in type_hierarchy:
+                return type_hierarchy[new_kind] == existing_kind
+            return False
+        
         mapping: Dict[tuple, str] = {}
         with self.Session() as s:
             for e in entities:
                 name = e.get("name")
+                if not name:
+                    continue
+                    
                 kind = (e.get("kind") or "entity").strip().lower()
                 data = _as_dict(e.get("data") or e.get("attrs"))
                 meta = _as_dict(e.get("meta"))
                 page_id = e.get("page_id") or e.get("source_page_id")
                 primary_entity_id = e.get("primary_entity_id") or e.get("parent_entity_id")
                 rel_type = e.get("relation_type") or "related_entity"
+                parent_type = e.get("parent_type")  # For type hierarchy tracking
+                suggested_rel = e.get("suggested_relationship")
 
                 key = (name, kind)
+                
+                # First try exact match
                 existing = (
                     s.execute(select(Entity).where(Entity.name == name, Entity.kind == kind))
                     .scalar_one_or_none()
                 )
+                
+                # If no exact match, try name-only lookup for potential merge
+                if not existing:
+                    existing = (
+                        s.execute(select(Entity).where(func.lower(Entity.name) == name.lower()))
+                        .scalar_one_or_none()
+                    )
+                
                 if existing:
-                    existing.data = {**existing.data, **data}
-                    existing.metadata_json = {**_as_dict(existing.metadata_json), **meta}
+                    # Merge data - keep existing values, add new ones
+                    merged_data = _as_dict(existing.data)
+                    for k, v in data.items():
+                        if v and (k not in merged_data or not merged_data[k]):
+                            merged_data[k] = v
+                    existing.data = merged_data
+                    
+                    # Merge metadata
+                    merged_meta = _as_dict(existing.metadata_json)
+                    for k, v in meta.items():
+                        if v and k not in merged_meta:
+                            merged_meta[k] = v
+                    existing.metadata_json = merged_meta
+                    
+                    # Upgrade kind if new kind is more specific
+                    if is_more_specific(kind, existing.kind or "entity"):
+                        # Track type history
+                        if "type_history" not in merged_meta:
+                            merged_meta["type_history"] = []
+                        merged_meta["type_history"].append({
+                            "from": existing.kind,
+                            "to": kind,
+                            "timestamp": datetime.utcnow().isoformat(),
+                        })
+                        existing.metadata_json = merged_meta
+                        existing.kind = kind
+                    
                     existing.last_seen = datetime.utcnow()
                     eid = existing.id
                 else:
                     eid = _uuid4()
+                    
+                    # Add parent_type to metadata if tracking type hierarchy
+                    if parent_type:
+                        meta["parent_type"] = parent_type
+                    
                     s.add(
                         Entity(
                             id=eid,
@@ -321,6 +397,20 @@ class SQLAlchemyStore(PersistenceStore):
                     self._upsert_relationship(s, page_id, eid, "mentions_entity")
                 if primary_entity_id:
                     self._upsert_relationship(s, primary_entity_id, eid, rel_type)
+                
+                # Handle suggested relationships from entity extraction
+                if suggested_rel:
+                    target_name = suggested_rel.get("target")
+                    suggested_rel_type = suggested_rel.get("relation_type", "related")
+                    
+                    if target_name:
+                        # Look up target entity by name
+                        target_entity = (
+                            s.execute(select(Entity).where(func.lower(Entity.name) == target_name.lower()))
+                            .scalar_one_or_none()
+                        )
+                        if target_entity:
+                            self._upsert_relationship(s, eid, target_entity.id, suggested_rel_type)
 
             s.commit()
         return mapping
