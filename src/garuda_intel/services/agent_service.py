@@ -349,9 +349,6 @@ class AgentService:
                         primary_entity.metadata_json[key] = value
             
             # Update relationships to point to primary entity
-            session.execute(
-                select(Relationship).where(Relationship.source_id == secondary_id)
-            )
             for rel in session.execute(
                 select(Relationship).where(Relationship.source_id == secondary_id)
             ).scalars().all():

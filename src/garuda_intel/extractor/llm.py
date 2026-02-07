@@ -268,8 +268,6 @@ class LLMIntelExtractor:
         
         return ""
 
-        return "\n".join(summaries).strip()
-
     def embed_text(self, text: str) -> List[float]:
         """Generate embedding vector for text."""
         return self.semantic_engine.embed_text(text)
