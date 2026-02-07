@@ -1,7 +1,7 @@
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Any
 
 from sqlalchemy import create_engine, select, func, or_, String
@@ -366,12 +366,12 @@ class SQLAlchemyStore(PersistenceStore):
                         merged_meta["type_history"].append({
                             "from": existing.kind,
                             "to": kind,
-                            "timestamp": datetime.utcnow().isoformat(),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
                         })
                         existing.metadata_json = merged_meta
                         existing.kind = kind
                     
-                    existing.last_seen = datetime.utcnow()
+                    existing.last_seen = datetime.now(timezone.utc)
                     eid = existing.id
                 else:
                     eid = _uuid4()
@@ -387,7 +387,7 @@ class SQLAlchemyStore(PersistenceStore):
                             kind=kind,
                             data=data,
                             metadata_json=meta,
-                            last_seen=datetime.utcnow(),
+                            last_seen=datetime.now(timezone.utc),
                         )
                     )
                 mapping[key] = eid

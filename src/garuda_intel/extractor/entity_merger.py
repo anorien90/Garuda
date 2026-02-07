@@ -10,7 +10,7 @@ This module provides advanced entity management capabilities:
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Any, Tuple
 
 from sqlalchemy import select, func
@@ -206,7 +206,7 @@ class EntityMerger:
                     kind=kind,
                     data=data,
                     metadata_json=metadata,
-                    last_seen=datetime.utcnow(),
+                    last_seen=datetime.now(timezone.utc),
                 )
                 session.add(new_entity)
                 
@@ -266,7 +266,7 @@ class EntityMerger:
                 type_history.append({
                     "from": old_kind,
                     "to": new_kind,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "reason": reason,
                 })
                 new_meta["type_history"] = type_history
@@ -339,7 +339,7 @@ class EntityMerger:
                     "parent_entity_name": parent.name,
                     "specialized_from": parent.kind,
                 },
-                last_seen=datetime.utcnow(),
+                last_seen=datetime.now(timezone.utc),
             )
             session.add(new_entity)
             session.flush()
@@ -490,7 +490,7 @@ class EntityMerger:
             flag_modified(entity, 'metadata_json')
         
         # Update last_seen
-        entity.last_seen = datetime.utcnow()
+        entity.last_seen = datetime.now(timezone.utc)
         
         return was_updated
     
@@ -771,7 +771,7 @@ class FieldDiscoveryTracker:
             if field_def:
                 field_def.discovery_count += 1
                 field_def.success_rate = success_rate
-                field_def.last_seen_at = datetime.utcnow()
+                field_def.last_seen_at = datetime.now(timezone.utc)
             else:
                 field_def = DynamicFieldDefinition(
                     id=uuid.uuid4(),
@@ -781,7 +781,7 @@ class FieldDiscoveryTracker:
                     success_rate=success_rate,
                     source="llm",
                     is_active=True,
-                    last_seen_at=datetime.utcnow(),
+                    last_seen_at=datetime.now(timezone.utc),
                 )
                 session.add(field_def)
             
