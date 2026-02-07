@@ -69,6 +69,17 @@ let activeModalId = null;
 // Deep RAG graph exploration state
 let selectedNodesForPath = [];
 let lastSelectedNodeForTraversal = null;
+let shiftKeyPressed = false;
+
+// Track shift key state globally
+if (typeof document !== 'undefined') {
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Shift') shiftKeyPressed = true;
+  });
+  document.addEventListener('keyup', (e) => {
+    if (e.key === 'Shift') shiftKeyPressed = false;
+  });
+}
 
 const filterEls = {
   nodeFilters: () => Array.from(document.querySelectorAll('.entities-node-filter')),
@@ -1255,6 +1266,12 @@ function setupDeepRagControls() {
  * Update UI state when a node is selected
  */
 function updateNodeSelectionForDeepRag(nodeId) {
+  // Validate nodeId is a string
+  if (typeof nodeId !== 'string') {
+    console.warn('updateNodeSelectionForDeepRag: nodeId must be a string');
+    return;
+  }
+  
   // Update for traversal
   lastSelectedNodeForTraversal = nodeId;
   const traverseBtn = document.getElementById('graph-traverse-btn');
@@ -1267,7 +1284,7 @@ function updateNodeSelectionForDeepRag(nodeId) {
   const pathStatus = document.getElementById('graph-path-status');
   
   // Toggle node selection for path finding (Shift+Click)
-  if (window.event?.shiftKey) {
+  if (shiftKeyPressed) {
     const index = selectedNodesForPath.indexOf(nodeId);
     if (index > -1) {
       // Deselect
@@ -1289,7 +1306,9 @@ function updateNodeSelectionForDeepRag(nodeId) {
       pathStatus.textContent = 'Select 2 nodes to find path';
     } else if (selectedNodesForPath.length === 1) {
       pathBtn.disabled = true;
-      pathStatus.textContent = `Selected 1 node (${selectedNodesForPath[0].substring(0, 8)}...), need 1 more`;
+      // Display truncated node ID safely
+      const nodeIdPreview = String(selectedNodesForPath[0]).substring(0, 8);
+      pathStatus.textContent = `Selected 1 node (${nodeIdPreview}...), need 1 more`;
     } else {
       pathBtn.disabled = false;
       pathStatus.textContent = `Ready to find path between ${selectedNodesForPath.length} nodes`;
@@ -1299,24 +1318,37 @@ function updateNodeSelectionForDeepRag(nodeId) {
 
 /**
  * Highlight entities in the graph by their IDs
+ * Uses accessible colors and increases node size for better visibility
  */
 function highlightEntitiesInGraph(entityIds) {
   if (!graphInstance) return;
   
   const entityIdSet = new Set(entityIds);
   
-  // Update node colors/sizes to highlight matches
+  // Update node properties to highlight matches
   filteredNodes.forEach(node => {
     if (entityIdSet.has(node.id)) {
       node.__highlighted = true;
     }
   });
   
+  // Use accessible orange color instead of pure red for better visibility
   graphInstance.nodeColor(node => {
     if (node.__highlighted) {
-      return '#ff0000'; // Red for highlighted
+      return '#ff6b35'; // Accessible orange for highlighted
+    }
+    if (node.__inPath) {
+      return '#2563eb'; // Accessible blue for path (instead of green)
     }
     return COLORS[node.kind || node.type] || COLORS.unknown;
+  });
+  
+  // Increase size of highlighted nodes for additional visual distinction
+  graphInstance.nodeRelSize(node => {
+    if (node.__highlighted || node.__inPath) {
+      return 8; // Larger size for highlighted/path nodes
+    }
+    return 4; // Normal size
   });
   
   setStatus(`Highlighted ${entityIds.length} matching entities`);
@@ -1394,6 +1426,7 @@ function addTraversalResultsToGraph(results) {
 
 /**
  * Highlight a path in the graph
+ * Uses accessible colors and size for better visibility to colorblind users
  */
 function highlightPathInGraph(path) {
   if (!graphInstance || !path) return;
@@ -1408,15 +1441,23 @@ function highlightPathInGraph(path) {
     }
   });
   
-  // Update visualization
+  // Update visualization with accessible colors
   graphInstance.nodeColor(node => {
     if (node.__inPath) {
-      return '#00ff00'; // Green for path
+      return '#2563eb'; // Accessible blue for path
     }
     if (node.__highlighted) {
-      return '#ff0000'; // Red for highlighted
+      return '#ff6b35'; // Accessible orange for highlighted
     }
     return COLORS[node.kind || node.type] || COLORS.unknown;
+  });
+  
+  // Increase size for better visibility
+  graphInstance.nodeRelSize(node => {
+    if (node.__highlighted || node.__inPath) {
+      return 8; // Larger size for highlighted/path nodes
+    }
+    return 4; // Normal size
   });
   
   setStatus(`Highlighted path with ${pathEntityIds.size} entities`);

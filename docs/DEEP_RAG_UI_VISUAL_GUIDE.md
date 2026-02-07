@@ -49,8 +49,10 @@
 │ │ ☑ Relationships     │ │   ⚫ = Entity nodes                       │   │   │
 │ │ ☑ Co-occurrence     │ │   ─── = Relationships                    │   │   │
 │ │ ☑ Page→Entity       │ │                                           │   │   │
-│ │ ☑ Intel→Entity      │ │   🔴 = Highlighted (semantic search)     │   │   │
-│ │                     │ │   🟢 = Path (path finding)               │   │   │
+│ │ ☑ Intel→Entity      │ │   🟠 = Highlighted (semantic search)     │   │   │
+│ │                     │ │        (orange + larger size)            │   │   │
+│ │                     │ │   🔵 = Path (path finding)               │   │   │
+│ │                     │ │        (blue + larger size)              │   │   │
 │ │                     │ │                                           │   │   │
 │ │                     │ └───────────────────────────────────────────┘   │   │
 │ │                     │                                                 │   │
@@ -217,8 +219,10 @@
 - 🟢 Organization: Green (#22c55e)
 - 🟣 Location: Purple (#a855f7)
 - 🟠 Product: Orange (#f97316)
-- 🔴 Highlighted (Search Result): Red (#ff0000)
-- 🟢 Path Node: Green (#00ff00)
+- 🟠 Highlighted (Search Result): Accessible Orange (#ff6b35)
+- 🔵 Path Node: Accessible Blue (#2563eb)
+
+**Note**: Highlighted and path nodes are also displayed at a larger size (2x) for additional visual distinction beyond color, making them accessible to colorblind users.
 
 ### Button Colors
 - **Primary Action** (Search): Brand Blue (#3b82f6)
