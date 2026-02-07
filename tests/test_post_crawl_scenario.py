@@ -423,7 +423,6 @@ def test_cross_kind_entity_deduplication():
     print(f"  - Generic 'entity' kinds merged into specific kinds")
     print(f"  - Rich metadata preserved in the merged entity")
     print(f"  - {count_before} entities reduced to {count_after}")
-    return True
 
 
 if __name__ == "__main__":
