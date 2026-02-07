@@ -1,6 +1,14 @@
 import { els, val } from './config.js';
 import { pill, collapsible, renderKeyValTable } from './ui.js';
 import { showModal, updateModal } from './modals.js';
+import { 
+  searchEntitiesSemantic, 
+  traverseGraph, 
+  findPath,
+  displayTraversalResults,
+  displayPathResults,
+  displaySearchResults
+} from './graph-search.js';
 
 // Color maps for node/edge kinds - will be updated from schema API
 let COLORS = {
@@ -57,6 +65,21 @@ let selectedNodeId = null;
 let hoverTimer = null;
 let activeModalNodeId = null;
 let activeModalId = null;
+
+// Deep RAG graph exploration state
+let selectedNodesForPath = [];
+let lastSelectedNodeForTraversal = null;
+let shiftKeyPressed = false;
+
+// Track shift key state globally
+if (typeof document !== 'undefined') {
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Shift') shiftKeyPressed = true;
+  });
+  document.addEventListener('keyup', (e) => {
+    if (e.key === 'Shift') shiftKeyPressed = false;
+  });
+}
 
 const filterEls = {
   nodeFilters: () => Array.from(document.querySelectorAll('.entities-node-filter')),
@@ -1084,6 +1107,8 @@ async function renderGraph() {
       selectedNodeId = n.id;
       renderDetails(n, filteredLinks);
       openNodeModal(n);
+      // Update deep RAG controls based on node selection
+      updateNodeSelectionForDeepRag(n.id);
     });
 
   tuneForces(graphInstance);
@@ -1111,6 +1136,331 @@ async function loadAndRender(ev) {
     console.error(e);
     setStatus(e.message || 'Failed to load graph', true);
   }
+}
+
+/**
+ * Setup deep RAG graph exploration controls
+ */
+function setupDeepRagControls() {
+  // Semantic Entity Search
+  const semanticSearchBtn = document.getElementById('graph-semantic-search-btn');
+  const semanticSearchInput = document.getElementById('graph-semantic-search');
+  const semanticThreshold = document.getElementById('graph-semantic-threshold');
+  
+  if (semanticSearchBtn && semanticSearchInput) {
+    semanticSearchBtn.addEventListener('click', async () => {
+      const query = semanticSearchInput.value.trim();
+      if (!query) return;
+      
+      semanticSearchBtn.disabled = true;
+      semanticSearchBtn.textContent = 'Searching...';
+      
+      try {
+        const threshold = parseFloat(semanticThreshold?.value || 0.7);
+        const results = await searchEntitiesSemantic(query, { threshold, limit: 20 });
+        
+        // Display results in a modal
+        const modalDiv = document.createElement('div');
+        displaySearchResults(results, modalDiv);
+        showModal(modalDiv);
+        
+        // Optionally highlight matching entities in the graph
+        if (results.results && results.results.length > 0) {
+          highlightEntitiesInGraph(results.results.map(r => r.entity.id));
+        }
+      } catch (error) {
+        console.error('Semantic search failed:', error);
+        setStatus('Semantic search failed: ' + error.message, true);
+      } finally {
+        semanticSearchBtn.disabled = false;
+        semanticSearchBtn.textContent = 'Search';
+      }
+    });
+    
+    // Allow Enter key to trigger search
+    semanticSearchInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        semanticSearchBtn.click();
+      }
+    });
+  }
+  
+  // Graph Traversal from Selected Node
+  const traverseBtn = document.getElementById('graph-traverse-btn');
+  const traverseDepth = document.getElementById('graph-traverse-depth');
+  const traverseTopN = document.getElementById('graph-traverse-topn');
+  
+  if (traverseBtn) {
+    traverseBtn.addEventListener('click', async () => {
+      if (!lastSelectedNodeForTraversal) {
+        setStatus('Please select a node first', true);
+        return;
+      }
+      
+      traverseBtn.disabled = true;
+      traverseBtn.textContent = 'Traversing...';
+      
+      try {
+        const maxDepth = parseInt(traverseDepth?.value || 2);
+        const topN = parseInt(traverseTopN?.value || 10);
+        
+        const results = await traverseGraph([lastSelectedNodeForTraversal], {
+          maxDepth,
+          topN,
+        });
+        
+        // Display traversal results
+        displayTraversalResults(results);
+        
+        // Optionally add traversal results to the graph
+        if (results.depths) {
+          addTraversalResultsToGraph(results);
+        }
+      } catch (error) {
+        console.error('Graph traversal failed:', error);
+        setStatus('Graph traversal failed: ' + error.message, true);
+      } finally {
+        traverseBtn.disabled = false;
+        traverseBtn.textContent = 'Traverse from Selected';
+      }
+    });
+  }
+  
+  // Path Finding between two selected nodes
+  const pathBtn = document.getElementById('graph-path-btn');
+  const pathStatus = document.getElementById('graph-path-status');
+  
+  if (pathBtn) {
+    pathBtn.addEventListener('click', async () => {
+      if (selectedNodesForPath.length !== 2) {
+        setStatus('Please select exactly 2 nodes for path finding', true);
+        return;
+      }
+      
+      pathBtn.disabled = true;
+      pathBtn.textContent = 'Finding Path...';
+      
+      try {
+        const [sourceId, targetId] = selectedNodesForPath;
+        const results = await findPath(sourceId, targetId, 5);
+        
+        // Display path results
+        displayPathResults(results);
+        
+        // Highlight path in graph if found
+        if (results.found && results.path) {
+          highlightPathInGraph(results.path);
+        }
+      } catch (error) {
+        console.error('Path finding failed:', error);
+        setStatus('Path finding failed: ' + error.message, true);
+      } finally {
+        pathBtn.disabled = false;
+        pathBtn.textContent = 'Find Path';
+      }
+    });
+  }
+}
+
+/**
+ * Update UI state when a node is selected
+ */
+function updateNodeSelectionForDeepRag(nodeId) {
+  // Validate nodeId is a string
+  if (typeof nodeId !== 'string') {
+    console.warn('updateNodeSelectionForDeepRag: nodeId must be a string');
+    return;
+  }
+  
+  // Update for traversal
+  lastSelectedNodeForTraversal = nodeId;
+  const traverseBtn = document.getElementById('graph-traverse-btn');
+  if (traverseBtn) {
+    traverseBtn.disabled = false;
+  }
+  
+  // Update for path finding
+  const pathBtn = document.getElementById('graph-path-btn');
+  const pathStatus = document.getElementById('graph-path-status');
+  
+  // Toggle node selection for path finding (Shift+Click)
+  if (shiftKeyPressed) {
+    const index = selectedNodesForPath.indexOf(nodeId);
+    if (index > -1) {
+      // Deselect
+      selectedNodesForPath.splice(index, 1);
+    } else if (selectedNodesForPath.length < 2) {
+      // Select (max 2)
+      selectedNodesForPath.push(nodeId);
+    } else {
+      // Replace oldest selection
+      selectedNodesForPath.shift();
+      selectedNodesForPath.push(nodeId);
+    }
+  }
+  
+  // Update path finding button and status
+  if (pathBtn && pathStatus) {
+    if (selectedNodesForPath.length === 0) {
+      pathBtn.disabled = true;
+      pathStatus.textContent = 'Select 2 nodes to find path';
+    } else if (selectedNodesForPath.length === 1) {
+      pathBtn.disabled = true;
+      // Display truncated node ID safely
+      const nodeIdPreview = String(selectedNodesForPath[0]).substring(0, 8);
+      pathStatus.textContent = `Selected 1 node (${nodeIdPreview}...), need 1 more`;
+    } else {
+      pathBtn.disabled = false;
+      pathStatus.textContent = `Ready to find path between ${selectedNodesForPath.length} nodes`;
+    }
+  }
+}
+
+/**
+ * Highlight entities in the graph by their IDs
+ * Uses accessible colors and increases node size for better visibility
+ */
+function highlightEntitiesInGraph(entityIds) {
+  if (!graphInstance) return;
+  
+  const entityIdSet = new Set(entityIds);
+  
+  // Update node properties to highlight matches
+  filteredNodes.forEach(node => {
+    if (entityIdSet.has(node.id)) {
+      node.__highlighted = true;
+    }
+  });
+  
+  // Use accessible orange color instead of pure red for better visibility
+  graphInstance.nodeColor(node => {
+    if (node.__highlighted) {
+      return '#ff6b35'; // Accessible orange for highlighted
+    }
+    if (node.__inPath) {
+      return '#2563eb'; // Accessible blue for path (instead of green)
+    }
+    return COLORS[node.kind || node.type] || COLORS.unknown;
+  });
+  
+  // Increase size of highlighted nodes for additional visual distinction
+  graphInstance.nodeRelSize(node => {
+    if (node.__highlighted || node.__inPath) {
+      return 8; // Larger size for highlighted/path nodes
+    }
+    return 4; // Normal size
+  });
+  
+  setStatus(`Highlighted ${entityIds.length} matching entities`);
+}
+
+/**
+ * Add traversal results to the current graph
+ */
+function addTraversalResultsToGraph(results) {
+  // Extract entities and relationships from traversal results
+  const newNodes = [];
+  const newLinks = [];
+  const existingNodeIds = new Set(currentNodes.map(n => n.id));
+  
+  // Add root entities
+  if (results.root_entities) {
+    results.root_entities.forEach(entity => {
+      if (!existingNodeIds.has(entity.id)) {
+        newNodes.push({
+          id: entity.id,
+          label: entity.name,
+          kind: entity.kind,
+          type: entity.kind,
+          score: 1.0,
+          count: 1,
+          meta: entity.metadata || {}
+        });
+        existingNodeIds.add(entity.id);
+      }
+    });
+  }
+  
+  // Add entities from each depth level
+  if (results.depths) {
+    Object.entries(results.depths).forEach(([depth, depthData]) => {
+      depthData.entities?.forEach(item => {
+        const entity = item.entity;
+        if (!existingNodeIds.has(entity.id)) {
+          newNodes.push({
+            id: entity.id,
+            label: entity.name,
+            kind: entity.kind,
+            type: entity.kind,
+            score: 1.0,
+            count: 1,
+            meta: { ...entity.metadata, depth: parseInt(depth) }
+          });
+          existingNodeIds.add(entity.id);
+        }
+      });
+    });
+  }
+  
+  // Add relationships as links
+  if (results.all_relationships) {
+    results.all_relationships.forEach(rel => {
+      newLinks.push({
+        source: rel.source_id,
+        target: rel.target_id,
+        kind: 'relationship',
+        weight: 1,
+        meta: { relation_type: rel.relation_type, ...rel.metadata }
+      });
+    });
+  }
+  
+  if (newNodes.length > 0 || newLinks.length > 0) {
+    currentNodes.push(...newNodes);
+    currentLinks.push(...newLinks);
+    applyFilters(currentNodes, currentLinks);
+    renderGraph();
+    setStatus(`Added ${newNodes.length} nodes and ${newLinks.length} links from traversal`);
+  }
+}
+
+/**
+ * Highlight a path in the graph
+ * Uses accessible colors and size for better visibility to colorblind users
+ */
+function highlightPathInGraph(path) {
+  if (!graphInstance || !path) return;
+  
+  // Extract entity IDs from path
+  const pathEntityIds = new Set(path.map(step => step.entity?.id).filter(Boolean));
+  
+  // Mark nodes in the path
+  filteredNodes.forEach(node => {
+    if (pathEntityIds.has(node.id)) {
+      node.__inPath = true;
+    }
+  });
+  
+  // Update visualization with accessible colors
+  graphInstance.nodeColor(node => {
+    if (node.__inPath) {
+      return '#2563eb'; // Accessible blue for path
+    }
+    if (node.__highlighted) {
+      return '#ff6b35'; // Accessible orange for highlighted
+    }
+    return COLORS[node.kind || node.type] || COLORS.unknown;
+  });
+  
+  // Increase size for better visibility
+  graphInstance.nodeRelSize(node => {
+    if (node.__highlighted || node.__inPath) {
+      return 8; // Larger size for highlighted/path nodes
+    }
+    return 4; // Normal size
+  });
+  
+  setStatus(`Highlighted path with ${pathEntityIds.size} entities`);
 }
 
 export async function initEntitiesGraph() {
@@ -1164,6 +1514,9 @@ export async function initEntitiesGraph() {
       loadAndRender();
     });
   }
+
+  // Deep RAG Graph Exploration Event Listeners
+  setupDeepRagControls();
 
   await loadAndRender();
 }
