@@ -300,12 +300,20 @@ class EntityKindRegistry:
     }
     
     _instance: Optional["EntityKindRegistry"] = None
+    _lock = None  # Will be lazily initialized as a threading.Lock
     
     def __new__(cls):
-        """Singleton pattern - ensure only one registry instance."""
+        """Singleton pattern - ensure only one registry instance (thread-safe)."""
+        # Use double-checked locking for thread safety
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            import threading
+            if cls._lock is None:
+                cls._lock = threading.Lock()
+            with cls._lock:
+                # Double-check inside lock
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
         return cls._instance
     
     def __init__(self):
@@ -322,6 +330,11 @@ class EntityKindRegistry:
         self._rebuild_alias_lookup()
         
         logger.info(f"Entity registry initialized with {len(self._kinds)} kinds and {len(self._relations)} relations")
+    
+    @classmethod
+    def reset_instance(cls):
+        """Reset the singleton instance. Used for testing."""
+        cls._instance = None
     
     def _rebuild_alias_lookup(self):
         """Rebuild the alias to kind lookup table."""

@@ -38,7 +38,14 @@ class SQLAlchemyStore(PersistenceStore):
         
         This property provides backwards compatibility while using the
         centralized registry for kind priorities.
+        
+        Note: The uppercase name is maintained for backward compatibility.
+        New code should use get_entity_kind_priority() instead.
         """
+        return self.get_entity_kind_priority()
+    
+    def get_entity_kind_priority(self) -> Dict[str, int]:
+        """Get entity kind priorities from the dynamic registry."""
         return get_registry().get_kind_priority_map()
     
     def __init__(self, url: str = "sqlite:///crawler.db"):

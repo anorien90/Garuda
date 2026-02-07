@@ -79,10 +79,12 @@ class TestEntityKindRegistry:
     @pytest.fixture
     def registry(self):
         """Create a fresh registry instance."""
-        # Reset the singleton for testing
-        EntityKindRegistry._instance = None
+        # Reset the singleton using the proper method
+        EntityKindRegistry.reset_instance()
         reg = EntityKindRegistry()
-        return reg
+        yield reg
+        # Cleanup after test
+        EntityKindRegistry.reset_instance()
     
     def test_builtin_kinds_exist(self, registry):
         """Test that builtin kinds are registered."""

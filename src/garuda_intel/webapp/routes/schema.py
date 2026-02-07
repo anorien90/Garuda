@@ -27,28 +27,23 @@ def init_schema_routes(api_key_required, store):
         discovered kinds from the database.
         
         Query params:
-            sync: If "true", sync registry from database first
+            sync: If "true", sync registry from database first (registers new kinds found in DB)
+            include_db: If "true", include unregistered database kinds in the response
             
         Returns:
             JSON object with kinds and their metadata
         """
         try:
-            # Optionally sync from database first
+            # Optionally sync from database first (this registers new kinds)
             if request.args.get("sync", "").lower() == "true":
                 store.sync_registry_from_database()
             
             registry = get_registry()
             kinds = registry.get_all_kinds()
             
-            # Also include database kinds that might not be registered yet
+            # Optionally include database kinds not yet registered (read-only, no mutation)
             db_kinds = store.get_unique_entity_kinds()
-            for kind in db_kinds:
-                if kind and kind not in kinds:
-                    # Auto-register and return
-                    registry.register_kind(kind)
-            
-            # Refresh kinds after potential registration
-            kinds = registry.get_all_kinds()
+            unregistered_db_kinds = [k for k in db_kinds if k and k not in kinds]
             
             return jsonify({
                 "success": True,
@@ -56,6 +51,7 @@ def init_schema_routes(api_key_required, store):
                 "names": sorted(kinds.keys()),
                 "colors": registry.get_kind_colors(),
                 "priorities": registry.get_kind_priority_map(),
+                "unregistered_db_kinds": unregistered_db_kinds,
             })
         except Exception as e:
             logger.error(f"Error getting kinds: {e}")

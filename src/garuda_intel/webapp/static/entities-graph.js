@@ -78,8 +78,8 @@ const filterEls = {
  * Load schema from API and update color maps.
  * This allows colors to be dynamic and new kinds to appear automatically.
  */
-async function loadSchema() {
-  if (schemaCache) return schemaCache;
+async function loadSchema(forceSync = false) {
+  if (schemaCache && !forceSync) return schemaCache;
   if (schemaLoading) return null;
   
   schemaLoading = true;
@@ -88,7 +88,9 @@ async function loadSchema() {
     const apiKey = els.apiKey?.value || '';
     const headers = apiKey ? { 'X-API-Key': apiKey } : {};
     
-    const res = await fetch(`${baseUrl}/api/schema/full?sync=true`, { headers });
+    // Only sync on first load or when explicitly requested
+    const syncParam = !schemaCache ? 'sync=true' : '';
+    const res = await fetch(`${baseUrl}/api/schema/full${syncParam ? '?' + syncParam : ''}`, { headers });
     if (!res.ok) {
       console.warn('Failed to load schema, using defaults');
       return null;
