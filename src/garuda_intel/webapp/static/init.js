@@ -13,6 +13,9 @@ import { analyzeEntityGaps, analyzeAllGaps } from './actions/gaps.js';
 import { bindDelegatedEvents } from './events.js';
 import { initEntitiesGraph } from './entities-graph.js';
 
+// Import graph search functionality
+import './graph-search.js';
+
 export function init() {
   initTheme();
   loadSettings();
