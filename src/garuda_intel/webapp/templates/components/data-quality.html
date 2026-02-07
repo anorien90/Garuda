@@ -1,4 +1,78 @@
 <div class="space-y-6">
+  <!-- Semantic Entity Search (NEW) -->
+  <div class="card p-6 bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border-2 border-purple-200 dark:border-purple-800">
+    <h2 class="text-xl font-bold mb-2 text-purple-900 dark:text-purple-100">🔍 Semantic Entity Search</h2>
+    <p class="text-sm text-purple-700 dark:text-purple-300 mb-4">
+      Search entities using hybrid SQL + semantic similarity. Find "Microsoft" even when searching "Microsoft Corp".
+    </p>
+    
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+      <div>
+        <label class="block text-sm font-medium mb-1 text-purple-900 dark:text-purple-100">Search Query</label>
+        <input type="text" id="semantic-search-query" 
+               class="w-full px-3 py-2 border border-purple-200 dark:border-purple-700 rounded-lg bg-white dark:bg-slate-900"
+               placeholder="e.g., Microsoft Corporation">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1 text-purple-900 dark:text-purple-100">Entity Type</label>
+        <select id="semantic-search-kind" class="w-full px-3 py-2 border border-purple-200 dark:border-purple-700 rounded-lg bg-white dark:bg-slate-900">
+          <option value="">Any Type</option>
+          <option value="company">Company</option>
+          <option value="person">Person</option>
+          <option value="location">Location</option>
+          <option value="product">Product</option>
+          <option value="organization">Organization</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1 text-purple-900 dark:text-purple-100">Similarity Threshold</label>
+        <div class="flex items-center gap-2">
+          <input type="range" id="semantic-search-threshold" min="0.5" max="1.0" step="0.05" value="0.7" 
+                 class="flex-1" onchange="document.getElementById('semantic-threshold-val').textContent = this.value">
+          <span id="semantic-threshold-val" class="text-sm font-mono w-10">0.7</span>
+        </div>
+      </div>
+    </div>
+    
+    <button id="btn-semantic-search" type="button" class="btn-primary bg-purple-600 hover:bg-purple-500">
+      🔍 Search Entities
+    </button>
+    
+    <div id="graph-search-results" class="mt-4"></div>
+  </div>
+
+  <!-- Graph Path Finding (NEW) -->
+  <div class="card p-6 bg-gradient-to-br from-teal-50 to-cyan-50 dark:from-teal-900/20 dark:to-cyan-900/20 border-2 border-teal-200 dark:border-teal-800">
+    <h2 class="text-xl font-bold mb-2 text-teal-900 dark:text-teal-100">🛤️ Entity Path Finding</h2>
+    <p class="text-sm text-teal-700 dark:text-teal-300 mb-4">
+      Find the shortest connection path between two entities through the relationship graph.
+    </p>
+    
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+      <div>
+        <label class="block text-sm font-medium mb-1 text-teal-900 dark:text-teal-100">Source Entity ID</label>
+        <input type="text" id="path-source-id" 
+               class="w-full px-3 py-2 border border-teal-200 dark:border-teal-700 rounded-lg bg-white dark:bg-slate-900"
+               placeholder="Enter source entity UUID">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1 text-teal-900 dark:text-teal-100">Target Entity ID</label>
+        <input type="text" id="path-target-id" 
+               class="w-full px-3 py-2 border border-teal-200 dark:border-teal-700 rounded-lg bg-white dark:bg-slate-900"
+               placeholder="Enter target entity UUID">
+      </div>
+    </div>
+    
+    <div class="flex gap-2">
+      <button id="btn-find-path" type="button" class="btn-primary bg-teal-600 hover:bg-teal-500">
+        🛤️ Find Path
+      </button>
+      <button id="btn-traverse-source" type="button" class="btn-secondary border-teal-300 hover:bg-teal-50 dark:border-teal-700 dark:hover:bg-teal-900/30">
+        🕸️ Explore from Source
+      </button>
+    </div>
+  </div>
+
   <!-- Entity Gap Analysis (Consolidated - NO DUPLICATES) -->
   <div class="card p-6 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-2 border-blue-200 dark:border-blue-800">
     <h2 class="text-xl font-bold mb-2 text-blue-900 dark:text-blue-100">🎯 Entity Gap Analysis</h2>
@@ -27,47 +101,112 @@
     <div id="gap-analysis-results" class="mt-4"></div>
   </div>
   
-  <!-- Entity Deduplication -->
+  <!-- Semantic Entity Deduplication (ENHANCED) -->
   <div class="card p-6">
-    <h2 class="text-xl font-bold mb-4">🔗 Entity Deduplication</h2>
+    <h2 class="text-xl font-bold mb-4">🔗 Semantic Entity Deduplication</h2>
     <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
-      Find and merge duplicate entities to maintain data quality and uniqueness.
+      Find and merge duplicate entities using semantic similarity. Detects "Microsoft" and "Microsoft Corporation" as the same entity.
     </p>
     
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <!-- Deduplication -->
+      <!-- Find Semantic Duplicates -->
       <div class="p-4 border rounded-lg">
-        <h3 class="font-semibold mb-2">Deduplicate Entities</h3>
+        <h3 class="font-semibold mb-2">Find Semantic Duplicates</h3>
         <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
-          Find and merge duplicate entities based on similarity.
+          Search for entities that are semantically similar to a name.
         </p>
-        <div class="flex items-center gap-2 mb-3">
-          <label class="text-sm">Threshold:</label>
-          <input type="range" id="dedup-threshold" min="0.5" max="1.0" step="0.05" value="0.85" 
-                 class="flex-1">
-          <span id="dedup-threshold-value" class="text-sm font-mono">0.85</span>
+        <div class="space-y-2">
+          <input type="text" id="semantic-dup-name" 
+                 class="w-full px-3 py-2 border rounded-lg text-sm"
+                 placeholder="e.g., Microsoft Corp">
+          <div class="flex items-center gap-2">
+            <label class="text-sm">Threshold:</label>
+            <input type="range" id="semantic-dup-threshold" min="0.5" max="1.0" step="0.05" value="0.85" 
+                   class="flex-1" onchange="document.getElementById('dup-threshold-val').textContent = this.value">
+            <span id="dup-threshold-val" class="text-sm font-mono w-10">0.85</span>
+          </div>
+          <button onclick="findSemanticDuplicates(document.getElementById('semantic-dup-name').value, {threshold: parseFloat(document.getElementById('semantic-dup-threshold').value)})" 
+                  class="btn-secondary w-full">
+            Find Duplicates
+          </button>
         </div>
-        <button onclick="deduplicateEntities(parseFloat(document.getElementById('dedup-threshold').value))" 
-                class="btn-secondary w-full">
-          Deduplicate
+      </div>
+      
+      <!-- Scan All Duplicates -->
+      <div class="p-4 border rounded-lg">
+        <h3 class="font-semibold mb-2">Scan Database for Duplicates</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Scan entire database for potential duplicate entities.
+        </p>
+        <div class="space-y-2">
+          <select id="dedupe-scan-kind" class="w-full px-3 py-2 border rounded-lg text-sm">
+            <option value="">All Entity Types</option>
+            <option value="company">Companies</option>
+            <option value="person">People</option>
+            <option value="location">Locations</option>
+          </select>
+          <div class="flex items-center gap-2">
+            <label class="text-sm">Threshold:</label>
+            <input type="range" id="dedupe-scan-threshold" min="0.7" max="1.0" step="0.05" value="0.9" 
+                   class="flex-1" onchange="document.getElementById('scan-threshold-val').textContent = this.value">
+            <span id="scan-threshold-val" class="text-sm font-mono w-10">0.9</span>
+          </div>
+          <button onclick="runDedupeScan({threshold: parseFloat(document.getElementById('dedupe-scan-threshold').value), kind: document.getElementById('dedupe-scan-kind').value})" 
+                  class="btn-secondary w-full">
+            Scan for Duplicates
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Relationship Confidence Management (NEW) -->
+  <div class="card p-6 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20 border-2 border-amber-200 dark:border-amber-800">
+    <h2 class="text-xl font-bold mb-2 text-amber-900 dark:text-amber-100">📊 Relationship Confidence</h2>
+    <p class="text-sm text-amber-700 dark:text-amber-300 mb-4">
+      Track relationship confidence. Relationships found multiple times automatically increase in confidence.
+    </p>
+    
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <!-- View Stats -->
+      <div class="p-4 border border-amber-200 dark:border-amber-700 rounded-lg">
+        <h3 class="font-semibold mb-2">Confidence Statistics</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          View distribution of relationship confidence scores.
+        </p>
+        <button onclick="getRelationshipStats()" 
+                class="btn-secondary w-full border-amber-300 hover:bg-amber-50 dark:border-amber-700 dark:hover:bg-amber-900/30">
+          View Stats
         </button>
       </div>
       
-      <!-- Find Similar -->
-      <div class="p-4 border rounded-lg">
-        <h3 class="font-semibold mb-2">Find Similar Entities</h3>
+      <!-- High Confidence -->
+      <div class="p-4 border border-amber-200 dark:border-amber-700 rounded-lg">
+        <h3 class="font-semibold mb-2">High Confidence</h3>
         <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
-          Search for entities similar to a given entity ID.
+          View relationships confirmed multiple times.
         </p>
-        <div class="space-y-2">
-          <input type="text" id="similar-entity-id" 
-                 class="w-full px-3 py-2 border rounded-lg text-sm"
-                 placeholder="Enter Entity ID">
-          <button onclick="findSimilarEntities(document.getElementById('similar-entity-id').value)" 
-                  class="btn-secondary w-full">
-            Find Similar
-          </button>
+        <div class="flex items-center gap-2 mb-2">
+          <label class="text-sm">Min:</label>
+          <input type="number" id="high-conf-min" value="0.7" min="0" max="1" step="0.1" 
+                 class="w-16 px-2 py-1 border rounded text-sm">
         </div>
+        <button onclick="getHighConfidenceRelationships({minConfidence: parseFloat(document.getElementById('high-conf-min').value)})" 
+                class="btn-secondary w-full border-amber-300 hover:bg-amber-50 dark:border-amber-700 dark:hover:bg-amber-900/30">
+          View High Confidence
+        </button>
+      </div>
+      
+      <!-- Record Relationship -->
+      <div class="p-4 border border-amber-200 dark:border-amber-700 rounded-lg">
+        <h3 class="font-semibold mb-2">Record Relationship</h3>
+        <p class="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          Manually record a relationship (boosts confidence if exists).
+        </p>
+        <button onclick="showRecordRelationshipModal()" 
+                class="btn-secondary w-full border-amber-300 hover:bg-amber-50 dark:border-amber-700 dark:hover:bg-amber-900/30">
+          Record New
+        </button>
       </div>
     </div>
   </div>
@@ -144,3 +283,108 @@
     </div>
   </div>
 </div>
+
+<script>
+// Add event listeners for new features
+document.addEventListener('DOMContentLoaded', function() {
+  // Semantic Search
+  document.getElementById('btn-semantic-search')?.addEventListener('click', function() {
+    const query = document.getElementById('semantic-search-query').value;
+    const kind = document.getElementById('semantic-search-kind').value;
+    const threshold = parseFloat(document.getElementById('semantic-search-threshold').value);
+    if (query) {
+      window.searchEntitiesSemantic(query, { kind, threshold });
+    } else {
+      alert('Please enter a search query');
+    }
+  });
+  
+  // Path Finding
+  document.getElementById('btn-find-path')?.addEventListener('click', function() {
+    const sourceId = document.getElementById('path-source-id').value;
+    const targetId = document.getElementById('path-target-id').value;
+    if (sourceId && targetId) {
+      window.findPath(sourceId, targetId);
+    } else {
+      alert('Please enter both source and target entity IDs');
+    }
+  });
+  
+  document.getElementById('btn-traverse-source')?.addEventListener('click', function() {
+    const sourceId = document.getElementById('path-source-id').value;
+    if (sourceId) {
+      window.traverseGraph([sourceId], { maxDepth: 2, topN: 10 });
+    } else {
+      alert('Please enter a source entity ID');
+    }
+  });
+});
+
+// Show modal for recording relationship
+window.showRecordRelationshipModal = function() {
+  const modal = document.createElement('div');
+  modal.className = 'modal-content';
+  modal.innerHTML = `
+    <h2 class="text-xl font-bold mb-4">Record Relationship</h2>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-sm font-medium mb-1">Source Entity ID</label>
+        <input type="text" id="rel-source-id" class="w-full px-3 py-2 border rounded-lg" placeholder="UUID">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Target Entity ID</label>
+        <input type="text" id="rel-target-id" class="w-full px-3 py-2 border rounded-lg" placeholder="UUID">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Relationship Type</label>
+        <input type="text" id="rel-type" class="w-full px-3 py-2 border rounded-lg" placeholder="e.g., works_at, founded, owns">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Source URL (optional)</label>
+        <input type="text" id="rel-source-url" class="w-full px-3 py-2 border rounded-lg" placeholder="https://...">
+      </div>
+    </div>
+    <div class="flex gap-2 mt-4">
+      <button onclick="submitRecordRelationship()" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+        Record
+      </button>
+      <button onclick="this.closest('.modal').remove()" class="px-4 py-2 bg-slate-300 text-slate-700 rounded hover:bg-slate-400">
+        Cancel
+      </button>
+    </div>
+  `;
+  if (window.showModal) {
+    window.showModal(modal);
+  } else {
+    // Fallback modal display
+    const overlay = document.createElement('div');
+    overlay.className = 'modal fixed inset-0 bg-black/50 flex items-center justify-center z-50';
+    const content = document.createElement('div');
+    content.className = 'bg-white dark:bg-slate-800 rounded-lg p-6 max-w-lg w-full mx-4';
+    content.appendChild(modal);
+    overlay.appendChild(content);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+  }
+};
+
+window.submitRecordRelationship = async function() {
+  const sourceId = document.getElementById('rel-source-id').value;
+  const targetId = document.getElementById('rel-target-id').value;
+  const relType = document.getElementById('rel-type').value;
+  const sourceUrl = document.getElementById('rel-source-url').value;
+  
+  if (!sourceId || !targetId || !relType) {
+    alert('Please fill in source ID, target ID, and relationship type');
+    return;
+  }
+  
+  try {
+    const result = await window.recordRelationship(sourceId, targetId, relType, sourceUrl || null);
+    alert(`Relationship ${result.status}: confidence = ${(result.relationship.confidence * 100).toFixed(0)}%`);
+    document.querySelector('.modal')?.remove();
+  } catch (error) {
+    alert('Failed to record relationship: ' + error.message);
+  }
+};
+</script>

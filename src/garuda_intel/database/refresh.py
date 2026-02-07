@@ -20,6 +20,11 @@ class RefreshRunner:
         self.llm_extractor = llm_extractor
 
     def run(self, batch: int = 50):
+        """Run  a refresh cycle on pending pages.
+        Fetches pending pages, extracts content using stored fingerprints, updates the store,
+        and updates vector store if applicable.
+        ToDo: Add delta detection and change logging and re-fingerprinting.
+        """
         pending = self.store.get_pending_refresh(limit=batch)
         for item in pending:
             url = item["url"]

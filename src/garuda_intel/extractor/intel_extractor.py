@@ -1,13 +1,18 @@
 """
 Intelligence extraction using LLM.
 Handles extracting structured intelligence from web pages about entities.
+
+Includes:
+- Entity merging: Looks up existing entities and merges new data
+- Type hierarchy: Detects specialized entity types (e.g., headquarters is a type of address)
+- Dynamic field tracking: Logs field discovery for adaptive learning
 """
 
 import json
 import logging
 import re
 import requests
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 from ..types.entity import EntityProfile
 from .text_processor import TextProcessor
@@ -15,10 +20,18 @@ from ..cache import CacheManager
 from .semantic_chunker import SemanticChunker
 from .quality_validator import ExtractionQualityValidator
 from .schema_discovery import DynamicSchemaDiscoverer
+from .entity_merger import EntityMerger, FieldDiscoveryTracker, ENTITY_TYPE_HIERARCHY
 
 
 class IntelExtractor:
-    """Handles LLM-based intelligence extraction from text content."""
+    """
+    Handles LLM-based intelligence extraction from text content.
+    
+    Enhanced with:
+    - Entity merging: Automatically finds and updates existing entities
+    - Type hierarchy: Detects specialized subtypes (address → headquarters)
+    - Field tracking: Records field discovery for learning
+    """
 
     def __init__(
         self,
@@ -31,6 +44,8 @@ class IntelExtractor:
         use_semantic_chunking: bool = True,
         enable_quality_validation: bool = True,
         enable_schema_discovery: bool = False,
+        enable_entity_merging: bool = True,
+        session_maker=None,
     ):
         self.ollama_url = ollama_url
         self.model = model
@@ -43,6 +58,8 @@ class IntelExtractor:
         self.use_semantic_chunking = use_semantic_chunking
         self.enable_quality_validation = enable_quality_validation
         self.enable_schema_discovery = enable_schema_discovery
+        self.enable_entity_merging = enable_entity_merging
+        self.session_maker = session_maker
         
         # Initialize Phase 2 enhancements
         if use_semantic_chunking:
@@ -64,6 +81,13 @@ class IntelExtractor:
             )
         else:
             self.schema_discoverer = None
+        
+        # Initialize entity merging components
+        self.entity_merger = None
+        self.field_tracker = None
+        if enable_entity_merging and session_maker:
+            self.entity_merger = EntityMerger(session_maker, self.logger)
+            self.field_tracker = FieldDiscoveryTracker(session_maker, self.logger)
 
     def extract_intelligence(
         self,
@@ -88,8 +112,10 @@ class IntelExtractor:
                 preserve_paragraphs=True
             )
             chunks = [chunk.text for chunk in chunk_objects[:self.max_chunks]]
+            self.logger.info(f"Semantic chunking produced {len(chunks)} [{chunks[:5]}] chunks for extraction.")
         else:
             chunks = self.text_processor.chunk_text(cleaned_text, self.extraction_chunk_chars, self.max_chunks)
+            self.logger.info(f"Simple chunking produced {len(chunks)} chunks for extraction.")
 
         # Drop chunks that do not mention the entity name at all (reduces junk/prompt bleed).
         name_l = profile.name.lower().strip() if profile.name else ""
@@ -226,11 +252,33 @@ class IntelExtractor:
                     self.logger.error(f"Failed to extract intelligence after {max_retries} attempts.")
                     return {}
 
-    def extract_entities_from_finding(self, finding: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract entity mentions from a finding."""
+    def extract_entities_from_finding(
+        self, 
+        finding: Dict[str, Any],
+        primary_entity_name: Optional[str] = None,
+        context_text: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract entity mentions from a finding with type hierarchy detection.
+        
+        This enhanced version:
+        1. Detects specialized entity types (e.g., address → headquarters)
+        2. Tracks relationships between entities (e.g., Company → has_headquarters → Address)
+        3. Provides context for entity merging
+        
+        Args:
+            finding: The extracted finding dictionary
+            primary_entity_name: Name of the primary entity for relationship context
+            context_text: Original text for specialized type detection
+            
+        Returns:
+            List of entity dictionaries with enhanced type information
+        """
         entities: List[Dict[str, Any]] = []
         if not isinstance(finding, dict):
             return entities
+        
+        context_text = context_text or ""
 
         basic_info = finding.get("basic_info") or {}
         if basic_info.get("official_name"):
@@ -259,6 +307,20 @@ class IntelExtractor:
                     p = {"name": p}
 
             if p.get("name"):
+                # Detect specialized person types (CEO, founder, etc.)
+                person_kind = "person"
+                title = p.get("title", "").lower()
+                role = p.get("role", "").lower()
+                
+                if any(kw in title or kw in role for kw in ["ceo", "chief executive"]):
+                    person_kind = "ceo"
+                elif any(kw in title or kw in role for kw in ["founder", "co-founder"]):
+                    person_kind = "founder"
+                elif any(kw in title or kw in role for kw in ["cfo", "cto", "coo", "president", "vp", "vice president", "director"]):
+                    person_kind = "executive"
+                elif any(kw in title or kw in role for kw in ["board", "chairman"]):
+                    person_kind = "board_member"
+                
                 # Store all person attributes as entity data
                 entity_data = {
                     "title": p.get("title"),
@@ -268,12 +330,23 @@ class IntelExtractor:
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
-                entities.append({
+                
+                entity_dict = {
                     "name": p["name"],
-                    "kind": "person",
+                    "kind": person_kind,
                     "data": entity_data,
-                    "attrs": p
-                })
+                    "attrs": p,
+                    "parent_type": "person" if person_kind != "person" else None,
+                }
+                
+                # Add relationship to primary entity if this is a leader
+                if primary_entity_name and person_kind in ["ceo", "founder", "executive", "board_member"]:
+                    entity_dict["suggested_relationship"] = {
+                        "target": primary_entity_name,
+                        "relation_type": f"{person_kind}_of",
+                    }
+                
+                entities.append(entity_dict)
 
         for prod in finding.get("products") or []:
             if not isinstance(prod, dict):
@@ -292,12 +365,22 @@ class IntelExtractor:
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
-                entities.append({
+                
+                entity_dict = {
                     "name": prod["name"],
                     "kind": "product",
                     "data": entity_data,
-                    "attrs": prod
-                })
+                    "attrs": prod,
+                }
+                
+                # Add relationship to primary entity
+                if primary_entity_name:
+                    entity_dict["suggested_relationship"] = {
+                        "target": primary_entity_name,
+                        "relation_type": "product_of",
+                    }
+                
+                entities.append(entity_dict)
 
         for loc in finding.get("locations") or []:
             if not isinstance(loc, dict):
@@ -308,6 +391,19 @@ class IntelExtractor:
 
             label = loc.get("address") or loc.get("city") or loc.get("country") or loc.get("name")
             if label:
+                # Detect specialized location types
+                location_kind = "location"
+                loc_type = (loc.get("type") or "").lower()
+                
+                # Check location type and context for specialization
+                if any(kw in loc_type or kw in label.lower() or kw in context_text.lower() 
+                       for kw in ["headquarter", "hq", "head office", "main office", "corporate office"]):
+                    location_kind = "headquarters"
+                elif any(kw in loc_type or kw in label.lower() for kw in ["branch", "regional"]):
+                    location_kind = "branch_office"
+                elif any(kw in loc_type for kw in ["registered", "legal"]):
+                    location_kind = "registered_address"
+                
                 # Store all location attributes as entity data
                 entity_data = {
                     "address": loc.get("address"),
@@ -317,12 +413,34 @@ class IntelExtractor:
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
-                entities.append({
+                
+                entity_dict = {
                     "name": label,
-                    "kind": "location",
+                    "kind": location_kind,
                     "data": entity_data,
-                    "attrs": loc
-                })
+                    "attrs": loc,
+                    "parent_type": "location" if location_kind != "location" else None,
+                }
+                
+                # Add relationship based on location type
+                if primary_entity_name:
+                    if location_kind == "headquarters":
+                        entity_dict["suggested_relationship"] = {
+                            "target": primary_entity_name,
+                            "relation_type": "headquarters_of",
+                        }
+                    elif location_kind == "branch_office":
+                        entity_dict["suggested_relationship"] = {
+                            "target": primary_entity_name,
+                            "relation_type": "branch_of",
+                        }
+                    else:
+                        entity_dict["suggested_relationship"] = {
+                            "target": primary_entity_name,
+                            "relation_type": "location_of",
+                        }
+                
+                entities.append(entity_dict)
 
         for evt in finding.get("events") or []:
             if not isinstance(evt, dict):
@@ -340,14 +458,116 @@ class IntelExtractor:
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
-                entities.append({
+                
+                entity_dict = {
                     "name": evt["title"],
                     "kind": "event",
                     "data": entity_data,
-                    "attrs": evt
-                })
+                    "attrs": evt,
+                }
+                
+                # Add relationship to primary entity
+                if primary_entity_name:
+                    entity_dict["suggested_relationship"] = {
+                        "target": primary_entity_name,
+                        "relation_type": "event_of",
+                    }
+                
+                entities.append(entity_dict)
 
         return entities
+    
+    def process_entities_with_merging(
+        self,
+        entities: List[Dict[str, Any]],
+        page_id: Optional[str] = None,
+        source_url: Optional[str] = None,
+        confidence: float = 0.5,
+    ) -> Dict[Tuple[str, str], str]:
+        """
+        Process extracted entities with intelligent merging.
+        
+        This method:
+        1. Looks up existing entities by name
+        2. Updates existing entities with new information
+        3. Creates new entities when no match found
+        4. Tracks field discovery for learning
+        
+        Args:
+            entities: List of entity dictionaries from extract_entities_from_finding
+            page_id: Source page ID for provenance
+            source_url: Source URL for provenance
+            confidence: Extraction confidence score
+            
+        Returns:
+            Mapping of (name, kind) to entity_id
+        """
+        if not self.entity_merger:
+            self.logger.warning("Entity merging not available - no session_maker configured")
+            return {}
+        
+        entity_id_map: Dict[Tuple[str, str], str] = {}
+        
+        for entity in entities:
+            name = entity.get("name")
+            kind = entity.get("kind", "entity")
+            data = entity.get("data", {})
+            attrs = entity.get("attrs", {})
+            
+            if not name:
+                continue
+            
+            try:
+                # Get or create entity with merging
+                entity_id, was_created = self.entity_merger.get_or_create_entity(
+                    name=name,
+                    kind=kind,
+                    data=data,
+                    metadata={"attrs": attrs} if attrs else None,
+                    page_id=page_id,
+                    source_url=source_url,
+                    confidence=confidence,
+                )
+                
+                entity_id_map[(name, kind)] = entity_id
+                
+                # Track field discovery
+                if self.field_tracker and data:
+                    for field_name in data.keys():
+                        self.field_tracker.log_discovery(
+                            field_name=field_name,
+                            entity_type=kind,
+                            was_successful=True,
+                            extraction_confidence=confidence,
+                            discovery_method="llm",
+                            page_id=page_id,
+                            entity_id=entity_id,
+                        )
+                
+                # Handle suggested relationships
+                suggested_rel = entity.get("suggested_relationship")
+                if suggested_rel and self.entity_merger:
+                    target_name = suggested_rel.get("target")
+                    relation_type = suggested_rel.get("relation_type")
+                    
+                    # Look up target entity
+                    target = self.entity_merger.find_existing_entity(target_name)
+                    if target:
+                        # Create relationship using the merger
+                        with self.entity_merger.Session() as session:
+                            self.entity_merger._ensure_relationship(
+                                session,
+                                entity_id,
+                                target["id"],
+                                relation_type,
+                            )
+                            session.commit()
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to process entity {name}: {e}")
+                continue
+        
+        return entity_id_map
 
     def _rule_based_intel(self, profile: EntityProfile, text: str, url: str, page_type: str) -> dict:
         """

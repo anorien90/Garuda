@@ -70,21 +70,29 @@ def test_entity_extraction_with_all_types():
     entities = extractor.extract_entities_from_finding(finding)
     
     # Verify all entity types are extracted
+    # Note: The extractor now detects specialized types (ceo, founder, headquarters)
+    # instead of generic types (person, location) when context indicates specialization
     entity_kinds = {e["kind"] for e in entities}
     assert "company" in entity_kinds or "entity" in entity_kinds, "Basic info entity missing"
-    assert "person" in entity_kinds, "Person entities missing"
-    assert "location" in entity_kinds, "Location entities missing"
+    # Persons may be detected as specialized types (ceo, founder, executive, etc.)
+    person_types = {"person", "ceo", "founder", "executive", "board_member"}
+    assert len(entity_kinds & person_types) > 0, f"Person entities missing. Found kinds: {entity_kinds}"
+    # Locations may be detected as specialized types (headquarters, branch_office, etc.)
+    location_types = {"location", "headquarters", "branch_office", "registered_address"}
+    assert len(entity_kinds & location_types) > 0, f"Location entities missing. Found kinds: {entity_kinds}"
     assert "product" in entity_kinds, "Product entities missing"
     assert "event" in entity_kinds, "Event entities missing"
     
-    # Verify persons have data
-    persons = [e for e in entities if e["kind"] == "person"]
+    # Verify persons have data (may be specialized type now)
+    persons = [e for e in entities if e["kind"] in person_types]
     assert len(persons) == 2, f"Expected 2 persons, got {len(persons)}"
     
     bill_gates = next((p for p in persons if p["name"] == "Bill Gates"), None)
     assert bill_gates is not None, "Bill Gates not found"
     assert bill_gates.get("data", {}).get("title") == "Co-founder", "Person data not preserved"
     assert bill_gates.get("data", {}).get("role") == "founder", "Person role not preserved"
+    # Bill Gates should be detected as 'founder' due to role
+    assert bill_gates.get("kind") == "founder", f"Expected Bill Gates to be 'founder', got {bill_gates.get('kind')}"
     
     # Verify products have data
     products = [e for e in entities if e["kind"] == "product"]
@@ -94,8 +102,8 @@ def test_entity_extraction_with_all_types():
     assert windows is not None, "Windows product not found"
     assert windows.get("data", {}).get("description") == "Operating system", "Product data not preserved"
     
-    # Verify locations have data
-    locations = [e for e in entities if e["kind"] == "location"]
+    # Verify locations have data (may be specialized type now)
+    locations = [e for e in entities if e["kind"] in location_types]
     assert len(locations) >= 1, f"Expected at least 1 location, got {len(locations)}"
     
     redmond = next((l for l in locations if "Redmond" in l["name"]), None)

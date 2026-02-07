@@ -1,3 +1,4 @@
+media/video/*.mp4
 *.db
 src/__pycache__/
 src/**/__pycache__/
