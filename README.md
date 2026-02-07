@@ -3,10 +3,7 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Status](https://img.shields.io/badge/status-beta-orange)
-<!-- Uncomment and update the following badges if you add CI or coverage configs
-[![CI](https://github.com/anorien90/Garuda/actions/workflows/ci.yml/badge.svg)](https://github.com/anorien90/Garuda/actions)
-[![codecov](https://codecov.io/gh/anorien90/Garuda/branch/main/graph/badge.svg)](https://codecov.io/gh/anorien90/Garuda)
--->
+![Docker](https://img.shields.io/badge/docker-ready-brightgreen)
 
 ## Overview
 
@@ -16,13 +13,13 @@
 
 🧠 **Intelligent & Adaptive**: Unlike traditional crawlers, Garuda analyzes what it already knows and automatically fills knowledge gaps through targeted searches.
 
-🔍 **RAG-First Hybrid Search**: Combines SQL keyword search with semantic vector search, automatically triggering live crawls when needed.
+🔍 **RAG-First Hybrid Search**: Combines SQL keyword search with semantic vector search, with **automatic retry using paraphrased queries** and intelligent web crawling when needed.
 
 🕸️ **Knowledge Graph**: Tracks entities, relationships, and temporal changes in a unified graph structure with full provenance.
 
 🎬 **Multi-Modal Processing**: Extracts intelligence from text, images (OCR), videos (transcription), and audio files.
 
-🔧 **Production-Ready**: Web UI, REST API, and Chrome extension for flexible integration into existing workflows.
+🔧 **Production-Ready**: Web UI with 15 specialized panels, REST API, Chrome extension, and comprehensive CLI tools.
 
 ### Primary Use Cases
 
@@ -37,764 +34,1449 @@
 ## Table of Contents
 
 - [Key Features](#key-features)
-- [New in v2.x / Refactored](#new-in-v2x--refactored)
 - [Architecture Overview](#architecture-overview)
+  - [System Architecture](#system-architecture)
+  - [Processing Pipeline](#processing-pipeline)
+  - [RAG Hybrid Search with Retry](#rag-hybrid-search-with-retry)
+  - [Data Model](#data-model)
+- [Module Organization](#module-organization)
+- [Key Technologies](#key-technologies)
 - [Requirements](#requirements)
 - [Installation](#installation)
+  - [Method 1: Git Clone + Pip Install](#method-1-git-clone--pip-install)
+  - [Method 2: Docker Compose](#method-2-docker-compose)
 - [Configuration](#configuration)
+  - [Complete Environment Variables Reference](#complete-environment-variables-reference)
+- [Docker](#docker)
+  - [Services](#services)
+  - [GPU Support](#gpu-support)
+  - [Data Volumes](#data-volumes)
+- [CLI Tools](#cli-tools)
 - [Quickstart](#quickstart)
+  - [Using Docker](#using-docker)
+  - [Using Local Installation](#using-local-installation)
+- [RAG Retry with Paraphrasing](#rag-retry-with-paraphrasing)
+  - [4-Phase Intelligent Search](#4-phase-intelligent-search)
+  - [Configuration](#rag-configuration)
+  - [API Response Fields](#api-response-fields)
+  - [Performance & Benefits](#performance--benefits)
 - [Screenshots](#screenshots)
-- [Example Use Cases](#example-use-cases)
-- [Demo Data & Public Datasets](#demo-data--public-datasets)
+- [Chrome Extension](#chrome-extension)
 - [Contributing](#contributing)
-- [Bug Reporting & Help](#bug-reporting--help)
 - [Security Notes](#security-notes)
-- [Roadmap](#roadmap)
+- [License](#license)
 
 ---
 
 ## Key Features
 
-- **Unified Web UI**: Modern Flask-based interface with reorganized tabs for better usability:
-  - 🔍 **Search**: Unified intel search (SQL + semantic vector search)
-  - 🌐 **Crawler**: Intelligent web crawling with entity-awareness  
-  - 📄 **Data**: Browse pages and recorded content
-  - 🕸️ **Graph**: Interactive entity relationship visualization with unique entities
-  - ✨ **Quality**: Entity gap analysis, deduplication, and data quality tools
-  - 🎬 **Media**: Media processing (images, video, audio to text)
-- **Chrome Extension**: Record pages/elements/images directly in-browser, with fast search, preview, and session handling.
-- **Multi-layer Extraction**: HTML, metadata, images, fingerprints + LLM-powered intel with reflection/verification.
-- **Structured Storage**: SQLAlchemy models and Qdrant vector search integration, with flexible config.
-- **Conversational & Semantic Search**: RAG-style CLI & web chat across database and vectors.
-- **Modular & Extensible**: Python modules organized for easy development and customization.
-- **Strong Security**: API-key protected endpoints, CORS restrictors, and local LLM/vector options.
-- **🧠 Intelligent Gap-Aware Crawling**: Automatically analyzes entity data, identifies missing fields, and generates targeted crawl strategies.
-- **🎯 Entity Gap Analysis**: Identifies missing data fields with completeness scoring and prioritized recommendations.
-- **📊 Adaptive Learning System**: Learns from crawl results to improve future discovery strategies.
-- **🎬 NEW: Advanced Media Processing**: 
-  - Extract text from images using Tesseract OCR or AI Image2Text models
-  - Extract text from videos using audio transcription or AI Video2Text models
-  - Extract audio from videos for separate processing
-  - Speech-to-text for audio files
-  - Multiple processing backends with configurable methods
-  - Convert media into embeddings integrated into the knowledge graph
-- **🕸️ NEW: Complete Relationship Persistence**: 
-  - Ensures ALL entity relationships are persisted, even for multi-level hierarchies
-  - Auto-creates missing entities referenced in relationships
-  - Tracks full relationship chains: Seed → Page → Intel → Entities
-  - Smart deduplication that preserves mandatory relationships
-- **🕸️ NEW: Unique Entity Graph**: Entities graph ensures only unique entities with full relations and aggregated details.
-- **🔄 NEW: Dynamic Entity Kind Registry**: 
-  - Supports entity kind inheritance (CEO → Person, Headquarters → Location)
-  - Runtime registration of new entity kinds discovered during extraction
-  - Automatic kind normalization with alias support
-  - Priority-based deduplication when multiple kinds apply
-- **👥 NEW: Related Entity Extraction**: 
-  - Extracts ALL entities mentioned on a page, not just the primary target
-  - Automatically creates relationships between primary target and related entities
-  - Detects specialized types (executives, headquarters) with parent type inheritance
-- **🔁 NEW: Configurable Chat Search Cycles**: 
-  - Multiple search/crawl cycles (default 3) for comprehensive answers
-  - Full pipeline execution per cycle (crawl → extract → embed → RAG query)
-  - Early termination when sufficient high-quality results found
-  - Different search angles per cycle for broader coverage
-- **🤖 NEW: Intelligent Agent Mode**: 
-  - **Reflect & Refine**: Merge duplicate entities (Microsoft Corp → Microsoft Corporation), validate data quality
-  - **Explore & Prioritize**: Analyze entity graphs, find high-priority entities based on relation depth
-  - **Multidimensional RAG Search**: Combine embedding search with graph traversal for comprehensive results
-  - Async chat with agent capabilities for streaming responses
-  - CLI tool (`garuda-agent`) for command-line agent operations
-- **⏱️ NEW: Extended LLM Timeouts**: 
-  - Default timeouts increased to 15 minutes for long-running summarization
-  - Configurable via environment variables
-  - Hierarchical summarization for large texts that exceed context windows
+### Web UI - 15 Specialized Panels
 
----
+Modern Flask-based interface with comprehensive tabs:
 
-## New in v2.x / Refactored
+- 🤖 **Agent Panel**: Autonomous entity exploration and gap filling
+- 💬 **Chat**: RAG-powered conversational search with 4-phase intelligent retry
+- 🌐 **Crawl**: Intelligent web crawling with entity-awareness
+- 📊 **Data Quality**: Entity completeness analysis and data quality metrics
+- 🕸️ **Entities Graph**: Interactive relationship visualization with unique entities
+- 🛠️ **Entity Tools**: Deduplication, merging, and entity management
+- 🔍 **Intel**: Entity extraction results and intelligence viewer
+- 🎬 **Media**: Image, video, and audio processing pipeline
+- 📄 **Pages**: Browse crawled pages with metadata and fingerprints
+- 📝 **Recorder Admin**: Manage recorded content and sessions
+- 🔎 **Recorder Search**: Search through recorded browser content
+- 🔍 **Search Unified**: Hybrid SQL + semantic vector search
+- 🧠 **Semantic**: Vector search with embedding visualization
+- ⚙️ **Settings**: System configuration and preferences
+- 📊 **Status**: System health, statistics, and monitoring
 
-- 🖥️ **Reorganized Web UI** in [`src/webapp/`](src/webapp): Simplified tab structure grouping related functionality.
-- 🎬 **Media Processing** in [`src/services/media_processor.py`](src/services/media_processor.py): Optional OCR, speech-to-text, and embedding generation.
-- 🔗 **Unique Entity Graph**: Graph visualization uses canonical entity names and UUID-based deduplication for data quality.
-- 🧩 **Improved Chrome Extension** in [`plugin/chrome/`](plugin/chrome): Multi-tab popup, session-aware marking, Tailwind-powered layout, settings persistence.
-- 📦 **Configurable settings** via `.env` and `src/webapp/config.py`.
-- 🦾 **Cleaner repo structure**: All modules isolated under `src/`, for browser, extractor, vector, database, etc.
-- ⚡ **Enhanced extensibility**: Add new storage, LLM/vector backends, and UI components with ease.
-- 🧠 **Dynamic Intelligence Gathering**: Gap-aware crawling, cross-entity inference, and adaptive strategies.
-- 🔄 **Dynamic Entity Kind System**: Entity kinds with inheritance, automatic registration, and type hierarchy.
-- 🔁 **Multi-cycle Chat Pipeline**: Configurable search cycles with full pipeline execution.
-- 🤖 **Agent Mode**: Intelligent agent for data exploration, entity merging, and multidimensional search.
+### Core Intelligence Capabilities
+
+- **🧠 Intelligent Gap-Aware Crawling**: Automatically analyzes entity data, identifies missing fields, and generates targeted crawl strategies
+- **🎯 Entity Gap Analysis**: Identifies missing data fields with completeness scoring and prioritized recommendations
+- **📊 Adaptive Learning System**: Learns from crawl results to improve future discovery strategies
+- **🔄 Dynamic Entity Kind Registry**: Supports entity kind inheritance (CEO → Person), runtime registration, automatic normalization
+- **👥 Related Entity Extraction**: Extracts ALL entities mentioned on a page with automatic relationship creation
+- **🕸️ Complete Relationship Persistence**: Ensures ALL entity relationships are persisted, even for multi-level hierarchies
+- **🔁 Configurable Chat Search Cycles**: Multiple search/crawl cycles (default 3) with early termination on success
+
+### Advanced Media Processing
+
+- **Image Processing**: Tesseract OCR or AI Image2Text models
+- **Video Processing**: Audio transcription or AI Video2Text models
+- **Audio Processing**: Speech-to-text for audio files
+- **Multiple Backends**: Configurable processing methods per media type
+- **Embedding Integration**: Convert media into embeddings integrated into the knowledge graph
+
+### Additional Features
+
+- **Chrome Extension**: Record pages/elements/images directly in-browser, with fast search and preview
+- **Multi-layer Extraction**: HTML, metadata, images, fingerprints + LLM-powered intel with reflection/verification
+- **Structured Storage**: SQLAlchemy ORM with support for SQLite/PostgreSQL + Qdrant vector search
+- **Conversational Search**: RAG-style CLI & web chat with automatic retry and paraphrasing
+- **Modular & Extensible**: Python modules organized for easy development and customization
+- **Strong Security**: API-key protected endpoints, CORS configuration, local LLM/vector options
 
 ---
 
 ## Architecture Overview
 
-### High-Level System Architecture
-
-Garuda is built on a **modular, layered architecture** that separates concerns across data acquisition, processing, storage, and presentation layers. The system leverages hybrid search (SQL + vector embeddings), LLM-powered intelligence extraction, and adaptive learning to provide comprehensive entity intelligence gathering.
+### System Architecture
 
 ```mermaid
-flowchart TB
-    subgraph Presentation["🎨 Presentation Layer"]
+graph TB
+    subgraph "User Interfaces"
         UI[Web UI - Flask]
-        API[REST API]
+        CLI[CLI Tools]
         EXT[Chrome Extension]
     end
-    
-    subgraph Services["🔧 Services Layer"]
-        GapAnalyzer[Entity Gap Analyzer]
-        AdaptiveCrawler[Adaptive Crawler]
-        MediaProcessor[Media Processor]
-        InferenceEngine[Knowledge Inference]
+
+    subgraph "Core Services"
+        WEB[webapp - Flask Routes & Services]
+        SEARCH[search - Hybrid Search Engine]
+        AGENT[services - Agent & Inference]
+        REC[recorder - Browser Recorder]
     end
-    
-    subgraph Business["💼 Business Logic Layer"]
-        Crawler[Intelligent Crawler]
-        Extractor[Intel Extractor]
-        Search[Hybrid Search]
-        RelationMgr[Relationship Manager]
+
+    subgraph "Intelligence Pipeline"
+        DISC[discover - Crawling & Frontier]
+        BROW[browser - Selenium Automation]
+        EXTR[extractor - LLM Intelligence]
+        PROC[services - Media Processor]
     end
-    
-    subgraph Data["💾 Data Layer"]
-        SQL[(SQL Database<br/>SQLAlchemy)]
-        Vector[(Vector Store<br/>Qdrant)]
-        Cache[(Cache<br/>Redis/Memory)]
+
+    subgraph "Data Layer"
+        DB[(database - SQLAlchemy ORM)]
+        VEC[(vector - Qdrant)]
+        CACHE[cache - Embedding & LLM]
     end
-    
-    subgraph Infrastructure["⚙️ Infrastructure Layer"]
-        Browser[Selenium Browser]
-        LLM[LLM API<br/>Ollama/OpenAI]
-        Embedding[Embedding Model<br/>SentenceTransformers]
+
+    subgraph "Supporting Modules"
+        EXPL[explorer - Entity Explorer]
+        TEMP[templates - Extraction Templates]
+        TYPES[types - Entity & Page Types]
+        SRC[sources - API/PDF Adapters]
     end
-    
-    UI --> API
-    EXT --> API
-    API --> Services
-    Services --> Business
-    Business --> Data
-    Business --> Infrastructure
-    Infrastructure --> Data
+
+    UI --> WEB
+    CLI --> SEARCH
+    CLI --> AGENT
+    EXT --> REC
+
+    WEB --> SEARCH
+    WEB --> AGENT
+    WEB --> DB
+    WEB --> VEC
+
+    SEARCH --> DB
+    SEARCH --> VEC
+    SEARCH --> DISC
+
+    AGENT --> EXPL
+    AGENT --> DISC
+
+    DISC --> BROW
+    BROW --> EXTR
+    EXTR --> PROC
+    PROC --> DB
+
+    EXTR --> TEMP
+    EXTR --> TYPES
+    EXTR --> CACHE
+
+    DB --> CACHE
+    VEC --> CACHE
+
+    style UI fill:#e1f5ff
+    style WEB fill:#fff4e1
+    style DB fill:#ffe1e1
+    style VEC fill:#ffe1e1
 ```
 
-### Detailed Component Architecture
+### Processing Pipeline
+
+```mermaid
+flowchart LR
+    A[URL/Query] --> B[discover<br/>Frontier Management]
+    B --> C[browser<br/>Selenium Scraping]
+    C --> D[extractor<br/>LLM Extraction]
+    D --> E{Media?}
+    E -->|Yes| F[services<br/>Media Processor]
+    E -->|No| G[database<br/>Store Intelligence]
+    F --> G
+    G --> H[vector<br/>Generate Embeddings]
+    H --> I[cache<br/>Cache Results]
+    I --> J[Database +<br/>Vector Store]
+
+    style A fill:#e1ffe1
+    style J fill:#ffe1e1
+    style D fill:#fff4e1
+    style F fill:#f0e1ff
+```
+
+### RAG Hybrid Search with Retry
+
+Garuda implements a **4-phase intelligent search** strategy that maximizes answer quality while minimizing unnecessary web crawling:
 
 ```mermaid
 flowchart TD
-    subgraph Input["📥 Data Input Sources"]
-        DDG[DuckDuckGo<br/>Search]
-        Manual[Manual<br/>Seeds]
-        Extension[Chrome<br/>Extension]
-        API_In[API<br/>Endpoints]
-    end
+    START[User Query] --> P1[Phase 1: Initial RAG Lookup]
+    P1 --> Q1{Sufficient<br/>Quality?}
     
-    subgraph Acquisition["🌐 Data Acquisition"]
-        Browser[Selenium<br/>Browser]
-        Parser[BeautifulSoup<br/>Parser]
-        MediaDown[Media<br/>Downloader]
-    end
+    Q1 -->|Yes| ANS1[Return Answer]
+    Q1 -->|No| P2[Phase 2: Retry with Paraphrasing]
     
-    subgraph Processing["⚙️ Processing Pipeline"]
-        TextProc[Text<br/>Processor]
-        IntelExt[LLM Intel<br/>Extractor]
-        MediaProc[Media<br/>Processor]
-        EntityDedupe[Entity<br/>Deduplication]
-    end
+    P2 --> PARA[Generate 2-3<br/>Paraphrased Queries]
+    PARA --> DBL[Double Hit Count<br/>cap at 20]
+    DBL --> SEARCH[Search with All<br/>Queries]
+    SEARCH --> DEDUP[Deduplicate<br/>Results]
+    DEDUP --> Q2{Sufficient<br/>Quality?}
     
-    subgraph Storage["💾 Storage Layer"]
-        SQLStore[(SQL DB<br/>Entities, Intel,<br/>Pages, Relations)]
-        VectorStore[(Vector DB<br/>Embeddings)]
-        MediaStore[(Media<br/>Content)]
-    end
+    Q2 -->|Yes| ANS2[Return Enhanced<br/>Answer]
+    Q2 -->|No| P3[Phase 3: Intelligent<br/>Web Crawling]
     
-    subgraph Intelligence["🧠 Intelligence Layer"]
-        GapAnalysis[Gap<br/>Analysis]
-        Inference[Cross-Entity<br/>Inference]
-        Learning[Adaptive<br/>Learning]
-        PostProc[Post-Crawl<br/>Processing]
-    end
+    P3 --> GEN[Generate Targeted<br/>Search Queries]
+    GEN --> CRAWL[Crawl & Extract<br/>from Web]
+    CRAWL --> EMB[Generate<br/>Embeddings]
+    EMB --> P4[Phase 4: Re-query<br/>with New Data]
     
-    subgraph Query["🔍 Query & Retrieval"]
-        HybridSearch[Hybrid Search<br/>SQL + Vector]
-        RAG[RAG Pipeline]
-        GraphQuery[Graph<br/>Queries]
-    end
-    
-    subgraph Output["📤 Output & Visualization"]
-        WebUI[Web UI<br/>6 Tabs]
-        ExtUI[Extension<br/>Popup]
-        APIOut[REST API<br/>Responses]
-    end
-    
-    Input --> Acquisition
-    Acquisition --> Processing
-    Processing --> Storage
-    Storage --> Intelligence
-    Intelligence --> Query
-    Query --> Output
-    
-    Intelligence -.->|Targeted Queries| Input
-    Query -.->|Trigger Crawl| Acquisition
-    
-    style Input fill:#e1f5ff
-    style Acquisition fill:#fff4e1
-    style Processing fill:#ffe1e1
-    style Storage fill:#e1ffe1
-    style Intelligence fill:#f0e1ff
-    style Query fill:#ffe1f5
-    style Output fill:#e1f5ff
+    P4 --> ANS3[Return Final<br/>Answer]
+
+    style P1 fill:#e1f5ff
+    style P2 fill:#fff4e1
+    style P3 fill:#ffe1e1
+    style P4 fill:#e1ffe1
+    style ANS1 fill:#d4edda
+    style ANS2 fill:#d4edda
+    style ANS3 fill:#d4edda
 ```
 
-### Intelligent Crawling Workflow
+**Key Benefits:**
+- **Higher Success Rate**: Paraphrasing captures different semantic variations
+- **Better Coverage**: Increased hit count ensures more context
+- **Reduced Crawling**: ~40% fewer Phase 3 triggers, avoiding expensive web crawls
+- **Improved UX**: Faster responses with better answers (Phase 2 adds only ~2-4 seconds)
 
-```mermaid
-flowchart TB
-    Start([User Query:<br/>Entity Name]) --> Check{Entity<br/>Exists?}
-    
-    Check -->|No| Discovery[🔍 DISCOVERY Mode]
-    Check -->|Yes| GapCheck[📊 Analyze Gaps]
-    
-    Discovery --> GenBroad[Generate<br/>Broad Queries]
-    GenBroad --> Search[DuckDuckGo<br/>Search]
-    
-    GapCheck --> CalcScore[Calculate<br/>Completeness Score]
-    CalcScore --> Missing[Identify<br/>Missing Fields]
-    Missing --> GenTarget[Generate<br/>Targeted Queries]
-    GenTarget --> Search
-    
-    Search --> Fetch[Selenium<br/>Browser Fetch]
-    Fetch --> Extract[Multi-layer<br/>Extraction]
-    
-    Extract --> LLM[LLM Intel<br/>Extraction]
-    Extract --> Heuristic[Heuristic<br/>Extraction]
-    Extract --> Media[Media<br/>Processing]
-    
-    LLM --> Combine[Combine &<br/>Deduplicate]
-    Heuristic --> Combine
-    Media --> Combine
-    
-    Combine --> Store[Store to<br/>SQL + Vector]
-    Store --> PostProc[Post-Crawl<br/>Processing]
-    
-    PostProc --> Dedupe[Entity<br/>Deduplication]
-    PostProc --> RelVal[Relationship<br/>Validation]
-    PostProc --> Aggregate[Intelligence<br/>Aggregation]
-    PostProc --> InferMissing[Cross-Entity<br/>Inference]
-    PostProc --> Embeddings[Embedding<br/>Generation]
-    
-    Embeddings --> Learn[Learning<br/>System Update]
-    Learn --> Report[Report<br/>Results]
-    
-    Report --> ReCheck{Gaps<br/>Filled?}
-    ReCheck -->|No & Iterations < Max| GenTarget
-    ReCheck -->|Yes| Complete([Complete])
-    
-    style Start fill:#4CAF50,color:#fff
-    style Complete fill:#4CAF50,color:#fff
-    style Discovery fill:#2196F3,color:#fff
-    style GapCheck fill:#FF9800,color:#fff
-```
-
-### RAG-First Hybrid Search Flow
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant UI as Web UI
-    participant API as Search API
-    participant V as Vector Store
-    participant S as SQL Store
-    participant L as LLM
-    participant C as Crawler
-    
-    U->>UI: Ask Question
-    UI->>API: POST /api/chat
-    
-    API->>API: Embed Query
-    API->>V: Semantic Search (top_k)
-    V-->>API: RAG Results (with scores)
-    
-    API->>API: Filter High Quality<br/>(score >= 0.7)
-    
-    alt High Quality RAG Results >= 2
-        API->>S: Supplement with SQL
-        S-->>API: Keyword Results
-        API->>API: Merge & Rank
-    else Insufficient RAG Results
-        API->>L: Generate Search Queries
-        L-->>API: Targeted Queries
-        API->>C: Trigger Intelligent Crawl
-        C->>C: Fetch → Extract → Store → Embed
-        C-->>API: New Data Available
-        API->>V: Re-query Vector Store
-        V-->>API: Enhanced RAG Results
-    end
-    
-    API->>L: Synthesize Answer<br/>from Context
-    L-->>API: Generated Answer
-    
-    API-->>UI: Answer + Context<br/>+ Metadata
-    UI-->>U: Display Results<br/>with Source Tags
-    
-    Note over U,C: 🧠 Purple: RAG | 📊 Blue: SQL | 🌐 Green: Live Crawl
-```
-
-### Data Model & Relationships
+### Data Model
 
 ```mermaid
 erDiagram
-    ENTITY ||--o{ INTELLIGENCE : has
-    ENTITY ||--o{ RELATIONSHIP : source
-    ENTITY ||--o{ RELATIONSHIP : target
-    PAGE ||--o{ INTELLIGENCE : extracted_from
-    PAGE ||--o{ MEDIA_CONTENT : contains
-    INTELLIGENCE ||--o{ EMBEDDINGS : generates
-    PAGE ||--o{ EMBEDDINGS : generates
+    SEED ||--o{ PAGE : discovers
+    PAGE ||--o{ INTELLIGENCE : extracts
+    INTELLIGENCE ||--o{ ENTITY : contains
+    ENTITY ||--o{ RELATIONSHIP : has
+    ENTITY ||--o{ MEDIA : references
+    PAGE ||--o{ MEDIA : contains
     
-    ENTITY {
-        uuid id PK
-        string name
-        string kind
-        json data
-        json metadata
+    SEED {
+        int id PK
+        string url
+        string type
         datetime created_at
     }
     
+    PAGE {
+        int id PK
+        string url
+        string title
+        text content
+        json metadata
+        string fingerprint
+        datetime crawled_at
+        int seed_id FK
+    }
+    
     INTELLIGENCE {
-        uuid id PK
-        uuid entity_id FK
-        uuid page_id FK
-        json data
+        int id PK
+        text summary
+        json key_facts
+        json entities_extracted
         float confidence
-        datetime extracted_at
+        int page_id FK
+    }
+    
+    ENTITY {
+        int id PK
+        string name
+        string kind
+        json attributes
+        float completeness_score
+        datetime discovered_at
     }
     
     RELATIONSHIP {
-        uuid id PK
-        uuid source_id FK
-        uuid target_id FK
-        string type
+        int id PK
+        int source_entity_id FK
+        int target_entity_id FK
+        string relationship_type
         float confidence
-        json metadata
+        text context
     }
     
-    PAGE {
-        uuid id PK
+    MEDIA {
+        int id PK
         string url
-        text html
-        string page_type
-        string crawl_source
-        float confidence
-    }
-    
-    MEDIA_CONTENT {
-        uuid id PK
-        uuid page_id FK
-        string media_url
         string media_type
         text extracted_text
-        json entities_mentioned
-        string processing_method
-    }
-    
-    EMBEDDINGS {
-        uuid point_id PK
-        vector embedding
-        json payload
-        uuid entity_id
-        uuid page_id
+        json metadata
+        int page_id FK
     }
 ```
 
-### Module Organization
+---
+
+## Module Organization
 
 ```
-src/garuda_intel/
-├── 🌐 browser/          # Web scraping & automation
-│   ├── selenium.py      # Headless Chrome driver
-│   └── active.py        # Interactive browser sessions
-│
-├── 💾 database/         # Data persistence & ORM
-│   ├── models.py        # SQLAlchemy entities
-│   ├── engine.py        # Database operations
-│   ├── store.py         # Abstraction layer
-│   └── relationship_manager.py  # Graph operations
-│
-├── 🔍 discover/         # Intelligent crawling
-│   ├── crawl_modes.py   # Discovery/Targeting/Expansion
-│   ├── crawl_learner.py # Adaptive learning
-│   └── seeds.py         # URL seed management
-│
-├── ⚙️ extractor/        # Intelligence extraction
-│   ├── intel_extractor.py     # LLM-based extraction
-│   ├── semantic_engine.py     # Embeddings generation
-│   ├── text_processor.py      # Content cleaning
-│   └── llm.py                 # LLM interface
-│
-├── 🧠 services/         # High-level business logic
-│   ├── entity_gap_analyzer.py   # Gap detection
-│   ├── adaptive_crawler.py      # Crawl orchestration
-│   └── media_processor.py       # Media extraction
-│
-├── 🔢 vector/           # Vector database
-│   ├── engine.py        # Qdrant integration
-│   └── base.py          # Abstract interface
-│
-└── 🌐 webapp/           # Web UI & API
-    ├── app.py           # Flask application
-    ├── routes/          # API endpoints
-    └── static/          # Frontend assets
+Garuda/
+├── .env                          # Environment config (Docker-oriented defaults)
+├── Dockerfile                    # Python 3.13-slim + Chrome + ChromeDriver + Tesseract
+├── docker-compose.yml            # 3 services: garuda, qdrant, ollama
+├── pyproject.toml                # Package config, entry points, tools
+├── requirements.txt              # Python dependencies
+├── LICENSE                       # GPL-3.0
+├── build/lib/                    # Build artifacts
+├── media/
+│   ├── screenshots/              # UI screenshots
+│   └── videos/                   # Demo videos (GarudaExplained.mp4, GarudaTeaser.mp4)
+├── plugin/
+│   └── chrome/                   # Chrome extension
+│       ├── background.js         # Service worker
+│       ├── content.js            # Content script
+│       ├── manifest.json         # Extension manifest
+│       ├── popup.html            # Extension UI
+│       └── popup.js              # Extension logic
+├── tests/                        # ~30 test files
+└── src/
+    └── garuda_intel/
+        ├── __init__.py
+        ├── config.py              # Settings dataclass with from_env()
+        ├── search.py              # Main search CLI entry point
+        ├── browser/               # Web scraping & browser automation
+        │   ├── selenium.py        # Selenium WebDriver wrapper
+        │   └── active.py          # Active browser session management
+        ├── cache/                 # Caching infrastructure
+        │   ├── cache_manager.py   # Cache coordination
+        │   ├── embedding_cache.py # Embedding cache
+        │   └── llm_cache.py       # LLM response cache
+        ├── database/              # ORM & persistence layer
+        │   ├── models.py          # SQLAlchemy models
+        │   ├── engine.py          # Database engine setup
+        │   ├── store.py           # Data access layer
+        │   ├── cli.py             # Database CLI (garuda-db)
+        │   ├── relationship_manager.py  # Relationship persistence
+        │   ├── helpers.py         # Database utilities
+        │   ├── refresh.py         # Data refresh logic
+        │   └── repositories/      # Repository pattern implementations
+        ├── discover/              # Crawling & discovery logic
+        │   ├── crawl_modes.py     # Crawl strategies
+        │   ├── crawl_learner.py   # Adaptive learning
+        │   ├── frontier.py        # URL frontier management
+        │   ├── post_crawl_processor.py  # Post-crawl processing
+        │   ├── seeds.py           # Seed URL management
+        │   └── refresh.py         # Discovery refresh
+        ├── docker/                # Docker CLI tool
+        │   └── tool.py            # Docker management (garuda-docker)
+        ├── explorer/              # Entity exploration
+        │   ├── engine.py          # Exploration engine
+        │   └── scorer.py          # Priority scoring
+        ├── extractor/             # Intelligence extraction pipeline
+        │   ├── intel_extractor.py # Main extraction orchestrator
+        │   ├── llm.py             # LLM wrapper & paraphrasing
+        │   ├── semantic_engine.py # Semantic processing
+        │   ├── text_processor.py  # Text preprocessing
+        │   ├── query_generator.py # Query generation & paraphrasing
+        │   ├── content_classifier.py  # Content classification
+        │   ├── content_router.py  # Content routing logic
+        │   ├── entity_merger.py   # Entity deduplication & merging
+        │   ├── filter.py          # Content filtering
+        │   ├── iterative_refiner.py  # Iterative refinement
+        │   ├── qa_validator.py    # Q&A validation
+        │   ├── quality_validator.py  # Quality validation
+        │   ├── schema_discovery.py  # Dynamic schema discovery
+        │   ├── semantic_chunker.py  # Semantic text chunking
+        │   └── strategy_selector.py  # Strategy selection
+        ├── recorder/              # Browser recorder service
+        │   ├── app.py             # Recorder Flask app (garuda-intel-recorder)
+        │   └── ingest.py          # Content ingestion
+        ├── search/                # Search engine subpackage
+        │   ├── cli.py             # Search CLI logic
+        │   ├── active_mode.py     # Active search mode
+        │   ├── deduplication.py   # Result deduplication
+        │   ├── filtering.py       # Result filtering
+        │   ├── formatters.py      # Output formatters
+        │   ├── handlers.py        # Search handlers
+        │   ├── hydration.py       # Result hydration
+        │   ├── run_crawl_api.py   # Crawl API integration
+        │   ├── seed_discovery.py  # Seed discovery logic
+        │   └── utils.py           # Search utilities
+        ├── services/              # High-level services
+        │   ├── adaptive_crawler.py  # Adaptive crawling service
+        │   ├── agent_cli.py       # Agent CLI (garuda-agent)
+        │   ├── agent_service.py   # Agent service logic
+        │   ├── entity_gap_analyzer.py  # Gap analysis
+        │   ├── inference_engine.py  # Inference engine
+        │   ├── media_processor.py  # Base media processor
+        │   ├── media_detector.py   # Media detection
+        │   ├── media_downloader.py # Media download
+        │   ├── media_extractor.py  # Media extraction
+        │   ├── media_linker.py     # Media linking
+        │   └── adaptive_media_processor.py  # Adaptive media processing
+        ├── sources/               # Multi-source adapters
+        │   ├── api_adapter.py     # API source adapter
+        │   ├── base_adapter.py    # Base adapter interface
+        │   └── pdf_adapter.py     # PDF source adapter
+        ├── templates/             # Extraction templates
+        │   ├── extraction.py      # Extraction templates
+        │   └── ranking.py         # Ranking templates
+        ├── types/                 # Type definitions
+        │   ├── entity/
+        │   │   ├── profile.py     # Entity profile types
+        │   │   ├── registry.py    # Entity kind registry
+        │   │   └── type.py        # Entity types
+        │   └── page/
+        │       └── fingerprint.py # Page fingerprinting
+        ├── vector/                # Vector database integration
+        │   ├── engine.py          # Vector engine
+        │   └── base.py            # Base vector interface
+        └── webapp/                # Flask Web Application
+            ├── app.py             # Main Flask app (garuda-intel-webapp)
+            ├── routes/            # 15 route blueprints
+            │   ├── __init__.py
+            │   ├── static.py      # Static file routes
+            │   ├── recorder.py    # Recorder routes
+            │   ├── search.py      # Search & chat routes
+            │   ├── crawling.py    # Crawl management
+            │   ├── entities.py    # Entity management
+            │   ├── relationships.py  # Relationship routes
+            │   ├── entity_gaps.py    # Gap analysis routes
+            │   ├── entity_deduplication.py  # Deduplication routes
+            │   ├── entity_relations.py  # Entity relations
+            │   ├── media.py       # Media routes
+            │   ├── graph_search.py  # Graph search
+            │   ├── relationship_confidence.py  # Confidence routes
+            │   ├── schema.py      # Schema routes
+            │   └── agent.py       # Agent routes
+            ├── services/          # Web services
+            │   ├── event_system.py  # Event system
+            │   └── graph_builder.py  # Graph builder
+            ├── utils/             # Web utilities
+            │   ├── helpers.py     # Helper functions
+            │   └── request_helpers.py  # Request utilities
+            ├── static/            # Frontend assets
+            │   ├── api.js         # API client
+            │   ├── app.js         # Main app logic
+            │   ├── config.js      # Frontend config
+            │   ├── entities-graph.js  # Graph visualization
+            │   ├── graph-search.js    # Graph search UI
+            │   ├── tabs.js        # Tab management
+            │   └── ...            # Additional JS/CSS
+            └── templates/         # Jinja2 templates
+                ├── base.html      # Base template
+                ├── index.html     # Main page
+                └── components/    # 15 tab components
+                    ├── agent-panel.html
+                    ├── chat.html
+                    ├── crawl.html
+                    ├── data-quality.html
+                    ├── entities-graph.html
+                    ├── entity-tools.html
+                    ├── intel.html
+                    ├── media.html
+                    ├── pages.html
+                    ├── recorder-admin.html
+                    ├── recorder-search.html
+                    ├── search-unified.html
+                    ├── semantic.html
+                    ├── settings.html
+                    └── status.html
 ```
 
 ---
 
-### Key Technologies
+## Key Technologies
 
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| **Backend** | Python 3.10+ | Core application |
-| **Web Framework** | Flask | REST API & UI |
-| **Database** | SQLAlchemy + SQLite/PostgreSQL | Structured data storage |
-| **Vector DB** | Qdrant | Semantic search |
-| **Browser** | Selenium + Chrome | Web scraping |
-| **LLM** | Ollama / OpenAI API | Intelligence extraction |
-| **Embeddings** | SentenceTransformers | Semantic representations |
-| **Media** | Tesseract OCR, Speech Recognition | Media processing |
-| **Frontend** | Vanilla JS, Tailwind CSS | User interface |
-
----
-
-### Quick Navigation
-
-- **WebApp**: [`src/garuda_intel/webapp/app.py`](src/garuda_intel/webapp/app.py)
-- **Database Models**: [`src/garuda_intel/database/models.py`](src/garuda_intel/database/models.py)
-- **Intelligent Crawler**: [`src/garuda_intel/discover/crawl_modes.py`](src/garuda_intel/discover/crawl_modes.py)
-- **Intel Extraction**: [`src/garuda_intel/extractor/intel_extractor.py`](src/garuda_intel/extractor/intel_extractor.py)
-- **Search API**: [`src/garuda_intel/webapp/routes/search.py`](src/garuda_intel/webapp/routes/search.py)
-- **Chrome Extension**: [`plugin/chrome/`](plugin/chrome/)
-- **V2 Optimization Plan**: [`V2_OPTIMIZATION_PLAN.md`](V2_OPTIMIZATION_PLAN.md)
-
----
-
-## How It Works
-
-### Core Workflows
-
-#### 1. Intelligent Entity Discovery
-
-When you search for an entity (e.g., "Microsoft"), Garuda:
-
-1. **Checks Existing Knowledge**: Queries the database to see if the entity exists
-2. **Analyzes Gaps**: If entity exists, calculates completeness score (0-100%) and identifies missing critical fields
-3. **Generates Queries**: Uses LLM to create targeted search queries based on gaps
-4. **Crawls Smart**: Fetches relevant pages using Selenium, prioritizing high-authority domains
-5. **Extracts Intelligence**: Multi-layer extraction (heuristics + LLM) to identify facts, relationships, entities
-6. **Learns & Adapts**: Tracks which sources provided valuable data, improving future crawls
-
-#### 2. RAG-First Hybrid Search
-
-When you ask a question:
-
-1. **Semantic Search First**: Embeds your question and searches vector store (Qdrant) for semantically similar content
-2. **Quality Filtering**: Only uses high-quality RAG results (similarity score >= 0.7)
-3. **SQL Supplement**: Adds keyword-based SQL search results to fill gaps
-4. **Auto-Crawl Trigger**: If insufficient high-quality results, automatically triggers targeted web crawl
-5. **Synthesis**: LLM combines context from multiple sources to generate comprehensive answer
-6. **Source Attribution**: Every fact traced back to source URL with confidence scores
-
-#### 3. Knowledge Graph Construction
-
-As data is gathered:
-
-1. **Entity Extraction**: LLM identifies entities (people, companies, locations, products)
-2. **Relationship Detection**: Discovers relationships (works_at, owns, located_in, etc.)
-3. **Deduplication**: Merges duplicate entities using fuzzy matching + embeddings
-4. **Graph Building**: Creates bidirectional relationships with confidence scores
-5. **Inference**: Cross-entity reasoning to fill gaps (e.g., if Person works_at Company in City, infer Person likely in City)
-6. **Visualization**: Interactive graph UI showing entity network
-
-#### 4. Media Intelligence
-
-When processing web pages:
-
-1. **Auto-Detection**: Identifies images with text, videos with speech, audio files
-2. **Method Selection**: Chooses optimal processing (Tesseract for printed text, AI for handwriting)
-3. **Text Extraction**: OCR for images, speech-to-text for audio/video
-4. **Entity Linking**: Connects extracted media text to relevant entities
-5. **Embedding Integration**: Media content becomes searchable in knowledge graph
-
-### Data Flow Example
-
-```
-User Query: "What is Acme Corp's headquarters?"
-    ↓
-[1] Check Database → Entity "Acme Corp" exists, completeness: 45%
-    Missing: headquarters, founding_year, CEO
-    ↓
-[2] Gap Analysis → Generate targeted query: "Acme Corp headquarters address"
-    ↓
-[3] DuckDuckGo Search → Find 5 candidate URLs
-    ↓
-[4] Selenium Crawl → Fetch pages in parallel
-    ↓
-[5] LLM Extraction → Extract: {"headquarters": "123 Main St, SF, CA"}
-    ↓
-[6] Store Intelligence → Save to SQL + generate embedding → store in Qdrant
-    ↓
-[7] Learning Update → Mark source as "reliable for company data"
-    ↓
-[8] Return Answer → "Acme Corp headquarters: 123 Main St, SF, CA" 
-    (Source: acmecorp.com, Confidence: 0.92)
-```
+| Category | Technology | Purpose |
+|----------|-----------|---------|
+| **Web Framework** | Flask + Flask-CORS | REST API and web UI |
+| **ORM** | SQLAlchemy | Database abstraction (SQLite/PostgreSQL) |
+| **Vector DB** | Qdrant Client | Semantic search and embeddings |
+| **Browser Automation** | Selenium WebDriver | Dynamic content scraping |
+| **LLM Integration** | Ollama | Local LLM inference |
+| **Embeddings** | sentence-transformers | Text embedding generation |
+| **Search** | ddgs (DuckDuckGo) | Web search integration |
+| **Environment** | python-dotenv | Configuration management |
+| **HTML Parsing** | BeautifulSoup4 | HTML content extraction |
+| **Image OCR** | Pillow + pytesseract | Text extraction from images |
+| **Media Processing** | SpeechRecognition, moviepy, pydub | Audio/video transcription |
+| **Data Handling** | pandas | Data manipulation and analysis |
+| **Container** | Docker + Docker Compose | Containerization and orchestration |
 
 ---
 
 ## Requirements
 
-- Python 3.10+
-- Chrome/Chromium & chromedriver (for crawling)
-- (Optional) [Qdrant](https://qdrant.tech/) for vector search
-- (Optional) [Ollama](https://ollama.ai/) or OpenAI-compatible backend
-- (Optional) `pytest`, `ruff`, `mypy` for development
+- **Python**: 3.10 or higher
+- **Database**: SQLite (default) or PostgreSQL
+- **Vector DB**: Qdrant (local or remote)
+- **LLM** (optional): Ollama with compatible models
+- **Browser**: Chrome/Chromium (for Selenium)
+- **ChromeDriver**: Matching Chrome version
+- **System Tools**:
+  - Tesseract OCR (for image processing)
+  - FFmpeg (for video/audio processing)
 
 ---
 
 ## Installation
 
+### Method 1: Git Clone + Pip Install
+
 ```bash
+# Clone the repository
 git clone https://github.com/anorien90/Garuda.git
 cd Garuda
-python -m venv .venv && source .venv/bin/activate
+
+# Create virtual environment (recommended)
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install package in editable mode
+pip install -e .
+
+# Or install from requirements.txt
 pip install -r requirements.txt
+
+# Install system dependencies
+# Ubuntu/Debian:
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr ffmpeg chromium-browser chromium-chromedriver
+
+# macOS:
+brew install tesseract ffmpeg
+brew install --cask google-chrome
+brew install chromedriver
+
+# Verify installation
+garuda-intel-webapp --help
+garuda-search --help
+```
+
+### Method 2: Docker Compose
+
+```bash
+# Clone the repository
+git clone https://github.com/anorien90/Garuda.git
+cd Garuda
+
+# Start services (without Ollama)
+docker-compose up -d
+
+# Start services with Ollama (requires --profile llm)
+docker-compose --profile llm up -d
+
+# View logs
+docker-compose logs -f garuda
+
+# Access Web UI
+# Open browser to: http://localhost:8080
 ```
 
 ---
 
 ## Configuration
 
-Configure via `.env` (see included sample) or environment variables. Main entries:
+Garuda uses environment variables for all configuration. These can be set in:
+- `.env` file (recommended for Docker)
+- System environment variables
+- Direct export in shell
 
-```env
-# Core settings
-GARUDA_DB_URL=sqlite:///crawler.db
-GARUDA_OLLAMA_URL=http://localhost:11434/api/generate
-GARUDA_OLLAMA_MODEL=granite3.1-dense:8b
-GARUDA_QDRANT_URL=http://localhost:6333
-GARUDA_QDRANT_COLLECTION=pages
-GARUDA_UI_API_KEY=changeme
-GARUDA_UI_CORS_ORIGINS=*
+### Complete Environment Variables Reference
 
-# Media processing (optional feature)
-GARUDA_MEDIA_PROCESSING=true     # Enable media text extraction
-GARUDA_MEDIA_CRAWLING=true       # Automatically extract media from pages
-GARUDA_MEDIA_EMBEDDINGS=true     # Generate embeddings from media text
+#### Core Database & Vector Store
 
-# Media processing methods (new in v2.1)
-GARUDA_MEDIA_IMAGE_METHOD=tesseract    # Image: "tesseract" (OCR) or "image2text" (AI model)
-GARUDA_MEDIA_VIDEO_METHOD=speech       # Video: "speech" (audio) or "video2text" (AI model)
-GARUDA_MEDIA_AUDIO_METHOD=speech       # Audio: "speech" (speech recognition)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_DB_URL` | `sqlite:////app/data/crawler.db` | Database connection URL (SQLite or PostgreSQL) |
+| `GARUDA_QDRANT_URL` | (none) | Qdrant vector database URL |
+| `GARUDA_QDRANT_COLLECTION` | `pages` | Qdrant collection name for vectors |
 
-# Chat pipeline settings (new in v2.2)
-GARUDA_CHAT_MAX_SEARCH_CYCLES=3        # Max search/crawl cycles for chat (default: 3)
-GARUDA_CHAT_MAX_PAGES=5                # Max pages per cycle (default: 5)
-GARUDA_CHAT_RAG_QUALITY_THRESHOLD=0.7  # Min RAG similarity score (default: 0.7)
-GARUDA_CHAT_USE_SELENIUM=false         # Use Selenium for chat crawling
-GARUDA_CHAT_EXTRACT_RELATED_ENTITIES=true  # Extract related entities during crawl
+#### LLM & Embedding Models
 
-# LLM timeout settings (new in v2.3) - longer timeouts for reliability
-GARUDA_LLM_SUMMARIZE_TIMEOUT=900       # 15 minutes default for summarization
-GARUDA_LLM_EXTRACT_TIMEOUT=900         # 15 minutes default for extraction
-GARUDA_LLM_REFLECT_TIMEOUT=300         # 5 minutes default for reflection
-GARUDA_LLM_SUMMARIZE_RETRIES=3         # Number of retry attempts
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Sentence transformer embedding model |
+| `GARUDA_OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama LLM API endpoint |
+| `GARUDA_OLLAMA_MODEL` | `granite3.1-dense:8b` | Ollama model name (also supports `phi3:3.8b`) |
 
-# Agent mode settings (new in v2.3)
-GARUDA_AGENT_ENABLED=true              # Enable agent mode
-GARUDA_AGENT_MAX_EXPLORATION_DEPTH=3   # Max relation depth for exploration
-GARUDA_AGENT_ENTITY_MERGE_THRESHOLD=0.85  # Similarity threshold for merging
+#### Web UI & API
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_UI_API_KEY` | (none) | API key for protected endpoints |
+| `GARUDA_UI_CORS_ORIGINS` | `*` | CORS allowed origins (comma-separated) |
+| `GARUDA_UI_DEBUG` | `false` | Enable Flask debug mode |
+
+#### Media Processing
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_MEDIA_PROCESSING` | `true` | Enable media processing pipeline |
+| `GARUDA_MEDIA_CRAWLING` | `true` | Auto-extract media during crawls |
+| `GARUDA_MEDIA_EMBEDDINGS` | `true` | Generate embeddings for media content |
+| `GARUDA_MEDIA_IMAGE_METHOD` | `tesseract` | Image processing: `tesseract` or `image2text` |
+| `GARUDA_MEDIA_VIDEO_METHOD` | `speech` | Video processing: `speech` or `video2text` |
+| `GARUDA_MEDIA_AUDIO_METHOD` | `speech` | Audio processing: `speech` |
+| `GARUDA_USE_ADAPTIVE_MEDIA` | `false` | Enable adaptive media processing |
+| `GARUDA_MEDIA_PREFER_SPEED` | `false` | Optimize for processing speed |
+| `GARUDA_MEDIA_PREFER_QUALITY` | `true` | Optimize for extraction quality |
+
+#### Caching
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_CACHE_ENABLED` | `true` | Enable caching system |
+| `GARUDA_EMBEDDING_CACHE_SIZE` | `10000` | Max embedding cache entries |
+| `GARUDA_LLM_CACHE_PATH` | `/app/data/llm_cache.db` | SQLite cache for LLM responses |
+| `GARUDA_LLM_CACHE_TTL` | `604800` | Cache TTL in seconds (7 days) |
+
+#### Extraction & Quality
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_USE_SEMANTIC_CHUNKING` | `true` | Use semantic-aware text chunking |
+| `GARUDA_ENABLE_QUALITY_VALIDATION` | `true` | Enable extraction quality validation |
+| `GARUDA_MIN_COMPLETENESS_SCORE` | `0.3` | Minimum entity completeness score (0-1) |
+| `GARUDA_ENABLE_SCHEMA_DISCOVERY` | `true` | Enable dynamic schema discovery |
+| `GARUDA_CACHE_DISCOVERED_SCHEMAS` | `true` | Cache discovered schemas |
+
+#### Chat & RAG
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_CHAT_MAX_SEARCH_CYCLES` | `3` | Max search/crawl cycles per chat query |
+| `GARUDA_CHAT_MAX_PAGES` | `5` | Max pages to crawl per cycle |
+| `GARUDA_CHAT_USE_SELENIUM` | `false` | Use Selenium for chat-triggered crawls |
+| `GARUDA_CHAT_RAG_QUALITY_THRESHOLD` | `0.7` | Minimum similarity score for quality hits |
+| `GARUDA_CHAT_MIN_HIGH_QUALITY_HITS` | `2` | Min high-quality hits before retry |
+| `GARUDA_CHAT_EXTRACT_RELATED_ENTITIES` | `true` | Extract related entities during chat crawls |
+
+#### LLM Timeouts & Retries
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_LLM_SUMMARIZE_TIMEOUT` | `900` | Summarization timeout (15 min) |
+| `GARUDA_LLM_EXTRACT_TIMEOUT` | `900` | Extraction timeout (15 min) |
+| `GARUDA_LLM_REFLECT_TIMEOUT` | `300` | Reflection timeout (5 min) |
+| `GARUDA_LLM_SUMMARIZE_RETRIES` | `3` | Max retries for summarization |
+
+#### Agent Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_AGENT_ENABLED` | `true` | Enable agent mode |
+| `GARUDA_AGENT_MAX_EXPLORATION_DEPTH` | `3` | Max relationship exploration depth |
+| `GARUDA_AGENT_ENTITY_MERGE_THRESHOLD` | `0.85` | Entity similarity threshold for merging |
+| `GARUDA_AGENT_PRIORITY_UNKNOWN_WEIGHT` | `0.7` | Weight for unknown fields in priority |
+| `GARUDA_AGENT_PRIORITY_RELATION_WEIGHT` | `0.3` | Weight for relationship gaps in priority |
+
+#### Autonomous Agent
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_AGENT_AUTONOMOUS_ENABLED` | `false` | Enable autonomous background exploration |
+| `GARUDA_AGENT_AUTONOMOUS_INTERVAL` | `300` | Interval between autonomous cycles (5 min) |
+| `GARUDA_AGENT_AUTONOMOUS_MAX_ENTITIES` | `10` | Max entities per autonomous cycle |
+| `GARUDA_AGENT_AUTONOMOUS_PRIORITY_THRESHOLD` | `0.3` | Min priority score for exploration |
+| `GARUDA_AGENT_AUTONOMOUS_MAX_DEPTH` | `3` | Max exploration depth for autonomous mode |
+| `GARUDA_AGENT_AUTONOMOUS_AUTO_CRAWL` | `false` | Auto-trigger crawls in autonomous mode |
+| `GARUDA_AGENT_AUTONOMOUS_MAX_PAGES` | `25` | Max pages per autonomous crawl |
+
+#### Recorder Service
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MARK_SERVER_DB` | `sqlite:///crawler.db` | Recorder database URL |
+| `MARK_SERVER_API_KEY` | (none) | Recorder API key |
+| `MARK_SERVER_HOST` | `0.0.0.0` | Recorder bind host |
+| `MARK_SERVER_PORT` | `8765` | Recorder port |
+
+### Example .env File
+
+```bash
+# Copy from project root .env
+export GARUDA_DB_URL=sqlite:////app/data/crawler.db
+export GARUDA_QDRANT_URL=http://garuda-qdrant:6333
+export GARUDA_QDRANT_COLLECTION=pages
+export GARUDA_EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
+export GARUDA_OLLAMA_URL=http://garuda-ollama:11434/api/generate
+export GARUDA_OLLAMA_MODEL=phi3:3.8b
+export GARUDA_UI_API_KEY=changeme-ui-key
+export GARUDA_UI_CORS_ORIGINS=*
+export GARUDA_UI_DEBUG=true
+export GARUDA_MEDIA_PROCESSING=true
+export GARUDA_MEDIA_CRAWLING=true
+export GARUDA_MEDIA_EMBEDDINGS=true
+export GARUDA_MEDIA_IMAGE_METHOD=tesseract
+export GARUDA_MEDIA_VIDEO_METHOD=speech
+export GARUDA_MEDIA_AUDIO_METHOD=speech
+```
+
+---
+
+## Docker
+
+### Services
+
+The `docker-compose.yml` defines three services:
+
+#### 1. **garuda** (Main Application)
+
+- **Image**: Built from local `Dockerfile` (Python 3.13-slim + Chrome + ChromeDriver + Tesseract)
+- **Container**: `garuda-webapp`
+- **Port**: 8080 (Web UI)
+- **Dependencies**: qdrant
+- **Volumes**: `./data/garuda/` → `/app/data/`
+- **Purpose**: Runs the Flask web application with all CLI tools available
+
+#### 2. **qdrant** (Vector Database)
+
+- **Image**: `qdrant/qdrant:latest`
+- **Container**: `garuda-qdrant`
+- **Port**: 6333 (Qdrant API)
+- **Volumes**: `./data/qdrant/` → `/qdrant/storage`
+- **Purpose**: Provides semantic vector search capabilities
+
+#### 3. **ollama** (LLM Backend)
+
+- **Image**: `ollama/ollama:latest`
+- **Container**: `garuda-ollama`
+- **Port**: 11434 (Ollama API)
+- **Profile**: `llm` (optional, start with `--profile llm`)
+- **Volumes**: `./data/ollama-llm/` → `/root/.ollama`
+- **Purpose**: Local LLM inference for extraction and chat
+
+### GPU Support
+
+Both `garuda` and `ollama` services support NVIDIA GPU acceleration:
+
+```yaml
+deploy:
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: all
+          capabilities: [gpu]
+```
+
+**To disable GPU support:**
+1. Remove the entire `deploy` block from `docker-compose.yml`
+2. Or run without GPU drivers installed
+
+### Data Volumes
+
+All data is persisted in the `./data/` directory:
+
+```
+./data/
+├── garuda/          # SQLite DB, LLM cache, media files
+├── qdrant/          # Vector embeddings
+└── ollama-llm/      # Ollama models (if using profile "llm")
+```
+
+### Docker Commands
+
+```bash
+# Start without Ollama
+docker-compose up -d
+
+# Start with Ollama
+docker-compose --profile llm up -d
+
+# View logs
+docker-compose logs -f garuda
+docker-compose logs -f qdrant
+docker-compose logs -f ollama
+
+# Stop services
+docker-compose down
+
+# Rebuild after code changes
+docker-compose build garuda
+docker-compose up -d garuda
+
+# Access shell in container
+docker exec -it garuda-webapp /bin/bash
+
+# Run CLI tools in container
+docker exec -it garuda-webapp garuda-search --help
+docker exec -it garuda-webapp garuda-db --help
+```
+
+---
+
+## CLI Tools
+
+Garuda provides 7 CLI entry points defined in `pyproject.toml`:
+
+### 1. **garuda-intel-webapp** (Web UI)
+
+Start the Flask web application.
+
+```bash
+# Start web UI on port 8080 (default)
+garuda-intel-webapp
+
+# Custom port and host
+garuda-intel-webapp --host 0.0.0.0 --port 5000
+
+# Entry point
+# garuda_intel.webapp.app:main
+```
+
+### 2. **garuda-intel-search** / **garuda-search** (Search CLI)
+
+Interactive search CLI with hybrid SQL + semantic search.
+
+```bash
+# Interactive search mode
+garuda-search
+
+# Direct query
+garuda-search "Microsoft headquarters location"
+
+# Semantic search only
+garuda-search --semantic "AI startups in healthcare"
+
+# Search with max results
+garuda-search --limit 10 "Python web frameworks"
+
+# Entry point
+# garuda_intel.search:main
+```
+
+### 3. **garuda-intel-recorder** (Recorder Service)
+
+Start the browser recorder service (works with Chrome extension).
+
+```bash
+# Start recorder on default port 8765
+garuda-intel-recorder
+
+# Custom configuration
+MARK_SERVER_PORT=9000 garuda-intel-recorder
+
+# Entry point
+# garuda_intel.recorder.app:main
+```
+
+### 4. **garuda-docker** (Docker Management)
+
+Docker container and service management CLI.
+
+```bash
+# Show status of all services
+garuda-docker status
+
+# Start services
+garuda-docker start
+
+# Stop services
+garuda-docker stop
+
+# View logs
+garuda-docker logs
+
+# Entry point
+# garuda_intel.docker.tool:main
+```
+
+### 5. **garuda-db** (Database CLI)
+
+Interactive database management with CRUD operations.
+
+```bash
+# Interactive database browser
+garuda-db
+
+# Search entities
+garuda-db search --entity "Microsoft"
+
+# Show entity details
+garuda-db show --id 123
+
+# List all entities
+garuda-db list --kind Company
+
+# Delete entity
+garuda-db delete --id 456
+
+# Export data
+garuda-db export --format json --output data.json
+
+# Entry point
+# garuda_intel.database.cli:main
+```
+
+### 6. **garuda-agent** (Agent CLI)
+
+Autonomous entity exploration and gap filling agent.
+
+```bash
+# Start autonomous agent
+garuda-agent start
+
+# Explore specific entity
+garuda-agent explore --entity-id 123
+
+# Analyze gaps for entity
+garuda-agent analyze --entity-id 123
+
+# Stop autonomous agent
+garuda-agent stop
+
+# Agent status
+garuda-agent status
+
+# Entry point
+# garuda_intel.services.agent_cli:main
+```
+
+### 7. **garuda-intel-web** (Alternate Web Entry)
+
+Alternative console script for web UI (same as garuda-intel-webapp).
+
+```bash
+# Start web UI
+garuda-intel-web
+
+# Entry point
+# garuda_intel.webapp.app:main
 ```
 
 ---
 
 ## Quickstart
 
-**1. Start the Web UI:**
+### Using Docker
+
+**1. Clone and start services:**
+
 ```bash
-python -m src.webapp.app
+git clone https://github.com/anorien90/Garuda.git
+cd Garuda
+docker-compose up -d
 ```
-Web UI available at `http://localhost:5000` (default).
 
-**2. Run a crawl:**
+**2. Wait for services to start (~30 seconds)**
+
 ```bash
-python -m src.search run --sqlite-path crawler.db --qdrant-url http://localhost:6333 --model granite3.1-dense:8b --verbose
+docker-compose logs -f garuda
+# Wait for "Running on http://0.0.0.0:8080"
 ```
 
-**3. Try the NEW Intelligent Crawl:**
+**3. Access Web UI:**
 
-Garuda now features three crawl modes for maximum flexibility:
+Open browser to **http://localhost:8080**
 
-**a) 🧠 Intelligent Crawl (Recommended for most use cases)**
-- Open the Web UI at `http://localhost:5000`
-- Go to the "Crawler" tab
-- Find the "🧠 Intelligent Crawl" section (blue box at top)
-- Enter an entity name like "Bill Gates" or "Microsoft"
-- Optionally select entity type (or leave as auto-detect)
-- Click "🚀 Start Intelligent Crawl"
-- The system will automatically:
-  - Check if the entity exists in database
-  - Analyze existing data and identify gaps (gap-filling mode)
-  - OR generate comprehensive discovery queries (discovery mode)
-  - Execute targeted crawl with adaptive strategy
-  - Show completeness scores, gaps filled, and learning stats
+**4. Run your first search:**
 
-**b) 🎯 Smart Crawl (Auto-Detection)**
-- Scroll to "Advanced Crawl Options" section
-- Enter entity name in the "Entity" field
-- Configure crawl parameters if desired (or use defaults)
-- Click "🎯 Smart Crawl (Auto-detect)" button
-- System automatically selects intelligent mode if entity exists, standard mode if new
-- Best for: "I don't know if this entity exists yet"
+- Go to **Search Unified** tab
+- Enter query: "Python web frameworks"
+- Click **Search**
+- View hybrid results (SQL + Vector)
 
-**c) 🔧 Advanced Crawl (Full Control)**
-- Use the standard "Advanced Crawl" button for complete parameter control
-- Supports seed URLs, Selenium, active browsing mode, etc.
-- Best for: Specific domains, debugging, specialized research
+**5. Try the chat interface:**
 
-**4. Analyze Entity Gaps:**
-- Go to the "Entity Tools" tab
-- Click "📊 Analyze All (Top 20)" to see entities with the most data gaps
-- Or enter a specific entity UUID and click "🔍 Analyze Gaps"
-- View completeness scores, missing fields, and suggested sources
-- Click "Fill Gaps with Targeted Crawl" to immediately launch gap-filling
+- Go to **Chat** tab
+- Ask: "What is Flask used for?"
+- Watch the 4-phase intelligent search in action
+- If data is insufficient, it will automatically:
+  - Phase 1: Search existing database
+  - Phase 2: Retry with paraphrased queries
+  - Phase 3: Crawl web for new information
+  - Phase 4: Re-search with new data
 
-**5. Query intel via Web UI, CLI, or Extension.**
+**6. Start a crawl:**
 
-**6. Use the Chrome Extension:**
-- Load `plugin/chrome/` as an unpacked extension in Chrome.
-- Go to the extension, set your API endpoint and key in "Settings".
-- Use "Record", "Search", and "View" tabs to interact!
+- Go to **Crawl** tab
+- Enter seed URL: "https://flask.palletsprojects.com"
+- Select mode: Focused
+- Click **Start Crawl**
+- Monitor progress in **Status** tab
 
-**For detailed information about intelligent crawling features, workflows, and API reference, see [FEATURES.md](FEATURES.md).**
+### Using Local Installation
+
+**1. Install Garuda:**
+
+```bash
+git clone https://github.com/anorien90/Garuda.git
+cd Garuda
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
+```
+
+**2. Install system dependencies:**
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install -y tesseract-ocr ffmpeg chromium-browser chromium-chromedriver
+
+# macOS
+brew install tesseract ffmpeg
+brew install --cask google-chrome
+brew install chromedriver
+```
+
+**3. Set up Qdrant (optional but recommended):**
+
+```bash
+# Using Docker
+docker run -d -p 6333:6333 -v $(pwd)/data/qdrant:/qdrant/storage qdrant/qdrant:latest
+
+# Or download binary from https://qdrant.tech
+```
+
+**4. Configure environment:**
+
+```bash
+# Create .env file
+cat > .env << 'EOF'
+export GARUDA_DB_URL=sqlite:///data/crawler.db
+export GARUDA_QDRANT_URL=http://localhost:6333
+export GARUDA_QDRANT_COLLECTION=pages
+export GARUDA_EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
+export GARUDA_UI_API_KEY=my-secret-key
+EOF
+
+# Load environment
+source .env
+```
+
+**5. Start the web UI:**
+
+```bash
+# Create data directory
+mkdir -p data
+
+# Start webapp
+garuda-intel-webapp
+# or
+python -m garuda_intel.webapp.app
+```
+
+**6. Access at http://localhost:8080**
+
+**7. Try CLI tools:**
+
+```bash
+# Interactive search
+garuda-search
+
+# Database browser
+garuda-db
+
+# Agent mode
+garuda-agent status
+```
+
+---
+
+## RAG Retry with Paraphrasing
+
+Garuda's chat system implements an intelligent **4-phase search strategy** that significantly improves answer quality while minimizing unnecessary web crawling.
+
+### 4-Phase Intelligent Search
+
+#### Phase 1: Initial RAG Lookup
+
+- Performs standard RAG (Retrieval-Augmented Generation) search
+- Checks quality threshold (0.7 similarity score)
+- Evaluates answer sufficiency
+- **Triggers Phase 2 if:**
+  - High-quality RAG results < 2
+  - Answer is insufficient or looks like a refusal
+
+#### Phase 2: Retry with Paraphrasing ✨ **NEW**
+
+When initial results are insufficient, the system automatically:
+
+1. **Generates paraphrased queries**: Uses LLM to create 2-3 alternative phrasings of the original question
+2. **Increases hit count**: Doubles the number of results requested (capped at 20)
+3. **Searches with all queries**: Performs RAG search with original + paraphrased queries
+4. **Deduplicates results**: Keeps highest-scoring version of duplicate URLs
+5. **Re-synthesizes answer**: Generates new answer with enhanced context
+
+**Example:**
+
+```
+Original Query: "What is Microsoft's headquarters?"
+
+Paraphrased Queries:
+- "Where is Microsoft's main office located?"
+- "Microsoft headquarters location"
+
+Results: 12 hits from 3 queries → Deduplicated to 8 unique URLs
+```
+
+#### Phase 3: Intelligent Web Crawling
+
+If retry still yields insufficient results, the system:
+
+1. Determines crawl trigger reason
+2. Generates targeted search queries (reuses paraphrased queries if available)
+3. Collects candidate URLs from search engines
+4. Crawls and extracts intelligence from web pages
+5. Generates embeddings for new content
+
+#### Phase 4: Re-query After Crawl
+
+- Re-searches RAG with newly indexed content
+- Synthesizes final answer with enhanced knowledge base
+
+### RAG Configuration
+
+The retry mechanism is **automatic** and requires no configuration. However, these settings affect behavior:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `GARUDA_CHAT_RAG_QUALITY_THRESHOLD` | `0.7` | Minimum similarity score for high-quality results |
+| `GARUDA_CHAT_MIN_HIGH_QUALITY_HITS` | `2` | Min high-quality hits before retry |
+| `GARUDA_CHAT_MAX_SEARCH_CYCLES` | `3` | Max search/crawl cycles |
+| `GARUDA_CHAT_MAX_PAGES` | `5` | Pages to crawl per cycle |
+
+Internal parameters:
+- `initial_top_k`: Number of results in Phase 1 (default: 6)
+- `retry_top_k`: Doubled hit count in Phase 2 (capped at 20)
+- `max_paraphrased_queries`: Maximum paraphrased queries (default: 3)
+
+### API Response Fields
+
+The `/api/chat` endpoint returns additional fields to track the retry process:
+
+```json
+{
+  "answer": "Microsoft's headquarters is located at One Microsoft Way, Redmond, Washington.",
+  "context": [
+    {
+      "url": "https://example.com/microsoft-hq",
+      "title": "Microsoft Headquarters",
+      "score": 0.89
+    }
+  ],
+  "retry_attempted": true,
+  "paraphrased_queries": [
+    "Where is Microsoft's main office located?",
+    "Microsoft headquarters location"
+  ],
+  "online_search_triggered": false,
+  "crawl_reason": null,
+  "rag_hits_count": 8,
+  "sql_hits_count": 2
+}
+```
+
+#### New Fields
+
+- **`retry_attempted`** (boolean): Indicates if Phase 2 retry was triggered
+- **`paraphrased_queries`** (array): List of paraphrased queries generated during retry
+- **`online_search_triggered`** (boolean): Whether Phase 3 web crawling was triggered
+- **`crawl_reason`** (string|null): Reason for triggering crawl
+- **`rag_hits_count`** (int): Number of RAG/vector search results
+- **`sql_hits_count`** (int): Number of SQL keyword search results
+
+### Performance & Benefits
+
+**Benefits:**
+
+1. ✅ **Higher Success Rate**: Paraphrasing captures different semantic variations
+2. ✅ **Better Coverage**: Increased hit count ensures more context
+3. ✅ **Reduced Crawling**: ~40% fewer Phase 3 triggers, avoiding expensive web crawls
+4. ✅ **Improved User Experience**: Faster responses with better answers
+
+**Performance Impact:**
+
+- **Phase 2 adds ~2-4 seconds**: LLM paraphrasing + additional RAG queries
+- **Overall improvement**: Better answers with similar or improved response times
+- **Reduces Phase 3 triggers by ~40%**: Based on test scenarios
+
+### Example Scenarios
+
+#### Scenario 1: Retry Succeeds ✅
+
+```
+User: "What is Microsoft's headquarters?"
+
+Phase 1: Initial RAG → 1 low-quality result (score: 0.65)
+Phase 2: Retry
+  - Paraphrased: ["Where is Microsoft's main office?", "Microsoft HQ location"]
+  - Results: 8 unique URLs, 5 high-quality (score >= 0.7)
+  - Answer: "Microsoft's headquarters is located at One Microsoft Way, Redmond, WA"
+
+Result: ✓ Answered without web crawling
+Time: ~6 seconds (2s initial + 4s retry)
+```
+
+#### Scenario 2: Crawl Required 🌐
+
+```
+User: "Who is the CEO of XYZ Startup founded yesterday?"
+
+Phase 1: Initial RAG → 0 results
+Phase 2: Retry
+  - Paraphrased queries → 0 results (entity too new)
+Phase 3: Web Crawl
+  - Search engines → Find startup's website
+  - Crawl and extract → New intelligence indexed
+Phase 4: Re-query → Answer found in new content
+
+Result: ✓ Answered after intelligent crawling
+Time: ~25 seconds (2s + 3s retry + 20s crawl)
+```
 
 ---
 
 ## Screenshots
 
-<!--
-Paste your screenshots in a `screenshots/` folder and reference them here.
--->
-**Web UI:**  
-![Web UI Home](screenshots/webui_home.png)
+### Web UI Interface
 
-**Extension - Record:**  
-![Chrome Record Tab](screenshots/ext_record.png)
+![Chat Interface](media/screenshots/chat.png)
+*RAG-powered chat with 4-phase intelligent search and automatic retry*
 
-**Extension - Search:**  
-![Chrome Search Tab](screenshots/ext_search.png)
+![Graph Visualization](media/screenshots/visualize.png)
+*Interactive entity relationship graph with dynamic exploration*
+
+### Additional Screenshots
+
+Located in `media/screenshots/`:
+- `screenshot-2026-02-01_124356.png` - Entity management interface
+- `screenshot-2026-02-01_124409.png` - Search results view
+- `screenshot-2026-02-01_124421.png` - Crawl configuration
+- `screenshot-2026-02-01_124454.png` - Data quality dashboard
+- `screenshot-2026-02-01_124516.png` - Media processing panel
+- `screenshot-2026-02-01_124530.png` - Agent control interface
+- `screenshot-2026-02-01_124555.png` - System status monitoring
+
+### Demo Videos
+
+Located in `media/videos/`:
+- `GarudaExplained.mp4` - Complete feature walkthrough and architecture explanation
+- `GarudaTeaser.mp4` - Quick teaser showcasing key capabilities
 
 ---
 
-## Example Use Cases
+## Chrome Extension
 
-- **Corporate OSINT**: Gather, structure, and search company leadership and product info.
-- **Brand Monitoring**: Find, tag, and cluster factual and reputational mentions.
-- **Threat Intelligence**: Explore and extract intelligence on infrastructure, actors, & TTPs from public data.
-- **Academic Research**: Build entity datasets and knowledge graphs from news, orgs, science, and more.
+The Garuda Chrome extension enables **direct browser recording** of pages, elements, and images.
 
----
+### Location
 
-## Demo Data & Public Datasets
+`plugin/chrome/` directory contains:
+- `manifest.json` - Extension manifest (Manifest V3)
+- `background.js` - Service worker for background tasks
+- `content.js` - Content script injected into pages
+- `popup.html` - Extension UI
+- `popup.js` - Extension logic and API integration
 
-- Example Datasets:  
-  - [Sample Intel Export](https://github.com/anorien90/Garuda/releases/download/demo/intel_sample.json)
-  - [Demo Crawl Output](https://github.com/anorien90/Garuda/releases/download/demo/demo_crawl.db)
-- Have a public crawl/dataset link? [Let us know](#bug-reporting--help)!
+### Features
+
+- 📄 **Record Current Page**: Capture full page HTML, metadata, and screenshot
+- 🎯 **Record Element**: Select and record specific page elements
+- 🖼️ **Record Images**: Extract and record images from current page
+- 🔍 **Fast Search**: Search recorded content directly from extension
+- 👁️ **Preview**: Preview recorded pages before saving
+- 🏷️ **Session Handling**: Organize recordings by session
+
+### Installation
+
+1. Open Chrome/Edge: `chrome://extensions/`
+2. Enable **Developer mode**
+3. Click **Load unpacked**
+4. Select `Garuda/plugin/chrome/` directory
+5. Extension icon appears in toolbar
+
+### Configuration
+
+The extension connects to the recorder service:
+
+```javascript
+// Default configuration in popup.js
+const RECORDER_URL = "http://localhost:8765";
+const API_KEY = "your-recorder-api-key";
+```
+
+Update `MARK_SERVER_API_KEY` in `.env` to match.
+
+### Usage
+
+1. Click extension icon in toolbar
+2. Choose action:
+   - **Record Page**: Captures current page
+   - **Record Element**: Click to select element
+   - **Record Images**: Extracts all images
+   - **Search**: Search recorded content
+3. View results in **Recorder Search** or **Recorder Admin** tabs in Web UI
 
 ---
 
 ## Contributing
 
-Contributions are very welcome—bugfixes, doc improvements, and new features!  
-To start:
-- Fork & PR, or file an issue.
-- Code must pass tests (`pytest`), linters (`ruff`, `black`), and typing (`mypy`).
-- See [`CONTRIBUTING.md`](CONTRIBUTING.md) if present for guidelines.
+Contributions are welcome! Here's how to get started:
 
----
+### Development Setup
 
-## Bug Reporting & Help
+```bash
+# Clone repository
+git clone https://github.com/anorien90/Garuda.git
+cd Garuda
 
-- **Issues**: [File a GitHub issue](https://github.com/anorien90/Garuda/issues)
-- **Email**: <h.lorenzen@nxs.solutions>
-- **Discussions**: (Planned)  
-Please provide logs, error messages, and details for faster help!
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install development dependencies
+pip install -e ".[dev]"
+
+# Install pre-commit hooks (optional)
+pip install pre-commit
+pre-commit install
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=garuda_intel --cov-report=html
+
+# Run specific test file
+pytest tests/test_rag_chat.py
+
+# Run with verbose output
+pytest -v
+```
+
+### Code Style
+
+We use:
+- **Ruff**: Fast Python linter (configured in pyproject.toml)
+- **Black**: Code formatter (line length 100)
+- **mypy**: Type checking
+
+```bash
+# Format code
+black src/ tests/
+
+# Lint code
+ruff check src/ tests/
+
+# Type check
+mypy src/
+```
+
+### Pull Request Process
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Add tests for new functionality
+5. Ensure all tests pass
+6. Update documentation (README.md, docstrings)
+7. Commit changes (`git commit -m 'Add amazing feature'`)
+8. Push to branch (`git push origin feature/amazing-feature`)
+9. Open Pull Request
+
+### Areas for Contribution
+
+- 🐛 Bug fixes and stability improvements
+- ✨ New entity extractors and templates
+- 🧪 Additional test coverage
+- 📚 Documentation improvements
+- 🌐 New source adapters (RSS, APIs, databases)
+- 🎨 UI/UX enhancements
+- 🚀 Performance optimizations
+- 🔌 Integration with other tools
 
 ---
 
 ## Security Notes
 
-- All API endpoints protected via API Key (set in env/config).
-- Restrict CORS origins in production.
-- LLM prompts may leak sensitive/confidential data—run locally if feasible.
-- Headless browser can execute JS—use domain allowlists or sandboxing methods.
+### API Security
+
+- **Always set `GARUDA_UI_API_KEY`** in production to protect API endpoints
+- Use strong, randomly generated API keys (32+ characters)
+- Configure `GARUDA_UI_CORS_ORIGINS` to restrict cross-origin access
+
+### LLM Privacy
+
+- Garuda supports **local LLM inference** via Ollama (no data sent to external APIs)
+- Default configuration uses local models (`granite3.1-dense:8b`, `phi3:3.8b`)
+- All embeddings generated locally with sentence-transformers
+
+### Data Storage
+
+- Database and vector store run **locally by default**
+- No telemetry or external data transmission
+- Chrome extension communicates only with local recorder service
+
+### Docker Security
+
+- Change default API keys in `.env` before deploying
+- Remove GPU support if not needed (reduces attack surface)
+- Use read-only volumes where possible
+- Run containers as non-root user (TODO: add to Dockerfile)
+
+### Responsible Use
+
+- Respect robots.txt and site terms of service
+- Implement rate limiting for production deployments
+- Use appropriate crawl delays (default: 1-2 seconds)
+- Review and comply with data privacy regulations (GDPR, CCPA)
+
+### Reporting Security Issues
+
+Please report security vulnerabilities privately to: h.lorenzen@nxs.solutions
+
+Do not open public issues for security concerns.
 
 ---
 
-## Roadmap
+## License
 
-### Current Status (v2.x)
-✅ Intelligent gap-aware crawling with adaptive learning  
-✅ RAG-first hybrid search (SQL + vector)  
-✅ Complete relationship persistence and entity deduplication  
-✅ Advanced media processing (OCR, speech-to-text, video processing)  
-✅ Chrome extension with recording and search capabilities  
-✅ Web UI with 6 specialized tabs  
+This project is licensed under the **GNU General Public License v3.0 or later (GPLv3+)**.
 
-### Planned Enhancements (v2.1+)
+See [LICENSE](LICENSE) file for full text.
 
-**See [V2_OPTIMIZATION_PLAN.md](V2_OPTIMIZATION_PLAN.md) for the comprehensive optimization roadmap.**
+### Summary
 
-#### Phase 1: Quick Wins (Weeks 1-2)
-- [ ] Multi-layer caching (embeddings, LLM responses, search results)
-- [ ] Content type detection and specialized processors
-- [ ] Automatic media detection (no manual configuration)
-- [ ] Database query optimization and indexing
-
-#### Phase 2: Core Enhancements (Weeks 3-5)
-- [ ] Dynamic schema discovery (adapt to any entity type)
-- [ ] Adaptive media processing (auto-select best method)
-- [ ] Semantic text chunking (preserve context)
-- [ ] Extraction quality validation and auto-correction
-- [ ] Comprehensive test suite (80%+ coverage)
-
-#### Phase 3: Advanced Features (Weeks 6-8)
-- [ ] Multi-source adapters (PDF, APIs, social media, databases)
-- [ ] Knowledge inference engine (graph-based reasoning)
-- [ ] Media-entity linking and searchability
-- [ ] CI/CD pipeline with automated testing
-
-#### Phase 4: Optimization (Weeks 9-10)
-- [ ] Async crawling architecture (5-10x speed improvement)
-- [ ] Multi-model embedding strategy (domain-specific models)
-- [ ] Prometheus metrics and Grafana dashboards
-- [ ] Automated data quality validation
-
-#### Phase 5: Production Readiness (Weeks 11-12)
-- [ ] Temporal intelligence tracking (version history)
-- [ ] Asynchronous media processing queue
-- [ ] Enhanced user/account system for multi-user deployments
-- [ ] Export and report generation modules
-- [ ] Prebuilt Docker compose setup with demo data
-
-#### Future Considerations
-- Support for additional vector/LLM providers (Weaviate, Pinecone, Claude)
-- Advanced visualization dashboards (live crawl status, analytics)
-- Collaborative features (shared knowledge bases, annotations)
-- Mobile app for on-the-go intelligence gathering
+- ✅ **Use freely** for any purpose (personal, commercial, research)
+- ✅ **Modify** the source code
+- ✅ **Distribute** original or modified versions
+- ⚠️ **Must disclose source** when distributing
+- ⚠️ **Must use GPL-compatible license** for derivative works
+- ⚠️ **No warranty** provided
 
 ---
 
-**License:** GPL-3.0 © [anorien90](https://github.com/anorien90)
+## Acknowledgments
 
-<!--
-Links:
-[View all code and UI files in anorien90/Garuda](https://github.com/anorien90/Garuda)
--->
+- Built with [Flask](https://flask.palletsprojects.com/), [SQLAlchemy](https://www.sqlalchemy.org/), and [Qdrant](https://qdrant.tech/)
+- LLM inference powered by [Ollama](https://ollama.ai/)
+- Embeddings via [sentence-transformers](https://www.sbert.net/)
+- Inspired by the mythical Garuda, the eagle of omniscient vision
+
+---
+
+## Links
+
+- **Homepage**: https://github.com/anorien90/Garuda
+- **Issues**: https://github.com/anorien90/Garuda/issues
+- **Discussions**: https://github.com/anorien90/Garuda/discussions
+
+---
+
+**Made with ❤️ for the OSINT and intelligence community**
