@@ -139,9 +139,11 @@ def test_nested_intelligence_data_handling():
     ]
     
     # UPDATED conversion logic (from agent_service.py) - now uses JSON
+    # Note: Uses compact format (separators without spaces) for token efficiency in LLM context
     for i, data in enumerate(nested_data_cases):
         try:
             if isinstance(data, (dict, list)):
+                # Compact JSON format: no spaces after separators
                 text = json.dumps(data, ensure_ascii=False, separators=(',', ':'))[:500]
             else:
                 text = str(data)[:500]
@@ -220,13 +222,18 @@ def test_nested_text_in_results():
     # Validate flattening worked
     assert len(graph_hits) == 2
     
-    # Check dict was converted to JSON
-    assert '"description":"A tech company"' in graph_hits[0]["snippet"]
-    assert isinstance(graph_hits[0]["snippet"], str)
+    # Check dict was converted to JSON - parse and validate structure
+    snippet_0 = graph_hits[0]["snippet"]
+    assert isinstance(snippet_0, str), "Snippet should be a string"
+    parsed_0 = json.loads(snippet_0)
+    assert parsed_0["description"] == "A tech company", "Dict content should be preserved"
+    assert parsed_0["industry"] == "Software", "Dict content should be preserved"
     
-    # Check list was converted to JSON
-    assert '["Feature 1","Feature 2","Feature 3"]' in graph_hits[1]["snippet"]
-    assert isinstance(graph_hits[1]["snippet"], str)
+    # Check list was converted to JSON - parse and validate structure
+    snippet_1 = graph_hits[1]["snippet"]
+    assert isinstance(snippet_1, str), "Snippet should be a string"
+    parsed_1 = json.loads(snippet_1)
+    assert parsed_1 == ["Feature 1", "Feature 2", "Feature 3"], "List content should be preserved"
     
     print("✓ Nested text fields are properly flattened to JSON strings")
 

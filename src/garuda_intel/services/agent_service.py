@@ -14,7 +14,7 @@ import logging
 import uuid
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import select, func, desc, and_, or_
 from sqlalchemy.orm import Session
