@@ -1144,8 +1144,6 @@ class AgentService:
         dead_ends = []
 
         # Get entities and their outgoing relation counts
-        from sqlalchemy import literal_column
-
         stmt = (
             select(
                 Entity.id,

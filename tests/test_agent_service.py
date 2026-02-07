@@ -6,6 +6,7 @@ Tests cover:
 - Explore & Prioritize mode (entity graph exploration)
 - Multidimensional RAG search
 - Async chat functionality
+- Autonomous discovery mode
 """
 
 import pytest
@@ -337,3 +338,129 @@ class TestReflectReportSummary:
         summary = agent._summarize_reflect_report(report)
         
         assert "clean" in summary.lower() or "no" in summary.lower()
+
+
+class TestAutonomousSettings:
+    """Test autonomous mode settings in config."""
+
+    def test_default_autonomous_enabled(self):
+        """Test default value for agent_autonomous_enabled."""
+        settings = Settings()
+        assert settings.agent_autonomous_enabled is False
+
+    def test_default_autonomous_interval(self):
+        """Test default value for agent_autonomous_interval."""
+        settings = Settings()
+        assert settings.agent_autonomous_interval == 300
+
+    def test_default_autonomous_max_entities(self):
+        """Test default value for agent_autonomous_max_entities."""
+        settings = Settings()
+        assert settings.agent_autonomous_max_entities == 10
+
+    def test_default_autonomous_priority_threshold(self):
+        """Test default value for agent_autonomous_priority_threshold."""
+        settings = Settings()
+        assert settings.agent_autonomous_priority_threshold == 0.3
+
+    def test_default_autonomous_max_depth(self):
+        """Test default value for agent_autonomous_max_depth."""
+        settings = Settings()
+        assert settings.agent_autonomous_max_depth == 3
+
+    def test_default_autonomous_auto_crawl(self):
+        """Test default value for agent_autonomous_auto_crawl."""
+        settings = Settings()
+        assert settings.agent_autonomous_auto_crawl is False
+
+    def test_default_autonomous_max_pages(self):
+        """Test default value for agent_autonomous_max_pages."""
+        settings = Settings()
+        assert settings.agent_autonomous_max_pages == 25
+
+    @patch.dict('os.environ', {
+        'GARUDA_AGENT_AUTONOMOUS_ENABLED': 'true',
+        'GARUDA_AGENT_AUTONOMOUS_INTERVAL': '600',
+        'GARUDA_AGENT_AUTONOMOUS_MAX_ENTITIES': '20',
+        'GARUDA_AGENT_AUTONOMOUS_PRIORITY_THRESHOLD': '0.5',
+        'GARUDA_AGENT_AUTONOMOUS_MAX_DEPTH': '4',
+        'GARUDA_AGENT_AUTONOMOUS_AUTO_CRAWL': 'true',
+        'GARUDA_AGENT_AUTONOMOUS_MAX_PAGES': '50',
+    })
+    def test_autonomous_settings_from_env(self):
+        """Test that autonomous settings are loaded from environment variables."""
+        settings = Settings.from_env()
+
+        assert settings.agent_autonomous_enabled is True
+        assert settings.agent_autonomous_interval == 600
+        assert settings.agent_autonomous_max_entities == 20
+        assert settings.agent_autonomous_priority_threshold == 0.5
+        assert settings.agent_autonomous_max_depth == 4
+        assert settings.agent_autonomous_auto_crawl is True
+        assert settings.agent_autonomous_max_pages == 50
+
+
+class TestAutonomousDiscover:
+    """Test autonomous discovery mode in AgentService."""
+
+    def test_autonomous_discover_returns_report_structure(self):
+        """Test that autonomous_discover returns correct report structure."""
+        from garuda_intel.services.agent_service import AgentService
+
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+        mock_store.Session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_store.Session.return_value.__exit__ = MagicMock(return_value=False)
+        # Return empty results for queries
+        mock_session.execute.return_value.all.return_value = []
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value.scalar.return_value = 0
+
+        agent = AgentService(
+            store=mock_store,
+            llm=None,
+            vector_store=None,
+        )
+
+        report = agent.autonomous_discover(max_entities=5)
+
+        assert report["mode"] == "autonomous_discover"
+        assert "started_at" in report
+        assert "completed_at" in report
+        assert "dead_ends" in report
+        assert "knowledge_gaps" in report
+        assert "crawl_plans" in report
+        assert "crawl_results" in report
+        assert "statistics" in report
+        stats = report["statistics"]
+        assert "dead_ends_found" in stats
+        assert "gaps_found" in stats
+        assert "crawl_plans_generated" in stats
+        assert "crawls_executed" in stats
+        assert "entities_analyzed" in stats
+
+    def test_autonomous_discover_no_entities_message(self):
+        """Test that autonomous_discover handles no entities gracefully."""
+        from garuda_intel.services.agent_service import AgentService
+
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+        mock_store.Session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_store.Session.return_value.__exit__ = MagicMock(return_value=False)
+        # Return empty results for everything
+        mock_session.execute.return_value.all.return_value = []
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value.scalar.return_value = 0
+
+        agent = AgentService(
+            store=mock_store,
+            llm=None,
+            vector_store=None,
+        )
+
+        report = agent.autonomous_discover()
+
+        assert report["statistics"]["dead_ends_found"] == 0
+        assert report["statistics"]["gaps_found"] == 0
+        assert report["statistics"]["crawl_plans_generated"] == 0
+        assert report["statistics"]["crawls_executed"] == 0
