@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Any, List, Tuple
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from ..services.event_system import emit_event
 from ..utils.request_helpers import safe_int, safe_float
 from ...search import IntelligentExplorer, EntityProfile, EntityType, collect_candidates_simple
@@ -377,7 +377,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             for hit in all_hits:
                 url = hit.get("url", "")
                 if url:
-                    if url not in seen_urls or hit.get("score", 0) > seen_urls[url].get("score", 0):
+                    if url not in seen_urls or float(hit.get("score", 0) or 0) > float(seen_urls[url].get("score", 0) or 0):
                         seen_urls[url] = hit
                 else:
                     no_url_hits.append(hit)
@@ -385,7 +385,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             # Combine deduplicated URL hits with non-URL hits
             merged = list(seen_urls.values()) + no_url_hits
             # Sort by score descending and take top results
-            merged.sort(key=lambda x: x.get("score", 0), reverse=True)
+            merged.sort(key=lambda x: float(x.get("score", 0) or 0), reverse=True)
             merged = merged[:limit]
 
             emit_event("chat", "Deep RAG results merged",
@@ -414,6 +414,12 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             Returns:
                 Tuple of (new_urls_crawled, success)
             """
+            # Check if shutdown requested
+            shutdown_mgr = current_app.config.get('shutdown_manager')
+            if shutdown_mgr and shutdown_mgr.is_shutting_down():
+                emit_event("chat", f"Cycle {cycle_num}: Skipping - shutdown in progress", level="warning")
+                return [], False
+            
             emit_event("chat", f"Search cycle {cycle_num}/{max_search_cycles} starting",
                       payload={"queries": search_queries[:3], "cycle": cycle_num})
             
@@ -532,7 +538,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             for hit in all_retry_hits:
                 url = hit.get("url", "")
                 if url:
-                    if url not in unique_hits or hit.get("score", 0) > unique_hits[url].get("score", 0):
+                    if url not in unique_hits or float(hit.get("score", 0) or 0) > float(unique_hits[url].get("score", 0) or 0):
                         unique_hits[url] = hit
                 else:
                     # Preserve hits without URLs
@@ -540,7 +546,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             
             # Sort by score descending and take top results
             deduplicated = list(unique_hits.values())
-            deduplicated.sort(key=lambda x: x.get("score", 0), reverse=True)
+            deduplicated.sort(key=lambda x: float(x.get("score", 0) or 0), reverse=True)
             merged_hits = deduplicated[:increased_top_k] + hits_without_url[:increased_top_k // 4]
             
             # Re-check quality after retry
@@ -583,6 +589,12 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             
             # Run search/crawl cycles up to the configured maximum
             for cycle_num in range(1, max_search_cycles + 1):
+                # Check shutdown before starting new cycle
+                shutdown_mgr = current_app.config.get('shutdown_manager')
+                if shutdown_mgr and shutdown_mgr.is_shutting_down():
+                    emit_event("chat", "Stopping search cycles - shutdown in progress", level="warning")
+                    break
+                
                 # Run the search cycle with full pipeline
                 cycle_urls, cycle_success = run_search_cycle(cycle_num, search_queries, all_crawled_urls)
                 live_urls.extend(cycle_urls)

@@ -656,7 +656,7 @@ class IntelligentExplorer:
                 continue
 
             h_score, reason = self.url_scorer.score_url(href, text, depth + 1)
-            llm_score = link.get("llm_score", 0)
+            llm_score = float(link.get("llm_score", 0) or 0)
 
             final_score = max(h_score, llm_score)
             if final_score >= self.score_threshold:
