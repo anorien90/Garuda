@@ -771,3 +771,61 @@ Entity.dynamic_field_values = relationship(
     foreign_keys="EntityFieldValue.entity_id",
     cascade="all, delete-orphan",
 )
+
+
+class Task(BasicDataEntry):
+    """Persistent task queue entry for async operations.
+    
+    Tracks long-running tasks (LLM processing, crawling, agent operations)
+    with status, progress, and results that survive server restarts.
+    """
+    __tablename__ = "tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    task_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", index=True
+    )  # pending, running, completed, failed, cancelled
+    priority: Mapped[int] = mapped_column(Integer, default=0)  # higher = more urgent
+    
+    # Task configuration
+    params_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    
+    # Results
+    result_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    progress: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0.0 - 1.0
+    progress_message: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    
+    # Timing
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index('ix_task_status_priority', 'status', 'priority'),
+        Index('ix_task_type_status', 'task_type', 'status'),
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "task",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "id": str(self.id),
+            "task_type": self.task_type,
+            "status": self.status,
+            "priority": self.priority,
+            "params": self.params_json,
+            "result": self.result_json,
+            "error": self.error,
+            "progress": self.progress,
+            "progress_message": self.progress_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }

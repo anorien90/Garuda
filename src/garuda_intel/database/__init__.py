@@ -25,6 +25,7 @@ from .models import (
     DynamicFieldDefinition,
     EntityFieldValue,
     FieldDiscoveryLog,
+    Task,
 )
 from .engine import SQLAlchemyStore
 from .store import PersistenceStore
@@ -49,6 +50,8 @@ __all__ = [
     "DynamicFieldDefinition",
     "EntityFieldValue",
     "FieldDiscoveryLog",
+    # Task model
+    "Task",
     # Storage
     "SQLAlchemyStore",
     "PersistenceStore",

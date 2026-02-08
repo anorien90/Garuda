@@ -26,6 +26,7 @@ from ..discover.crawl_learner import CrawlLearner
 from ..services.entity_gap_analyzer import EntityGapAnalyzer
 from ..services.adaptive_crawler import AdaptiveCrawlerService
 from ..services.media_processor import MediaProcessor
+from ..services.task_queue import TaskQueueService
 from .services.event_system import init_event_logging
 from .utils.shutdown import ShutdownManager
 
@@ -33,6 +34,7 @@ from .utils.shutdown import ShutdownManager
 from .routes import static, recorder, search, crawling, entities, relationships
 from .routes import entity_gaps, entity_deduplication, entity_relations, media
 from .routes import graph_search, relationship_confidence, schema, agent
+from .routes import tasks as tasks_routes
 
 settings = Settings.from_env()
 
@@ -93,6 +95,103 @@ media_extractor = MediaExtractor(
 
 # Initialize event logging
 init_event_logging()
+
+# Initialize persistent task queue
+task_queue = TaskQueueService(store)
+
+
+def _register_task_handlers(tq, agent_svc):
+    """Register task handlers for the queue worker."""
+
+    def _handle_agent_reflect(task_id, params):
+        tq.update_progress(task_id, 0.1, "Starting reflect & refine")
+        result = agent_svc.reflect_and_refine(
+            target_entities=params.get("target_entities"),
+            dry_run=params.get("dry_run", True),
+        )
+        tq.update_progress(task_id, 1.0, "Reflect & refine complete")
+        return result
+
+    def _handle_agent_explore(task_id, params):
+        tq.update_progress(task_id, 0.1, "Starting explore & prioritize")
+        result = agent_svc.explore_and_prioritize(
+            root_entities=params.get("root_entities", []),
+            max_depth=int(params.get("max_depth", 3)),
+            top_n=int(params.get("top_n", 20)),
+        )
+        tq.update_progress(task_id, 1.0, "Explore complete")
+        return result
+
+    def _handle_agent_autonomous(task_id, params):
+        tq.update_progress(task_id, 0.1, "Starting autonomous discovery")
+        result = agent_svc.autonomous_discover(
+            max_entities=int(params.get("max_entities", 10)),
+            priority_threshold=float(params.get("priority_threshold", 0.3)),
+            max_depth=int(params.get("max_depth", 3)),
+            auto_crawl=params.get("auto_crawl", False),
+            max_pages=int(params.get("max_pages", 25)),
+        )
+        tq.update_progress(task_id, 1.0, "Autonomous discovery complete")
+        return result
+
+    def _handle_agent_reflect_relate(task_id, params):
+        tq.update_progress(task_id, 0.1, "Starting reflect & relate")
+        result = agent_svc.reflect_relate(
+            target_entities=params.get("target_entities"),
+            max_depth=int(params.get("max_depth", 2)),
+            top_n=int(params.get("top_n", 20)),
+        )
+        tq.update_progress(task_id, 1.0, "Reflect & relate complete")
+        return result
+
+    def _handle_agent_investigate(task_id, params):
+        tq.update_progress(task_id, 0.1, "Starting investigate crawl")
+        result = agent_svc.investigate_crawl(
+            investigation_tasks=params.get("investigation_tasks"),
+            max_entities=int(params.get("max_entities", 10)),
+            max_pages=int(params.get("max_pages", 25)),
+            max_depth=int(params.get("max_depth", 3)),
+            priority_threshold=float(params.get("priority_threshold", 0.3)),
+        )
+        tq.update_progress(task_id, 1.0, "Investigate crawl complete")
+        return result
+
+    def _handle_agent_combined(task_id, params):
+        tq.update_progress(task_id, 0.1, "Starting combined autonomous")
+        result = agent_svc.combined_autonomous(
+            target_entities=params.get("target_entities"),
+            max_entities=int(params.get("max_entities", 10)),
+            max_pages=int(params.get("max_pages", 25)),
+            max_depth=int(params.get("max_depth", 3)),
+            priority_threshold=float(params.get("priority_threshold", 0.3)),
+        )
+        tq.update_progress(task_id, 1.0, "Combined autonomous complete")
+        return result
+
+    def _handle_agent_chat(task_id, params):
+        import asyncio
+        tq.update_progress(task_id, 0.1, "Processing chat query")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                agent_svc.chat_async(
+                    question=params.get("question", ""),
+                    entity=params.get("entity"),
+                )
+            )
+        finally:
+            loop.close()
+        tq.update_progress(task_id, 1.0, "Chat complete")
+        return result
+
+    tq.register_handler(TaskQueueService.TASK_AGENT_REFLECT, _handle_agent_reflect)
+    tq.register_handler(TaskQueueService.TASK_AGENT_EXPLORE, _handle_agent_explore)
+    tq.register_handler(TaskQueueService.TASK_AGENT_AUTONOMOUS, _handle_agent_autonomous)
+    tq.register_handler(TaskQueueService.TASK_AGENT_REFLECT_RELATE, _handle_agent_reflect_relate)
+    tq.register_handler(TaskQueueService.TASK_AGENT_INVESTIGATE, _handle_agent_investigate)
+    tq.register_handler(TaskQueueService.TASK_AGENT_COMBINED, _handle_agent_combined)
+    tq.register_handler(TaskQueueService.TASK_AGENT_CHAT, _handle_agent_chat)
 
 
 # Auth helper
@@ -175,6 +274,28 @@ app.register_blueprint(
     agent.init_agent_routes(api_key_required, settings, store, llm, vector_store)
 )
 
+# Register task queue routes and handlers
+app.register_blueprint(
+    tasks_routes.init_task_routes(api_key_required, task_queue)
+)
+
+# Lazy-register task handlers: we need the same AgentService instance used by agent routes.
+# Import it fresh and create one to register handlers.
+from ..services.agent_service import AgentService as _AgentService
+_agent_for_queue = _AgentService(
+    store=store,
+    llm=llm,
+    vector_store=vector_store,
+    entity_merge_threshold=getattr(settings, 'agent_entity_merge_threshold', 0.85),
+    max_exploration_depth=getattr(settings, 'agent_max_exploration_depth', 3),
+    priority_unknown_weight=getattr(settings, 'agent_priority_unknown_weight', 0.7),
+    priority_relation_weight=getattr(settings, 'agent_priority_relation_weight', 0.3),
+)
+_register_task_handlers(task_queue, _agent_for_queue)
+
+# Start the task queue worker
+task_queue.start_worker()
+
 
 def main():
     """Run the Flask application."""
@@ -189,6 +310,7 @@ def main():
             frame: Current stack frame (not used directly but required by signal handler interface)
         """
         shutdown_manager.request_shutdown()
+        task_queue.stop_worker()
     
     # Only register signal handlers in production mode
     # In debug mode, Flask's reloader interferes with signal handling
