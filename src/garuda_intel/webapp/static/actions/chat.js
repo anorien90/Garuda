@@ -4,7 +4,15 @@ import { renderChat, renderAutonomousInChat } from '../render-chat.js';
 
 export async function chatAsk(e) {
   if (e) e.preventDefault();
-  if (!els.chatAnswer) return;
+  
+  // Find the correct answer container relative to the submitted form
+  const submittedForm = e && e.target;
+  const chatContainer = submittedForm ? submittedForm.closest('#chat-container') : null;
+  const answerEl = chatContainer
+    ? chatContainer.querySelector('#chat-answer')
+    : els.chatAnswer;
+  
+  if (!answerEl) return;
   const qEl = getEl('chat-q');
   const entityEl = getEl('chat-entity');
   const topkEl = getEl('chat-topk');
@@ -12,7 +20,7 @@ export async function chatAsk(e) {
   const autonomousModeEl = getEl('chat-autonomous-mode');
   
   if (!qEl || !entityEl || !topkEl) {
-    els.chatAnswer.innerHTML = '<div class="p-4 text-rose-500">Chat form is missing from the page.</div>';
+    answerEl.innerHTML = '<div class="p-4 text-rose-500">Chat form is missing from the page.</div>';
     return;
   }
 
@@ -20,7 +28,7 @@ export async function chatAsk(e) {
   
   // Phase indicator with animation
   const updatePhase = (phase, message) => {
-    els.chatAnswer.innerHTML = `
+    answerEl.innerHTML = `
       <div class="p-4 space-y-2">
         <div class="animate-pulse text-brand-600 font-semibold">${phase}</div>
         <div class="text-sm text-slate-600 dark:text-slate-400">${message}</div>
@@ -60,7 +68,7 @@ export async function chatAsk(e) {
     }
     
     // Render the main chat result
-    renderChat(chatData);
+    renderChat(chatData, answerEl);
     
     // If autonomous mode is enabled, trigger autonomous discovery
     if (autonomousModeEnabled) {
@@ -74,7 +82,7 @@ export async function chatAsk(e) {
             🤖 Autonomous Mode: Discovering knowledge gaps...
           </div>
         `;
-        els.chatAnswer.appendChild(autonomousDiv);
+        answerEl.appendChild(autonomousDiv);
         
         // Call autonomous endpoint
         const autonomousRes = await fetchWithAuth('/api/agent/autonomous', {
@@ -108,6 +116,6 @@ export async function chatAsk(e) {
     }
     
   } catch (err) {
-    els.chatAnswer.innerHTML = `<div class="p-4 text-rose-500">❌ Error: ${err.message || 'Unknown error occurred'}</div>`;
+    answerEl.innerHTML = `<div class="p-4 text-rose-500">❌ Error: ${err.message || 'Unknown error occurred'}</div>`;
   }
 }

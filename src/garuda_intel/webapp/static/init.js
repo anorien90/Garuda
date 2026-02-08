@@ -36,7 +36,9 @@ export function init() {
 
   if (els.searchForm) els.searchForm.onsubmit = searchIntel;
   if (els.semanticForm) els.semanticForm.onsubmit = semanticSearch;
-  if (els.chatForm) els.chatForm.onsubmit = chatAsk;
+  document.querySelectorAll('[id="chat-form"]').forEach(form => {
+    form.addEventListener('submit', chatAsk);
+  });
   if (els.pagesLoad) els.pagesLoad.onclick = loadPages;
   if (els.pagesLimit) els.pagesLimit.onchange = loadPages;
   if (els.pagesSearch) els.pagesSearch.oninput = () => loadPages({ clientOnly: true });

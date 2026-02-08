@@ -1,9 +1,10 @@
 import { els } from './config.js';
 import { pill, collapsible } from './ui.js';
 
-export function renderChat(payload) {
-  if (!els.chatAnswer) return;
-  els.chatAnswer.innerHTML = '';
+export function renderChat(payload, targetEl) {
+  const el = targetEl || els.chatAnswer;
+  if (!el) return;
+  el.innerHTML = '';
   
   // Always show an answer - even if it's empty or null
   let answer = payload?.answer || '';
@@ -138,7 +139,7 @@ export function renderChat(payload) {
         </div>
     </div>
   `;
-  els.chatAnswer.appendChild(div);
+  el.appendChild(div);
 }
 
 export function renderAutonomousInChat(data) {

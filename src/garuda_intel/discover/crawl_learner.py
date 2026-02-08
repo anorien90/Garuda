@@ -91,7 +91,7 @@ class CrawlLearner:
     - Temporal trends
     """
     
-    def __init__(self, store: PersistenceStore, learning_rate: float = 0.1, decay_days: float = 30.0):
+    def __init__(self, store: Optional[PersistenceStore] = None, learning_rate: float = 0.1, decay_days: float = 30.0):
         """
         Initialize the crawl learner.
         
@@ -105,6 +105,9 @@ class CrawlLearner:
         self.decay_days = decay_days
         self.logger = logging.getLogger(__name__)
         
+        if not store:
+            self.logger.warning("CrawlLearner initialized without a persistence store; patterns will not be persisted")
+        
         # In-memory caches
         self._domain_stats: Dict[str, DomainStats] = {}
         self._page_type_patterns: Dict[str, PageTypePattern] = {}
@@ -113,7 +116,8 @@ class CrawlLearner:
         self._max_recent = 1000
         
         # Load existing patterns from database
-        self._load_patterns()
+        if self.store:
+            self._load_patterns()
     
     def record_crawl_result(
         self, 
@@ -164,7 +168,7 @@ class CrawlLearner:
             self._recent_outcomes.pop(0)
         
         # Periodically persist patterns
-        if len(self._recent_outcomes) % 50 == 0:
+        if self.store and len(self._recent_outcomes) % 50 == 0:
             self._save_patterns()
         
         self.logger.debug(
