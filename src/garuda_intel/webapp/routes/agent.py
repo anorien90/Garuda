@@ -6,6 +6,11 @@ Provides endpoints for:
 - Explore & Prioritize mode: Entity graph exploration
 - Multidimensional RAG search
 - Async chat with agent capabilities
+
+All long-running endpoints support `queued: true` in the request body
+to submit the operation to the persistent task queue instead of executing
+synchronously. This protects the Ollama instance and provides persistent
+task tracking.
 """
 
 import logging
@@ -16,6 +21,15 @@ from ..services.event_system import emit_event
 
 bp_agent = Blueprint('agent', __name__, url_prefix='/api/agent')
 logger = logging.getLogger(__name__)
+
+
+def _get_task_queue():
+    """Get the task queue service from the app context."""
+    try:
+        from ..app import task_queue
+        return task_queue
+    except Exception:
+        return None
 
 
 def init_agent_routes(api_key_required, settings, store, llm, vector_store):
@@ -50,14 +64,27 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         Request body (JSON):
             target_entities: Optional list of entity names to focus on
             dry_run: If true, only report without making changes (default: true)
+            queued: If true, submit to task queue (default: false)
         
         Returns:
-            Report of merge operations and data quality findings
+            Report of merge operations and data quality findings,
+            or task submission confirmation if queued
         """
         body = request.get_json(silent=True) or {}
         
         target_entities = body.get("target_entities")
         dry_run = body.get("dry_run", True)  # Default to dry run for safety
+        
+        # Support queued execution
+        if body.get("queued"):
+            tq = _get_task_queue()
+            if tq:
+                from ...services.task_queue import TaskQueueService
+                task_id = tq.submit(TaskQueueService.TASK_AGENT_REFLECT, {
+                    "target_entities": target_entities,
+                    "dry_run": dry_run,
+                })
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Reflect task queued"}), 202
         
         emit_event("agent", "reflect mode started", payload={
             "target_entities": target_entities,
@@ -92,9 +119,11 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             root_entities: List of starting entity names (required)
             max_depth: Maximum relation depth to explore (default: 3)
             top_n: Number of top-priority entities to return (default: 20)
+            queued: If true, submit to task queue (default: false)
         
         Returns:
-            Exploration report with prioritized entities for further research
+            Exploration report with prioritized entities for further research,
+            or task submission confirmation if queued
         """
         body = request.get_json(silent=True) or {}
         
@@ -104,6 +133,18 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         
         max_depth = int(body.get("max_depth", 3))
         top_n = int(body.get("top_n", 20))
+        
+        # Support queued execution
+        if body.get("queued"):
+            tq = _get_task_queue()
+            if tq:
+                from ...services.task_queue import TaskQueueService
+                task_id = tq.submit(TaskQueueService.TASK_AGENT_EXPLORE, {
+                    "root_entities": root_entities,
+                    "max_depth": max_depth,
+                    "top_n": top_n,
+                })
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Explore task queued"}), 202
         
         emit_event("agent", "explore mode started", payload={
             "root_entities": root_entities,
@@ -193,9 +234,11 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         Request body (JSON):
             question: User question (required)
             entity: Optional entity context
+            queued: If true, submit to task queue (default: false)
         
         Returns:
-            Chat response with answer and context
+            Chat response with answer and context,
+            or task submission confirmation if queued
         """
         import asyncio
         
@@ -206,6 +249,17 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             return jsonify({"error": "question required"}), 400
         
         entity = body.get("entity")
+        
+        # Support queued execution
+        if body.get("queued"):
+            tq = _get_task_queue()
+            if tq:
+                from ...services.task_queue import TaskQueueService
+                task_id = tq.submit(TaskQueueService.TASK_AGENT_CHAT, {
+                    "question": question,
+                    "entity": entity,
+                }, priority=5)  # Higher priority for chat
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Chat task queued"}), 202
         
         emit_event("agent", "chat started", payload={
             "mode": "deep_rag",
@@ -255,9 +309,11 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             max_depth: Max graph traversal depth (default: 3)
             auto_crawl: Whether to trigger crawls (default: false)
             max_pages: Max pages per crawl (default: 25)
+            queued: If true, submit to task queue (default: false)
 
         Returns:
-            Discovery report with dead-ends, gaps, plans, and results
+            Discovery report with dead-ends, gaps, plans, and results,
+            or task submission confirmation if queued
         """
         body = request.get_json(silent=True) or {}
 
@@ -266,6 +322,20 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         max_depth = int(body.get("max_depth", 3))
         auto_crawl = body.get("auto_crawl", False)
         max_pages = int(body.get("max_pages", 25))
+
+        # Support queued execution
+        if body.get("queued"):
+            tq = _get_task_queue()
+            if tq:
+                from ...services.task_queue import TaskQueueService
+                task_id = tq.submit(TaskQueueService.TASK_AGENT_AUTONOMOUS, {
+                    "max_entities": max_entities,
+                    "priority_threshold": priority_threshold,
+                    "max_depth": max_depth,
+                    "auto_crawl": auto_crawl,
+                    "max_pages": max_pages,
+                })
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Autonomous task queued"}), 202
 
         emit_event("agent", "autonomous discovery started", payload={
             "max_entities": max_entities,
@@ -310,14 +380,28 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             - target_entities (list, optional): Entity names to focus on
             - max_depth (int, optional): Maximum graph traversal depth (default: 2)
             - top_n (int, optional): Maximum potential relations to suggest (default: 20)
+            - queued (bool, optional): Submit to task queue (default: false)
         
         Returns:
-            Report with reflection results, potential relations, and investigation tasks
+            Report with reflection results, potential relations, and investigation tasks,
+            or task submission confirmation if queued
         """
         body = request.get_json(silent=True) or {}
         target_entities = body.get("target_entities")
         max_depth = int(body.get("max_depth", 2))
         top_n = int(body.get("top_n", 20))
+        
+        # Support queued execution
+        if body.get("queued"):
+            tq = _get_task_queue()
+            if tq:
+                from ...services.task_queue import TaskQueueService
+                task_id = tq.submit(TaskQueueService.TASK_AGENT_REFLECT_RELATE, {
+                    "target_entities": target_entities,
+                    "max_depth": max_depth,
+                    "top_n": top_n,
+                })
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Reflect-relate task queued"}), 202
         
         emit_event("agent", "reflect-relate started", payload={"target_entities": target_entities})
         try:
@@ -345,9 +429,11 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             - max_pages (int, optional): Maximum pages per crawl (default: 25)
             - max_depth (int, optional): Maximum crawl depth (default: 3)
             - priority_threshold (float, optional): Minimum task priority (default: 0.3)
+            - queued (bool, optional): Submit to task queue (default: false)
         
         Returns:
-            Report with crawl plans and results
+            Report with crawl plans and results,
+            or task submission confirmation if queued
         """
         body = request.get_json(silent=True) or {}
         investigation_tasks = body.get("investigation_tasks")
@@ -355,6 +441,20 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         max_pages = int(body.get("max_pages", 25))
         max_depth = int(body.get("max_depth", 3))
         priority_threshold = float(body.get("priority_threshold", 0.3))
+        
+        # Support queued execution
+        if body.get("queued"):
+            tq = _get_task_queue()
+            if tq:
+                from ...services.task_queue import TaskQueueService
+                task_id = tq.submit(TaskQueueService.TASK_AGENT_INVESTIGATE, {
+                    "investigation_tasks": investigation_tasks,
+                    "max_entities": max_entities,
+                    "max_pages": max_pages,
+                    "max_depth": max_depth,
+                    "priority_threshold": priority_threshold,
+                })
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Investigate task queued"}), 202
         
         emit_event("agent", "investigate-crawl started")
         try:
@@ -384,9 +484,11 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             - max_pages (int, optional): Maximum pages per crawl (default: 25)
             - max_depth (int, optional): Maximum crawl depth (default: 3)
             - priority_threshold (float, optional): Minimum task priority (default: 0.3)
+            - queued (bool, optional): Submit to task queue (default: false)
         
         Returns:
-            Combined report with both sub-reports
+            Combined report with both sub-reports,
+            or task submission confirmation if queued
         """
         body = request.get_json(silent=True) or {}
         target_entities = body.get("target_entities")
@@ -394,6 +496,20 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         max_pages = int(body.get("max_pages", 25))
         max_depth = int(body.get("max_depth", 3))
         priority_threshold = float(body.get("priority_threshold", 0.3))
+        
+        # Support queued execution
+        if body.get("queued"):
+            tq = _get_task_queue()
+            if tq:
+                from ...services.task_queue import TaskQueueService
+                task_id = tq.submit(TaskQueueService.TASK_AGENT_COMBINED, {
+                    "target_entities": target_entities,
+                    "max_entities": max_entities,
+                    "max_pages": max_pages,
+                    "max_depth": max_depth,
+                    "priority_threshold": priority_threshold,
+                })
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Combined task queued"}), 202
         
         emit_event("agent", "combined-autonomous started")
         try:
