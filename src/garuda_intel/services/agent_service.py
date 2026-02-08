@@ -1701,7 +1701,7 @@ class AgentService:
                 with self.store.Session() as session:
                     entity = session.execute(
                         select(Entity).where(Entity.name == entity_name)
-                    ).scalar_one_or_none()
+                    ).scalars().first()
                     
                     if entity:
                         plan = gap_analyzer.generate_crawl_plan(

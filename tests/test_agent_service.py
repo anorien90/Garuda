@@ -697,7 +697,7 @@ class TestInvestigateRelationQueries:
         mock_entity.data = {}
         mock_entity.metadata_json = {}
         mock_entity.updated_at = datetime.now()
-        mock_session.execute.return_value.scalar_one_or_none.return_value = mock_entity
+        mock_session.execute.return_value.scalars.return_value.first.return_value = mock_entity
 
         # Mock gap_analyzer.generate_crawl_plan to return a plan
         mock_plan = {
@@ -734,6 +734,61 @@ class TestInvestigateRelationQueries:
         # Should contain relationship-specific queries combining both entities
         assert any("Paul Allen" in q and "Microsoft" in q for q in queries), \
             f"Expected relationship queries with both entities, got: {queries}"
+
+
+class TestInvestigateCrawlDuplicateEntities:
+    """Test that investigate_crawl handles duplicate entities gracefully."""
+
+    def test_investigate_crawl_with_duplicate_entity_names(self):
+        """Test that investigate_crawl works when multiple entities share the same name."""
+        from garuda_intel.services.agent_service import AgentService
+
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+        mock_store.Session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_store.Session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_session.execute.return_value.all.return_value = []
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value.scalar.return_value = 0
+
+        # Mock entity lookup to return first of multiple entities with same name
+        mock_entity = MagicMock()
+        mock_entity.name = "Bill Gates"
+        mock_entity.id = "entity-uuid-1"
+        mock_entity.kind = "founder"
+        mock_entity.data = {}
+        mock_entity.metadata_json = {}
+        mock_entity.updated_at = datetime.now()
+        mock_session.execute.return_value.scalars.return_value.first.return_value = mock_entity
+
+        mock_plan = {
+            "mode": "gap_filling",
+            "entity_id": "entity-uuid-1",
+            "entity_name": "Bill Gates",
+            "queries": ['"Bill Gates" biography'],
+            "sources": [],
+        }
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+
+        with patch('garuda_intel.services.entity_gap_analyzer.EntityGapAnalyzer.generate_crawl_plan', return_value=mock_plan):
+            investigation_tasks = [
+                {
+                    "task_type": "fill_gap",
+                    "entity_name": "Bill Gates",
+                    "reason": "Missing biography details",
+                    "priority": 0.8,
+                },
+            ]
+
+            # This should NOT raise MultipleResultsFound
+            report = agent.investigate_crawl(
+                investigation_tasks=investigation_tasks,
+                max_entities=10,
+            )
+
+        assert len(report["crawl_plans"]) == 1
+        assert report["crawl_plans"][0]["entity_name"] == "Bill Gates"
 
 
 class TestExecuteAutonomousCrawlPassesQueries:
