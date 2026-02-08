@@ -13,11 +13,14 @@ export async function chatAsk(e) {
     : els.chatAnswer;
   
   if (!answerEl) return;
-  const qEl = getEl('chat-q');
-  const entityEl = getEl('chat-entity');
-  const topkEl = getEl('chat-topk');
-  const maxCyclesEl = getEl('chat-max-cycles');
-  const autonomousModeEl = getEl('chat-autonomous-mode');
+  // Resolve input elements relative to the submitted form so that
+  // the correct values are read when chat.html is included more than
+  // once on the page (e.g. search-tab AND floating chat widget).
+  const qEl = submittedForm ? submittedForm.querySelector('#chat-q') : getEl('chat-q');
+  const entityEl = submittedForm ? submittedForm.querySelector('#chat-entity') : getEl('chat-entity');
+  const topkEl = submittedForm ? submittedForm.querySelector('#chat-topk') : getEl('chat-topk');
+  const maxCyclesEl = submittedForm ? submittedForm.querySelector('#chat-max-cycles') : getEl('chat-max-cycles');
+  const autonomousModeEl = submittedForm ? submittedForm.querySelector('#chat-autonomous-mode') : getEl('chat-autonomous-mode');
   
   if (!qEl || !entityEl || !topkEl) {
     answerEl.innerHTML = '<div class="p-4 text-rose-500">Chat form is missing from the page.</div>';
