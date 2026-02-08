@@ -30,19 +30,20 @@ export async function chatAsk(e) {
     maxCyclesEl = document.getElementById('search-tab-chat-max-cycles');
     autonomousModeEl = document.getElementById('search-tab-chat-autonomous-mode');
   } else {
-    // Fallback to old behavior for backward compatibility (should not be needed with new structure)
-    const chatContainer = submittedForm ? submittedForm.closest('#popup-chat-container') : null;
-    answerEl = chatContainer
-      ? chatContainer.querySelector('#popup-chat-answer, #search-tab-chat-answer')
-      : els.chatAnswer;
-    qEl = submittedForm ? submittedForm.querySelector('#popup-chat-q, #search-tab-chat-q') : getEl('chat-q');
-    entityEl = submittedForm ? submittedForm.querySelector('#popup-chat-entity, #search-tab-chat-entity') : getEl('chat-entity');
-    topkEl = submittedForm ? submittedForm.querySelector('#popup-chat-topk, #search-tab-chat-topk') : getEl('chat-topk');
-    maxCyclesEl = submittedForm ? submittedForm.querySelector('#popup-chat-max-cycles, #search-tab-chat-max-cycles') : getEl('chat-max-cycles');
-    autonomousModeEl = submittedForm ? submittedForm.querySelector('#popup-chat-autonomous-mode, #search-tab-chat-autonomous-mode') : getEl('chat-autonomous-mode');
+    // Minimal fallback - should rarely be needed with new structure
+    console.warn('Chat form submitted without recognized ID, using fallback detection');
+    answerEl = els.chatAnswer;
+    qEl = getEl('chat-q');
+    entityEl = getEl('chat-entity');
+    topkEl = getEl('chat-topk');
+    maxCyclesEl = getEl('chat-max-cycles');
+    autonomousModeEl = getEl('chat-autonomous-mode');
   }
   
-  if (!answerEl) return;
+  if (!answerEl) {
+    console.error('No answer container found');
+    return;
+  }
   
   if (!qEl || !topkEl) {
     answerEl.innerHTML = '<div class="p-4 text-rose-500">Chat form is missing required fields.</div>';
