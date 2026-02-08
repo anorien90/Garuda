@@ -42,6 +42,10 @@ class TaskQueueService:
     TASK_CHAT = "chat"
     TASK_CRAWL = "crawl"
 
+    # Limits
+    MAX_PROGRESS_MESSAGE_LENGTH = 500
+    WORKER_STOP_TIMEOUT_SECONDS = 10
+
     # Status constants
     STATUS_PENDING = "pending"
     STATUS_RUNNING = "running"
@@ -239,7 +243,7 @@ class TaskQueueService:
             task = session.get(Task, task_uuid)
             if task and task.status == self.STATUS_RUNNING:
                 task.progress = min(1.0, max(0.0, progress))
-                task.progress_message = message[:500] if message else ""
+                task.progress_message = message[:self.MAX_PROGRESS_MESSAGE_LENGTH] if message else ""
                 session.commit()
 
         self._emit("task_progress", message or f"Progress: {progress:.0%}", {
@@ -340,7 +344,7 @@ class TaskQueueService:
         """Stop the background worker thread gracefully."""
         self._shutdown_event.set()
         if self._worker_thread:
-            self._worker_thread.join(timeout=30)
+            self._worker_thread.join(timeout=self.WORKER_STOP_TIMEOUT_SECONDS)
             logger.info("Task queue worker stopped")
 
     def _worker_loop(self):
