@@ -501,16 +501,23 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         retry_attempted = False
         paraphrased_queries = []
         search_cycles_completed = 0
+        current_step = "phase1_initial_rag"
+        final_step = None  # Will be set based on actual outcome
     
         # Evaluate answer quality and determine if retry is needed
         is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
         quality_insufficient = len(high_quality_rag) == 0
+        
+        # If phase 1 succeeded, set final step
+        if is_sufficient and not quality_insufficient:
+            final_step = "phase1_local_lookup"
         
         # Phase 2: Retry with paraphrasing and more hits if initial attempt insufficient
         if quality_insufficient or (not is_sufficient and len(high_quality_rag) < min_high_quality_hits):
             emit_event("chat", "Phase 2: Retry with paraphrasing and more hits",
                      payload={"reason": "Insufficient initial results"})
             retry_attempted = True
+            current_step = "phase2_retry_paraphrasing"
             
             # Generate paraphrased queries
             paraphrased_queries = llm.paraphrase_query(question)
@@ -560,6 +567,10 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             # Re-synthesize answer with new results
             answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
             is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
+            
+            # Update final step if we're done here
+            if is_sufficient and len(high_quality_rag) >= min_high_quality_hits:
+                final_step = "phase2_local_lookup_after_retry"
         
         # Phase 3: Intelligent crawling with multiple cycles if still insufficient
         if not is_sufficient or quality_insufficient:
@@ -581,6 +592,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                      payload={"reason": crawl_reason, "max_cycles": max_search_cycles})
             
             online_triggered = True
+            current_step = "phase3_web_crawling"
     
             # Generate initial search queries (always generate for web search)
             search_queries = llm.generate_seed_queries(question, entity or "")
@@ -620,6 +632,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                     if is_sufficient and len(high_quality_rag) >= min_high_quality_hits:
                         emit_event("chat", f"Sufficient results after {cycle_num} cycles - stopping early",
                                  payload={"cycles_completed": cycle_num})
+                        final_step = f"phase4_local_lookup_after_cycle_{cycle_num}"
                         break
                     
                     # Generate new search queries with different angle for next cycle
@@ -645,6 +658,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             if live_urls:
                 emit_event("chat", "Phase 4: Final RAG re-query after crawling",
                          payload={"total_urls_crawled": len(live_urls)})
+                current_step = "phase4_final_local_lookup"
                 merged_hits = gather_hits(question, top_k, prioritize_rag=True)
                 answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
                 is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
@@ -653,6 +667,15 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 high_quality_rag = [h for h in rag_hits if h.get("score", 0) >= rag_quality_threshold]
                 emit_event("chat", f"Phase 4 results: {len(high_quality_rag)} high-quality RAG hits, sufficient={is_sufficient}",
                          payload={"high_quality": len(high_quality_rag), "is_sufficient": is_sufficient})
+                
+                # Set final step based on outcome
+                if is_sufficient and len(high_quality_rag) >= min_high_quality_hits:
+                    final_step = "phase4_local_lookup_success"
+                else:
+                    final_step = "phase4_local_lookup_insufficient_after_all_cycles"
+            else:
+                # No URLs were crawled despite trying
+                final_step = "error_no_urls_found_after_all_cycles"
 
             # Build a summary with references if we have context
             if not is_sufficient and merged_hits:
@@ -697,10 +720,20 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                     answer = "I searched through local data and online sources but couldn't find a definitive answer. Try refining your question or providing more context."
             else:
                 answer = "No relevant information was found in local data or online sources. Try a different question or crawl some relevant pages first."
+            
+            # Update final step to indicate fallback was used
+            # Only set fallback error if no specific error state already set
+            if final_step is None or (not final_step.startswith("error") and not final_step.startswith("phase")):
+                final_step = "error_fallback_answer_generated"
+    
+        # Ensure final_step is always set
+        if final_step is None:
+            final_step = "unknown_state"
     
         emit_event("chat", "Chat completed successfully", 
                  payload={"session_id": session_id, "online_triggered": online_triggered, 
-                         "retry_attempted": retry_attempted, "search_cycles": search_cycles_completed})
+                         "retry_attempted": retry_attempted, "search_cycles": search_cycles_completed,
+                         "final_step": final_step})
         
         return jsonify(
             {
@@ -717,6 +750,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 "sql_hits_count": len([h for h in merged_hits if h.get("source") == "sql"]),
                 "search_cycles_completed": search_cycles_completed,
                 "max_search_cycles": max_search_cycles,
+                "current_step": current_step,
+                "final_step": final_step,
             }
         )
     

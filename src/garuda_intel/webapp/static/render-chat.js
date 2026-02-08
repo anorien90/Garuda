@@ -30,6 +30,40 @@ export function renderChat(payload, targetEl) {
 
   const metaBadges = [];
   
+  // Show final step status with clear indication
+  const finalStep = payload.final_step || 'unknown';
+  const currentStep = payload.current_step || 'unknown';
+  let stepBadgeClass = 'bg-slate-100 dark:bg-slate-900/30 text-slate-800 dark:text-slate-200';
+  let stepLabel = 'Final Step: ';
+  
+  // Determine step badge color and label based on final step
+  if (finalStep.includes('success')) {
+    stepBadgeClass = 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200';
+    stepLabel = '✅ Completed: ';
+  } else if (finalStep.includes('error')) {
+    stepBadgeClass = 'bg-rose-100 dark:bg-rose-900/30 text-rose-800 dark:text-rose-200';
+    stepLabel = '⚠️ Final State: ';
+  } else if (finalStep.includes('insufficient')) {
+    stepBadgeClass = 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200';
+    stepLabel = '⚡ Final State: ';
+  } else if (finalStep.includes('local_lookup')) {
+    stepBadgeClass = 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200';
+    stepLabel = '✅ Completed: ';
+  }
+  
+  // Format final step for display
+  const finalStepDisplay = finalStep
+    .replace(/_/g, ' ')
+    .replace(/phase(\d+)/g, 'Phase $1:')  // Use global flag to replace all occurrences
+    .replace(/local lookup/gi, 'Local Lookup')
+    .replace(/after cycle (\d+)/, 'after cycle $1')
+    .replace(/after all cycles/gi, 'after all cycles')
+    .replace(/no urls found/gi, 'No URLs Found')
+    .replace(/fallback answer generated/gi, 'Fallback Answer Generated')
+    .replace(/unknown state/gi, 'Unknown State');
+  
+  metaBadges.push(pill(`${stepLabel}${finalStepDisplay}`, stepBadgeClass));
+  
   // Show RAG usage status
   const ragCount = payload.rag_hits_count || 0;
   const graphCount = payload.graph_hits_count || 0;

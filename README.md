@@ -1289,6 +1289,24 @@ The chat interface provides real-time feedback on search progress:
 - **Live URLs crawled**: Clickable links to sources discovered online
 - **Context sources**: Expandable snippets from each search source
 
+#### Step Progress and Final State Tracking
+The chat system now provides clear step progress indication throughout the search process:
+
+- **Current Step**: Shows which phase is actively running (e.g., "phase3_web_crawling")
+- **Final Step**: Indicates the conclusive state after all processing completes
+  - `phase1_local_lookup`: Answered from initial local search (best case)
+  - `phase2_local_lookup_after_retry`: Answered after paraphrasing retry
+  - `phase4_local_lookup_after_cycle_N`: Answered after N web crawl cycles
+  - `phase4_local_lookup_success`: Successfully answered after all cycles
+  - `phase4_local_lookup_insufficient_after_all_cycles`: All cycles completed but answer still insufficient
+  - `error_no_urls_found_after_all_cycles`: No web URLs discovered despite trying
+  - `error_fallback_answer_generated`: Had to use fallback answer generation
+
+These states are displayed in the UI with color-coded badges:
+- ✅ Green: Successful completion
+- ⚡ Amber: Insufficient but provided best effort answer
+- ⚠️ Red: Error state or fallback used
+
 #### Always-Answer Guarantee
 The chat system ensures you **always** get a meaningful response:
 
