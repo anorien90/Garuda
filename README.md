@@ -116,6 +116,7 @@ Modern Flask-based interface with comprehensive tabs:
 - **Conversational Search**: RAG-style CLI & web chat with automatic retry and paraphrasing
 - **Modular & Extensible**: Python modules organized for easy development and customization
 - **Strong Security**: API-key protected endpoints, CORS configuration, local LLM/vector options
+- **Persistent Task Queue**: Database-backed async task queue with sequential LLM processing, progress tracking, and task cancellation
 
 ---
 
@@ -256,6 +257,38 @@ flowchart TD
 - **Better Coverage**: Increased hit count ensures more context
 - **Reduced Crawling**: ~40% fewer Phase 3 triggers, avoiding expensive web crawls
 - **Improved UX**: Faster responses with better answers (Phase 2 adds only ~2-4 seconds)
+
+### Persistent Task Queue
+
+Garuda includes a database-backed task queue that provides:
+
+- **Persistent Task Tracking**: Tasks survive server restarts and UI reloads — users always see their task history
+- **Sequential LLM Processing**: Only one LLM task runs at a time, protecting the single Ollama instance from being overwhelmed
+- **Producer-Consumer Pattern**: Crawlers submit pages for LLM processing into the queue, allowing crawling to proceed while LLM processes sequentially
+- **Progress & Observability**: Real-time progress tracking, event emission, and UI panel for monitoring
+- **Task Management**: Submit, cancel, and delete tasks via API, CLI (`garuda-tasks`), or the web UI Task Queue panel
+- **Cooperative Cancellation**: Long-running tasks can be cancelled gracefully
+
+**Supported Task Types:**
+| Task Type | Description |
+|-----------|-------------|
+| `agent_reflect` | Entity merging and data quality analysis |
+| `agent_explore` | Entity graph exploration and prioritization |
+| `agent_autonomous` | Autonomous discovery cycle |
+| `agent_reflect_relate` | Find indirect connections |
+| `agent_investigate` | Execute targeted crawls |
+| `agent_combined` | Combined reflect + investigate |
+| `agent_chat` | Deep RAG chat query |
+
+**API Endpoints:**
+- `GET /api/tasks/` — List tasks (filterable by status, type)
+- `GET /api/tasks/stats` — Queue statistics
+- `GET /api/tasks/<id>` — Get task details
+- `POST /api/tasks/` — Submit a new task
+- `POST /api/tasks/<id>/cancel` — Cancel a task
+- `DELETE /api/tasks/<id>` — Delete a finished task
+
+All agent endpoints also support `"queued": true` in the request body to submit operations asynchronously via the task queue instead of executing synchronously.
 
 ### Data Model
 
@@ -421,7 +454,9 @@ Garuda/
         │   ├── media_downloader.py # Media download
         │   ├── media_extractor.py  # Media extraction
         │   ├── media_linker.py     # Media linking
-        │   └── adaptive_media_processor.py  # Adaptive media processing
+        │   ├── adaptive_media_processor.py  # Adaptive media processing
+        │   ├── task_queue.py      # Persistent task queue service
+        │   └── task_queue_cli.py  # Task queue CLI (garuda-tasks)
         ├── sources/               # Multi-source adapters
         │   ├── api_adapter.py     # API source adapter
         │   ├── base_adapter.py    # Base adapter interface
@@ -456,7 +491,8 @@ Garuda/
             │   ├── graph_search.py  # Graph search
             │   ├── relationship_confidence.py  # Confidence routes
             │   ├── schema.py      # Schema routes
-            │   └── agent.py       # Agent routes
+            │   ├── agent.py       # Agent routes
+            │   └── tasks.py       # Task queue routes
             ├── services/          # Web services
             │   ├── event_system.py  # Event system
             │   └── graph_builder.py  # Graph builder
@@ -818,7 +854,7 @@ docker exec -it garuda-webapp garuda-db --help
 
 ## CLI Tools
 
-Garuda provides 7 CLI entry points defined in `pyproject.toml`:
+Garuda provides 8 CLI entry points defined in `pyproject.toml`:
 
 ### 1. **garuda-intel-webapp** (Web UI)
 
@@ -943,7 +979,40 @@ garuda-agent status
 # garuda_intel.services.agent_cli:main
 ```
 
-### 7. **garuda-intel-web** (Alternate Web Entry)
+### 7. **garuda-tasks** (Task Queue CLI)
+
+Manage the persistent task queue for async operations.
+
+```bash
+# List all tasks
+garuda-tasks list
+
+# Filter tasks by status
+garuda-tasks list --status pending
+
+# Show task details
+garuda-tasks show <task-id>
+
+# Cancel a running task
+garuda-tasks cancel <task-id>
+
+# Delete a finished task
+garuda-tasks delete <task-id>
+
+# Show queue statistics
+garuda-tasks stats
+
+# Clear all finished tasks
+garuda-tasks clear
+
+# Submit a new task
+garuda-tasks submit agent_reflect --params '{"dry_run": true}'
+
+# Entry point
+# garuda_intel.services.task_queue_cli:main
+```
+
+### 8. **garuda-intel-web** (Alternate Web Entry)
 
 Alternative console script for web UI (same as garuda-intel-webapp).
 
