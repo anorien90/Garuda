@@ -341,10 +341,17 @@ class AgentService:
             name_len = len(e.get("name", "").strip())
             return (kind_rank, data_count, rel_count, name_len)
         
-        # Enrich entities with data_count for sorting
+        # Enrich entities with data_count using a single batch query
+        entity_ids = [e["id"] for e in entities]
+        entity_objs = {
+            str(obj.id): obj
+            for obj in session.execute(
+                select(Entity).where(Entity.id.in_(entity_ids))
+            ).scalars().all()
+        }
         for e in entities:
-            entity_obj = session.get(Entity, e["id"])
-            e["data_count"] = len(entity_obj.data) if entity_obj and entity_obj.data else 0
+            obj = entity_objs.get(e["id"])
+            e["data_count"] = len(obj.data) if obj and obj.data else 0
         
         sorted_entities = sorted(entities, key=entity_priority, reverse=True)
         
