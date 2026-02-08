@@ -1,8 +1,6 @@
 """Seed collection and discovery functions."""
 
 import logging
-import time
-from typing import List
 from urllib.parse import urlparse
 from sqlalchemy import select
 from ddgs import DDGS
@@ -10,16 +8,38 @@ from ..database.engine import SQLAlchemyStore
 from ..database.models import Link, Page
 
 
+# Maximum concurrent search queries
+MAX_CONCURRENT_SEARCHES = 5
+
+
 def collect_candidates(queries, seed_limit) -> list:
+    """
+    Fetch candidate URLs from DuckDuckGo with parallel queries.
+    
+    Returns:
+        List of dicts with 'href' key and optional 'title'/'body' keys.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
     candidates = []
-    with DDGS() as ddgs:
-        for query in queries:
-            try:
-                results = list(ddgs.text(query, max_results=seed_limit))
-                candidates.extend(results)
-                time.sleep(0.5)
-            except Exception as e:
-                logging.warning(f"Search error for '{query}': {e}")
+    
+    def _search_query(query):
+        try:
+            with DDGS() as ddgs:
+                return list(ddgs.text(query, max_results=seed_limit))
+        except Exception as e:
+            logging.warning(f"Search error for '{query}': {e}")
+            return []
+    
+    # Parallelize searches
+    with ThreadPoolExecutor(
+        max_workers=min(len(queries), MAX_CONCURRENT_SEARCHES)
+    ) as pool:
+        futures = {pool.submit(_search_query, q): q for q in queries}
+        for future in as_completed(futures):
+            candidates.extend(future.result())
+    
+    # Deduplicate by href
     seen = set()
     deduped = []
     for c in candidates:
@@ -32,28 +52,44 @@ def collect_candidates(queries, seed_limit) -> list:
 
 def collect_candidates_simple(queries, limit=5) -> list:
     """
-    Fetch candidate URLs from DuckDuckGo.
+    Fetch candidate URLs from DuckDuckGo with parallel queries.
     
     Returns:
         List of dicts with 'href' key and optional 'title'/'body' keys.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
     logger = logging.getLogger(__name__)
     candidates = []
-    with DDGS() as ddgs:
-        for q in queries:
-            try:
+    
+    def _search_query(q):
+        try:
+            with DDGS() as ddgs:
                 results = list(ddgs.text(q, max_results=3))
                 # Return full result dicts, not just hrefs
+                query_results = []
                 for r in results:
                     if isinstance(r, dict) and "href" in r:
-                        candidates.append(r)
+                        query_results.append(r)
                     elif isinstance(r, str):
                         # Handle case where result is a string (URL)
-                        candidates.append({"href": r})
+                        query_results.append({"href": r})
                     else:
-                        logger.debug(f"Skipping non-dict, non-string result: {type(r)}")
-            except Exception as e:
-                logger.warning(f"Search failed for query '{q}': {e}")
+                        logger.debug(
+                            f"Skipping non-dict, non-string result: {type(r)}"
+                        )
+                return query_results
+        except Exception as e:
+            logger.warning(f"Search failed for query '{q}': {e}")
+            return []
+    
+    # Parallelize searches
+    with ThreadPoolExecutor(
+        max_workers=min(len(queries), MAX_CONCURRENT_SEARCHES)
+    ) as pool:
+        futures = {pool.submit(_search_query, q): q for q in queries}
+        for future in as_completed(futures):
+            candidates.extend(future.result())
     
     # Deduplicate by href
     seen = set()

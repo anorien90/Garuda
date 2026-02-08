@@ -6,13 +6,12 @@ and real-time feedback.
 """
 
 import logging
-from typing import Dict, Any, List, Optional
-from datetime import datetime
+from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 
 from ..database.store import PersistenceStore
 from ..discover.crawl_learner import CrawlLearner
-from ..discover.crawl_modes import EntityAwareCrawler, CrawlMode
+from ..discover.crawl_modes import EntityAwareCrawler
 from ..extractor.llm import LLMIntelExtractor
 from .entity_gap_analyzer import EntityGapAnalyzer
 
@@ -86,6 +85,7 @@ class AdaptiveCrawlerService:
             Crawl results with statistics
         """
         from ..search import collect_candidates_simple
+        from ..search.seed_discovery import MAX_CONCURRENT_SEARCHES
         from ..explorer.engine import IntelligentExplorer
         from ..types.entity.profile import EntityProfile, EntityType
         
@@ -98,10 +98,10 @@ class AdaptiveCrawlerService:
         
         # Step 2: Select appropriate crawl mode and entity
         if plan['mode'] == 'gap_filling':
-            crawl_mode = CrawlMode.TARGETING
+            # crawl_mode = CrawlMode.TARGETING (not currently used)
             entity_id = plan.get('entity_id')
         else:
-            crawl_mode = CrawlMode.DISCOVERY
+            # crawl_mode = CrawlMode.DISCOVERY (not currently used)
             entity_id = None
         
         # Step 3: Prepare queries with learned patterns
@@ -155,20 +155,49 @@ class AdaptiveCrawlerService:
                 official_domains=[]
             )
             
-            # Collect seed URLs from queries
+            # Collect seed URLs from queries with parallelization
             seed_urls = []
             official_domains = []
             
             if queries:
-                self.logger.info(f"Collecting seed URLs from {len(queries)} queries")
-                # Use first 3-5 queries to generate seeds
-                for query in queries[:5]:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                
+                self.logger.info(
+                    f"Collecting seed URLs from {len(queries)} queries"
+                )
+                
+                def _collect_for_query(query):
                     try:
-                        candidates = collect_candidates_simple([query], limit=5)
-                        self.logger.debug(f"Received {len(candidates)} candidates for query '{query}'")
+                        return collect_candidates_simple([query], limit=5)
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Failed to collect candidates for query "
+                            f"'{query}': {e}"
+                        )
+                        return []
+                
+                # Parallel seed collection
+                with ThreadPoolExecutor(
+                    max_workers=min(
+                        len(queries[:MAX_CONCURRENT_SEARCHES]), 
+                        MAX_CONCURRENT_SEARCHES
+                    )
+                ) as pool:
+                    futures = {
+                        pool.submit(_collect_for_query, q): q 
+                        for q in queries[:MAX_CONCURRENT_SEARCHES]
+                    }
+                    
+                    for future in as_completed(futures):
+                        query = futures[future]
+                        candidates = future.result()
+                        self.logger.debug(
+                            f"Received {len(candidates)} candidates for "
+                            f"query '{query}'"
+                        )
                         
                         for candidate in candidates:
-                            # Handle both dict and string candidates defensively
+                            # Handle both dict and string candidates
                             url = None
                             if isinstance(candidate, dict):
                                 url = candidate.get('href')
@@ -177,8 +206,9 @@ class AdaptiveCrawlerService:
                                 url = candidate
                             else:
                                 self.logger.debug(
-                                    f"Skipping candidate with unexpected type {type(candidate)} "
-                                    f"for query '{query}'"
+                                    f"Skipping candidate with unexpected "
+                                    f"type {type(candidate)} for query "
+                                    f"'{query}'"
                                 )
                                 continue
                             
@@ -190,9 +220,10 @@ class AdaptiveCrawlerService:
                                     # Remove www. prefix if present
                                     if domain.startswith('www.'):
                                         domain = domain[4:]
-                                    # Avoid registry domains (exact match or subdomain)
+                                    # Avoid registry domains
                                     is_registry = any(
-                                        domain == reg or domain.endswith('.' + reg)
+                                        domain == reg or 
+                                        domain.endswith('.' + reg)
                                         for reg in REGISTRY_DOMAINS
                                     )
                                     if domain and not is_registry:
@@ -200,8 +231,6 @@ class AdaptiveCrawlerService:
                                             official_domains.append(domain)
                                 except Exception:
                                     pass
-                    except Exception as e:
-                        self.logger.warning(f"Failed to collect candidates for query '{query}': {e}")
             
             results['seed_urls'] = seed_urls[:max_pages]  # Limit seeds
             results['official_domains'] = official_domains

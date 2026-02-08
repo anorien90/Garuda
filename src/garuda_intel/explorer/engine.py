@@ -1,6 +1,5 @@
 import logging
 import requests
-import json
 
 from collections import defaultdict
 from typing import List, Dict, Optional, Set, Tuple, Any
@@ -14,7 +13,7 @@ from .scorer import URLScorer
 from ..discover.frontier import Frontier
 from ..discover.crawl_learner import CrawlLearner
 from ..discover.post_crawl_processor import PostCrawlProcessor
-from ..types.entity import EntityType, EntityProfile
+from ..types.entity import EntityProfile
 from ..database.store import PersistenceStore
 from ..database.relationship_manager import RelationshipManager
 from ..vector.engine import VectorStore
@@ -61,6 +60,7 @@ class IntelligentExplorer:
         scorer_domains: List[Dict] = None,
         enable_llm_link_rank: bool = True,
         media_extractor = None,
+        max_fetch_workers: int = 5,
     ):
         self.profile = profile
         self.use_selenium = use_selenium
@@ -68,6 +68,7 @@ class IntelligentExplorer:
         self.max_total_pages = max_total_pages
         self.max_depth = max_depth
         self.score_threshold = score_threshold
+        self.max_fetch_workers = max_fetch_workers
 
         # Core Components
         self.content_extractor = ContentExtractor()
@@ -116,15 +117,22 @@ class IntelligentExplorer:
         self.logger = logging.getLogger(__name__)
         self.enable_llm_link_rank = enable_llm_link_rank
 
-    def explore(self, start_urls: List[str], browser: Optional[SeleniumBrowser] = None) -> Dict[str, dict]:
-        """Main loop orchestrating the full intelligence pipeline."""
+    def explore(self, start_urls: List[str], 
+                browser: Optional[SeleniumBrowser] = None) -> Dict[str, dict]:
+        """Main loop with parallel HTTP fetching and sequential LLM."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
         frontier = Frontier()
         seed_ids = []  # Track seed IDs to create relationships later
         
         if self.store:
             for url in start_urls:
                 try:
-                    seed_id = self.store.save_seed(query=self.profile.name, entity_type=self.profile.entity_type.value, source="explorer")
+                    seed_id = self.store.save_seed(
+                        query=self.profile.name, 
+                        entity_type=self.profile.entity_type.value, 
+                        source="explorer"
+                    )
                     seed_ids.append((seed_id, url))
                 except Exception as e:
                     self.logger.debug(f"Failed to save seed: {e}")
@@ -149,56 +157,124 @@ class IntelligentExplorer:
             # Track seed-to-url mapping for relationship creation
             seed_url_map = {url: seed_id for seed_id, url in seed_ids}
             
+            # Parallel fetch pool (only when not using Selenium)
+            fetch_workers = min(
+                self.max_fetch_workers, self.max_total_pages
+            )
+            
             while len(frontier) and pages_explored < self.max_total_pages:
-                current = frontier.pop()
-                if not current:
+                # Phase 1: Collect batch of URLs to fetch
+                batch = []
+                # Selenium uses sequential fetching (batch of 1)
+                # Requests library uses parallel fetching
+                target_urls = (1 if self.use_selenium else fetch_workers)
+                
+                while (len(frontier) and len(batch) < target_urls 
+                       and pages_explored + len(batch) < self.max_total_pages):
+                    current = frontier.pop()
+                    if not current:
+                        break
+
+                    score, depth, url, link_text = current
+                    url_norm = self._normalize_url(url)
+
+                    # Guard Clauses
+                    if (url_norm in self.visited_urls
+                        or depth > self.max_depth
+                        or self.domain_counts[self._get_domain_key(url)] 
+                           >= self.max_pages_per_domain):
+                        continue
+
+                    self.visited_urls.add(url_norm)
+                    self.domain_counts[self._get_domain_key(url)] += 1
+                    batch.append((score, depth, url, link_text))
+                
+                if not batch:
                     break
+                
+                # Phase 2: Parallel HTTP fetch (if not using Selenium)
+                fetch_results = {}
+                
+                if self.use_selenium:
+                    # Sequential fetch with Selenium (shared browser)
+                    for score, depth, url, link_text in batch:
+                        try:
+                            html, links = self._fetch_page_and_links(
+                                url, depth, browser
+                            )
+                            if html:
+                                fetch_results[url] = (html, links, score, depth)
+                        except Exception as e:
+                            self.logger.warning(
+                                f"Fetch failed for {url}: {e}"
+                            )
+                else:
+                    # Parallel fetch with requests
+                    with ThreadPoolExecutor(
+                        max_workers=min(len(batch), fetch_workers)
+                    ) as fetch_pool:
+                        future_to_url = {}
+                        for score, depth, url, link_text in batch:
+                            future = fetch_pool.submit(
+                                self._fetch_page_and_links, 
+                                url, depth, None
+                            )
+                            future_to_url[future] = (
+                                score, depth, url, link_text
+                            )
+                        
+                        for future in as_completed(future_to_url):
+                            score, depth, url, link_text = (
+                                future_to_url[future]
+                            )
+                            try:
+                                html, links = future.result()
+                                if html:
+                                    fetch_results[url] = (
+                                        html, links, score, depth
+                                    )
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Parallel fetch failed for {url}: {e}"
+                                )
+                
+                # Phase 3: Sequential LLM processing
+                for url, (html, links, score, depth) in fetch_results.items():
+                    # THE INTELLIGENCE WORKSTATION 
+                    # (Extraction, Reflection, Summarization)
+                    page_record = self._run_intelligence_pipeline(
+                        url, html, depth, score
+                    )
+                    if not page_record:
+                        continue  # Skipped due to semantic redundancy
 
-                score, depth, url, link_text = current
-                url_norm = self._normalize_url(url)
+                    # Create Seed→Page relationship if URL came from seed
+                    if (url in seed_url_map and self.store 
+                        and page_record.get("id")):
+                        try:
+                            self.store.save_relationship(
+                                from_id=seed_url_map[url],
+                                to_id=page_record["id"],
+                                relation_type="seed_page",
+                                meta={"depth": depth}
+                            )
+                        except Exception as e:
+                            self.logger.debug(
+                                f"Failed to create seed→page relationship: {e}"
+                            )
 
-                # Guard Clauses
-                if (
-                    url_norm in self.visited_urls
-                    or depth > self.max_depth
-                    or self.domain_counts[self._get_domain_key(url)] >= self.max_pages_per_domain
-                ):
-                    continue
+                    self.explored_data[url] = page_record
+                    pages_explored += 1
 
-                self.visited_urls.add(url_norm)
-                self.domain_counts[self._get_domain_key(url)] += 1
+                    # DYNAMIC EVOLUTION
+                    if page_record.get("has_high_confidence_intel"):
+                        self._boost_domain_priority(url)
 
-                # 1. FETCH & EXTRACT LINKS
-                html, links = self._fetch_page_and_links(url, depth, browser)
-                if not html:
-                    continue
-
-                # 2. THE INTELLIGENCE WORKSTATION (Extraction, Reflection, Summarization)
-                page_record = self._run_intelligence_pipeline(url, html, depth, score)
-                if not page_record:
-                    continue  # Likely skipped due to semantic redundancy
-
-                # Create Seed→Page relationship if this URL came from a seed
-                if url in seed_url_map and self.store and page_record.get("id"):
-                    try:
-                        self.store.save_relationship(
-                            from_id=seed_url_map[url],
-                            to_id=page_record["id"],
-                            relation_type="seed_page",
-                            meta={"depth": depth}
-                        )
-                    except Exception as e:
-                        self.logger.debug(f"Failed to create seed→page relationship: {e}")
-
-                self.explored_data[url] = page_record
-                pages_explored += 1
-
-                # 3. DYNAMIC EVOLUTION
-                if page_record.get("has_high_confidence_intel"):
-                    self._boost_domain_priority(url)
-
-                # 4. SEMANTIC LINK PRIORITIZATION
-                self._enqueue_new_links(frontier, url, html, links, depth, page_record.get("text_content", ""))
+                    # SEMANTIC LINK PRIORITIZATION
+                    self._enqueue_new_links(
+                        frontier, url, html, links, depth, 
+                        page_record.get("text_content", "")
+                    )
 
         finally:
             if own_browser and browser:
@@ -207,21 +283,30 @@ class IntelligentExplorer:
             # Comprehensive post-crawl processing
             if self.post_crawl_processor and pages_explored > 0:
                 try:
-                    self.logger.info("Running comprehensive post-crawl processing...")
+                    self.logger.info(
+                        "Running comprehensive post-crawl processing..."
+                    )
                     session_id = f"crawl_{self.profile.name}_{pages_explored}"
-                    stats = self.post_crawl_processor.process(session_id=session_id)
-                    # Stats are already logged by the processor
+                    self.post_crawl_processor.process(
+                        session_id=session_id
+                    )
                 except Exception as e:
-                    self.logger.warning(f"Post-crawl processing failed: {e}")
+                    self.logger.warning(
+                        f"Post-crawl processing failed: {e}"
+                    )
             
-            # Crawl learning (keep this separate as it's about improving future crawls)
+            # Crawl learning (improving future crawls)
             if self.crawl_learner and pages_explored > 0:
                 try:
-                    self.logger.info("Recording crawl results for learning...")
+                    self.logger.info(
+                        "Recording crawl results for learning..."
+                    )
                     for url, page_data in self.explored_data.items():
                         intel_quality = page_data.get("avg_confidence", 0.5)
                         page_type = page_data.get("page_type", "general")
-                        extraction_success = page_data.get("has_high_confidence_intel", False)
+                        extraction_success = page_data.get(
+                            "has_high_confidence_intel", False
+                        )
                         
                         self.crawl_learner.record_crawl_result(
                             url=url,
@@ -232,12 +317,23 @@ class IntelligentExplorer:
                     
                     # Update URL scorer with learned patterns
                     if self.url_scorer and self.explored_data:
-                        domain_key = self._get_domain_key(list(self.explored_data.keys())[0])
-                        reliability = self.crawl_learner.get_domain_reliability(domain_key)
+                        domain_key = self._get_domain_key(
+                            list(self.explored_data.keys())[0]
+                        )
+                        reliability = (
+                            self.crawl_learner.get_domain_reliability(
+                                domain_key
+                            )
+                        )
                         if reliability > 0:
-                            self.logger.info(f"Domain {domain_key} reliability: {reliability:.2f}")
+                            self.logger.info(
+                                f"Domain {domain_key} reliability: "
+                                f"{reliability:.2f}"
+                            )
                 except Exception as e:
-                    self.logger.warning(f"Crawl learning recording failed: {e}")
+                    self.logger.warning(
+                        f"Crawl learning recording failed: {e}"
+                    )
 
         return self.explored_data
 
