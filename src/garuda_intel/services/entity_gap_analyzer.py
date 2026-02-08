@@ -167,42 +167,92 @@ class EntityGapAnalyzer:
             
             return results
     
-    def generate_crawl_plan(self, entity_name: str, entity_type: Optional[str] = None) -> Dict[str, Any]:
+    def generate_crawl_plan(
+        self, 
+        entity_name: Optional[str] = None, 
+        entity_type: Optional[str] = None,
+        entity: Optional[Any] = None,
+        task_type: Optional[str] = None,
+        context: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Generate an intelligent crawl plan for a given entity.
         
         This is the entry point for "lookup known entity and crawl missing data".
+        Supports two modes of operation:
+        1. Legacy: Pass entity_name (and optionally entity_type) - will lookup entity in DB
+        2. New: Pass entity object directly - skips lookup and uses provided entity
         
         Args:
-            entity_name: Name of entity to research (e.g., "Bill Gates")
-            entity_type: Optional entity type hint
+            entity_name: Name of entity to research (e.g., "Bill Gates") - used if entity not provided
+            entity_type: Optional entity type hint - used if entity not provided
+            entity: Optional Entity model instance - if provided, uses this directly
+            task_type: Optional task type (e.g., "fill_gap", "investigate") for context
+            context: Optional context/reason for the crawl
             
         Returns:
             Crawl plan with queries, sources, and strategy
         """
-        # First, try to find existing entity
+        # Validate parameters - need either entity or entity_name
+        if entity is None and entity_name is None:
+            raise ValueError("Must provide either 'entity' or 'entity_name' parameter")
+        
+        # If entity object provided directly, use it
+        if entity is not None:
+            # Entity exists - analyze gaps
+            self.logger.info(f"Using provided entity '{entity.name}' - analyzing gaps")
+            analysis = self.analyze_entity_gaps(str(entity.id))
+            
+            plan = {
+                "mode": "gap_filling",
+                "entity_id": str(entity.id),
+                "entity_name": entity.name,
+                "analysis": analysis,
+                "strategy": "targeted",
+                "queries": analysis.get("suggested_queries", []),
+                "sources": analysis.get("suggested_sources", []),
+                "priority": "fill_critical_gaps"
+            }
+            
+            # Add task context if provided
+            if task_type:
+                plan["task_type"] = task_type
+            if context:
+                plan["context"] = context
+            
+            return plan
+        
+        # Legacy path: lookup entity by name
         with self.store.Session() as session:
             from ..database.models import Entity
             
-            entity = session.query(Entity).filter(
+            found_entity = session.query(Entity).filter(
                 Entity.name.ilike(f"%{entity_name}%")
             ).first()
             
-            if entity:
+            if found_entity:
                 # Entity exists - analyze gaps
-                self.logger.info(f"Found existing entity '{entity.name}' - analyzing gaps")
-                analysis = self.analyze_entity_gaps(str(entity.id))
+                self.logger.info(f"Found existing entity '{found_entity.name}' - analyzing gaps")
+                analysis = self.analyze_entity_gaps(str(found_entity.id))
                 
-                return {
+                plan = {
                     "mode": "gap_filling",
-                    "entity_id": str(entity.id),
-                    "entity_name": entity.name,
+                    "entity_id": str(found_entity.id),
+                    "entity_name": found_entity.name,
                     "analysis": analysis,
                     "strategy": "targeted",
                     "queries": analysis.get("suggested_queries", []),
                     "sources": analysis.get("suggested_sources", []),
                     "priority": "fill_critical_gaps"
                 }
+                
+                # Add task context if provided
+                if task_type:
+                    plan["task_type"] = task_type
+                if context:
+                    plan["context"] = context
+                
+                return plan
             else:
                 # Entity doesn't exist - discovery mode
                 self.logger.info(f"New entity '{entity_name}' - starting discovery")
@@ -215,7 +265,7 @@ class EntityGapAnalyzer:
                 queries = self._generate_discovery_queries(entity_name, entity_type)
                 sources = self._suggest_sources(entity_name, entity_type, [])
                 
-                return {
+                plan = {
                     "mode": "discovery",
                     "entity_name": entity_name,
                     "entity_type": entity_type,
@@ -224,6 +274,14 @@ class EntityGapAnalyzer:
                     "sources": sources,
                     "priority": "establish_baseline"
                 }
+                
+                # Add task context if provided
+                if task_type:
+                    plan["task_type"] = task_type
+                if context:
+                    plan["context"] = context
+                
+                return plan
     
     def _aggregate_entity_data(self, entity, intel_records) -> Dict[str, Any]:
         """Aggregate all data about an entity from entity record and intelligence."""
