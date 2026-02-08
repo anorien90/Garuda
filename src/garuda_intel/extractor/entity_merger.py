@@ -127,8 +127,9 @@ class EntityMerger:
                 # Allow matching parent or child types
                 matching_kinds = self._get_compatible_kinds(kind)
                 stmt = stmt.where(Entity.kind.in_(matching_kinds))
+            stmt = stmt.order_by(Entity.created_at)
             
-            entity = session.execute(stmt).scalar_one_or_none()
+            entity = session.execute(stmt).scalars().first()
             if entity:
                 return self._entity_to_dict(entity)
             
@@ -147,8 +148,8 @@ class EntityMerger:
                                 vec_entity = session.execute(
                                     select(Entity).where(
                                         func.lower(Entity.name) == entity_name.lower()
-                                    )
-                                ).scalar_one_or_none()
+                                    ).order_by(Entity.created_at)
+                                ).scalars().first()
                                 if vec_entity:
                                     return self._entity_to_dict(vec_entity)
                 except Exception as e:
@@ -455,8 +456,8 @@ class EntityMerger:
         name_normalized = name.strip().lower()
         
         # Try exact name match
-        stmt = select(Entity).where(func.lower(Entity.name) == name_normalized)
-        entity = session.execute(stmt).scalar_one_or_none()
+        stmt = select(Entity).where(func.lower(Entity.name) == name_normalized).order_by(Entity.created_at)
+        entity = session.execute(stmt).scalars().first()
         
         if entity:
             return entity
