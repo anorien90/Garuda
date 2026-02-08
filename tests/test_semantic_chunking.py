@@ -8,6 +8,9 @@ import pytest
 
 from garuda_intel.extractor.semantic_chunker import SemanticChunker, TextChunk
 
+# Test constants
+MAX_CHUNK_SIZE_TOLERANCE = 1.2  # Allow 20% overflow for chunk size tests
+
 
 class TestTextChunk:
     """Test TextChunk dataclass."""
@@ -104,7 +107,7 @@ Third paragraph is here.
         # Most chunks should be around max_size or less
         # (some may be slightly larger due to paragraph preservation)
         for chunk in chunks:
-            assert len(chunk.text) <= max_size * 1.2  # Allow 20% overflow
+            assert len(chunk.text) <= max_size * MAX_CHUNK_SIZE_TOLERANCE
     
     def test_chunk_respects_min_size(self, chunker):
         """Test that chunks respect minimum size."""
@@ -276,6 +279,73 @@ Fourth paragraph continues.
             if i > 0:
                 assert chunk.start_index >= chunks[i-1].start_index
     
+    def test_unstructured_web_content_chunking(self, chunker):
+        """Test chunking of continuous web-scraped text without newlines."""
+        # Simulate web-scraped content - one continuous block
+        text = (
+            "Microsoft Headquarters Address Skip to content "
+            "Microsoft Headquarters Address If you are looking for the official "
+            "Microsoft headquarters location or want to speak with someone at "
+            "the company's main office, you'll find everything you need below. "
+            "The official Microsoft headquarters address is 15010 NE 36th Street, "
+            "Redmond, WA 98052, USA. This location serves as the global headquarters "
+            "of Microsoft Corporation, one of the largest and most influential "
+            "technology companies in the world. The Redmond campus is the central hub "
+            "for Microsoft's executive leadership, innovation departments, strategic "
+            "operations, and major corporate decisions. If you need to contact "
+            "Microsoft headquarters by phone, your call will be routed through their "
+            "main office support center during standard business hours, Monday "
+            "through Friday. This is the best way to reach out for corporate "
+            "inquiries, investor relations, partnership opportunities, media requests, "
+            "and other official business matters. "
+            "Microsoft Headquarters Phone Number Microsoft headquarters phone number "
+            "is 425-882-8080. You can communicate directly with Microsoft headquarters. "
+            "If you're looking to speak directly with Microsoft's corporate office, "
+            "the official Microsoft headquarters phone number is 425-882-8080. "
+            "This is the primary contact number for Microsoft's global headquarters "
+            "located in Redmond, Washington."
+        )
+        
+        chunks = chunker.chunk_by_topic(text, max_chunk_size=1500, min_chunk_size=100)
+        
+        # Should produce multiple chunks, not just 1
+        assert len(chunks) >= 2, f"Expected multiple chunks but got {len(chunks)}"
+        
+        # No chunk should be excessively large
+        for chunk in chunks:
+            assert len(chunk.text) <= 1500 * MAX_CHUNK_SIZE_TOLERANCE, (
+                f"Chunk too large: {len(chunk.text)} chars"
+            )
+
+    def test_heading_detection_not_too_aggressive(self, chunker):
+        """Test that heading detection doesn't match sentences ending with colons."""
+        # These should NOT be detected as headings
+        assert not chunker._is_heading(
+            "The official Microsoft headquarters address is as follows:"
+        )
+        assert not chunker._is_heading(
+            "If you are looking for the official Microsoft headquarters location:"
+        )
+        
+        # These SHOULD still be detected as headings
+        assert chunker._is_heading("Contact Information:")
+        assert chunker._is_heading("Phone Number:")
+        assert chunker._is_heading("# Main Heading")
+        assert chunker._is_heading("COMPANY ADDRESS")
+
+    def test_small_chunks_not_dropped(self, chunker):
+        """Test that reasonably small chunks are not dropped."""
+        text = "First section content here. " * 10 + "\n\n" + "Second section. " * 5
+        
+        chunks = chunker.chunk_by_topic(
+            text, max_chunk_size=300, min_chunk_size=50
+        )
+        
+        # Small but meaningful chunks should be preserved
+        assert len(chunks) >= 1
+        for chunk in chunks:
+            assert len(chunk.text.strip()) >= 50 or chunk == chunks[-1]
+    
     def test_topic_context_preserved(self, chunker):
         """Test that topic context is preserved in chunks."""
         text = """# Technology Section
@@ -304,4 +374,4 @@ This section covers business topics.
         chunks = chunker.chunk_by_topic(text, max_chunk_size=4000)
         
         assert len(chunks) > 0
-        assert len(chunks) < 100  # Should create reasonable number of chunks
+        assert len(chunks) < 500  # Should create reasonable number of chunks

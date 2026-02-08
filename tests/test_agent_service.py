@@ -609,3 +609,161 @@ class TestProcessManagement:
         process_id = report["process_id"]
         status = agent.get_process_status(process_id)
         assert status["status"] == "completed"
+
+
+class TestSoftMergeEntities:
+    """Test that entity merging uses soft-merge (no deletion)."""
+
+    def test_merge_entity_group_soft_merge(self):
+        """Test that _merge_entity_group marks secondary as merged instead of deleting."""
+        from garuda_intel.services.agent_service import AgentService
+
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+
+        # Create mock entities
+        primary_entity = MagicMock()
+        primary_entity.id = "primary-uuid"
+        primary_entity.name = "Microsoft Corporation"
+        primary_entity.kind = "company"
+        primary_entity.data = {"website": "microsoft.com"}
+        primary_entity.metadata_json = {}
+
+        secondary_entity = MagicMock()
+        secondary_entity.id = "secondary-uuid"
+        secondary_entity.name = "Microsoft Corp"
+        secondary_entity.kind = "company"
+        secondary_entity.data = {"industry": "technology"}
+        secondary_entity.metadata_json = None
+
+        # Mock session.get to return entities
+        def mock_get(model, entity_id):
+            if entity_id == "primary-uuid":
+                return primary_entity
+            elif entity_id == "secondary-uuid":
+                return secondary_entity
+            return None
+
+        mock_session.get = mock_get
+
+        # Mock empty query results for relationships and intelligence
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+
+        group = {
+            "entities": [
+                {"id": "primary-uuid", "name": "Microsoft Corporation", "kind": "company", "relation_count": 5},
+                {"id": "secondary-uuid", "name": "Microsoft Corp", "kind": "company", "relation_count": 2},
+            ]
+        }
+
+        result = agent._merge_entity_group(mock_session, group)
+
+        assert result is not None
+        assert result["merged_count"] == 1
+        assert result["primary_entity"]["id"] == "primary-uuid"
+
+        # Verify secondary entity was NOT deleted
+        mock_session.delete.assert_not_called()
+
+        # Verify secondary entity was soft-merged with metadata
+        assert secondary_entity.metadata_json is not None
+        assert secondary_entity.metadata_json.get("merged_into") == "primary-uuid"
+        assert "merged_at" in secondary_entity.metadata_json
+        assert secondary_entity.metadata_json.get("merge_reason") == "duplicate"
+
+
+class TestInvestigateRelationQueries:
+    """Test that investigate_relation tasks generate relationship-specific queries."""
+
+    def test_investigate_crawl_adds_relation_queries(self):
+        """Test that investigate_crawl adds relationship queries for investigate_relation tasks."""
+        from garuda_intel.services.agent_service import AgentService
+
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+        mock_store.Session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_store.Session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_session.execute.return_value.all.return_value = []
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value.scalar.return_value = 0
+
+        # Mock entity lookup to return a mock entity
+        mock_entity = MagicMock()
+        mock_entity.name = "Paul Allen"
+        mock_entity.id = "entity-uuid-1"
+        mock_entity.kind = "person"
+        mock_entity.data = {}
+        mock_entity.metadata_json = {}
+        mock_entity.updated_at = datetime.now()
+        mock_session.execute.return_value.scalar_one_or_none.return_value = mock_entity
+
+        # Mock gap_analyzer.generate_crawl_plan to return a plan
+        mock_plan = {
+            "mode": "gap_filling",
+            "entity_id": "entity-uuid-1",
+            "entity_name": "Paul Allen",
+            "queries": ['"Paul Allen" biography'],
+            "sources": [],
+        }
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+
+        with patch('garuda_intel.services.entity_gap_analyzer.EntityGapAnalyzer.generate_crawl_plan', return_value=mock_plan):
+            investigation_tasks = [
+                {
+                    "task_type": "investigate_relation",
+                    "entity_name": "Paul Allen",
+                    "related_to": "Microsoft",
+                    "reason": "Share 2 common connection(s)",
+                    "priority": 0.6,
+                },
+            ]
+
+            report = agent.investigate_crawl(
+                investigation_tasks=investigation_tasks,
+                max_entities=10,
+            )
+
+        # Check that crawl plans contain relationship-specific queries
+        assert len(report["crawl_plans"]) == 1
+        plan = report["crawl_plans"][0]
+        queries = plan.get("queries", [])
+
+        # Should contain relationship-specific queries combining both entities
+        assert any("Paul Allen" in q and "Microsoft" in q for q in queries), \
+            f"Expected relationship queries with both entities, got: {queries}"
+
+
+class TestExecuteAutonomousCrawlPassesQueries:
+    """Test that _execute_autonomous_crawl passes queries from the plan."""
+
+    def test_passes_additional_queries(self):
+        """Test that _execute_autonomous_crawl passes plan queries to intelligent_crawl."""
+        from garuda_intel.services.agent_service import AgentService
+
+        mock_store = MagicMock()
+        mock_store.Session = MagicMock()
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+
+        plan = {
+            "entity_name": "Paul Allen",
+            "entity_type": "person",
+            "mode": "gap_filling",
+            "queries": ['"Paul Allen" biography', '"Paul Allen" "Microsoft"'],
+        }
+
+        with patch('garuda_intel.services.adaptive_crawler.AdaptiveCrawlerService') as MockCrawlerClass:
+            mock_crawler_instance = MagicMock()
+            mock_crawler_instance.intelligent_crawl.return_value = {"pages_discovered": 5}
+            MockCrawlerClass.return_value = mock_crawler_instance
+
+            with patch('garuda_intel.discover.crawl_learner.CrawlLearner'):
+                result = agent._execute_autonomous_crawl(plan, max_pages=10)
+
+            # Check that intelligent_crawl was called with additional_queries
+            mock_crawler_instance.intelligent_crawl.assert_called_once()
+            call_kwargs = mock_crawler_instance.intelligent_crawl.call_args
+            assert call_kwargs.kwargs.get("additional_queries") == plan["queries"]
