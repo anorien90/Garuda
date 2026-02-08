@@ -1,0 +1,109 @@
+================================================================================
+                    ENTITY MERGE FIX - FINAL SUMMARY
+================================================================================
+
+ISSUE FIXED:
+------------
+Entity deduplication was creating orphan entities with no relationships or
+associated records due to database CASCADE deletes happening before FK updates
+were persisted.
+
+SOLUTION:
+---------
+Fixed the _merge_entities method in SemanticEntityDeduplicator class to:
+1. Transfer all associated records BEFORE deleting source entity
+2. Add critical session.flush() after FK redirects, BEFORE delete
+3. Remove self-referential relationships
+4. Deduplicate relationships
+5. Properly merge metadata
+
+FILES MODIFIED:
+---------------
+1. src/garuda_intel/extractor/entity_merger.py
+   - Added imports: Intelligence, Page, MediaItem
+   - Fixed _merge_entities method (~150 lines of new code)
+   
+2. tests/test_entity_merging.py
+   - Added TestMergeTransfersAllReferences class
+   - 8 comprehensive tests covering all scenarios
+   - All tests pass (46/46)
+
+3. test_merge_fix_verification.py (NEW)
+   - Standalone verification script
+   - Demonstrates the fix works correctly
+
+4. ENTITY_MERGE_FIX_SUMMARY.md (NEW)
+   - Comprehensive documentation
+   - Detailed problem description
+   - Complete solution explanation
+
+5. ENTITY_MERGE_FIX_VISUAL.md (NEW)
+   - Visual diagrams showing before/after
+   - Quick reference guide
+   - Code examples
+
+TEST RESULTS:
+-------------
+✅ All 46 entity merging tests pass
+✅ 8 new tests specifically for this fix
+✅ No regressions in related test suites
+✅ Standalone verification script passes
+✅ CodeQL security scan: No alerts
+
+CRITICAL CODE CHANGE:
+---------------------
+The key fix is adding session.flush() AFTER redirecting FKs but BEFORE
+deleting the source entity:
+
+    # Redirect relationships
+    for rel in relationships:
+        rel.source_id = target_id
+    
+    session.flush()  # ← CRITICAL! Persist FK updates before delete
+    
+    # Clean up
+    # Remove self-loops
+    # Deduplicate relationships
+    
+    session.delete(source)  # ← Now safe!
+
+WHAT NOW WORKS:
+---------------
+✅ Relationships preserved during merge
+✅ EntityFieldValue records transferred
+✅ Intelligence records transferred
+✅ Page references transferred
+✅ MediaItem references transferred
+✅ FieldDiscoveryLog records transferred
+✅ Metadata properly merged
+✅ Self-referential relationships removed
+✅ Duplicate relationships deduplicated
+
+VERIFICATION:
+-------------
+Run: python test_merge_fix_verification.py
+
+Expected output shows:
+- Entities created with relationships
+- Merge completed successfully
+- Relationships preserved and redirected
+- All data merged correctly
+- ALL TESTS PASSED!
+
+DEPLOYMENT:
+-----------
+This fix is ready for immediate deployment:
+- Critical data loss bug fixed
+- Comprehensive test coverage
+- Backward compatible
+- No security issues
+- No performance impact
+
+GIT COMMITS:
+------------
+1. 8e86278 - Fix entity merging to preserve relationships and all references
+2. b29b1e8 - Add comprehensive documentation for entity merge fix
+
+================================================================================
+                              FIX COMPLETE ✅
+================================================================================

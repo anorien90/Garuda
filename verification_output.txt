@@ -1,0 +1,30 @@
+Creating test entities and relationships...
+✓ Created entities:
+  - Microsoft (ID: ded33888-8afc-40be-9544-3d9d7ff18685)
+  - Microsoft Corporation (ID: 3f022ad2-f4eb-49c5-937a-ba4a3db10ad5)
+  - Bill Gates (ID: 0775d099-1b23-4e14-8ef1-ebcc45683566)
+✓ Created 2 relationships between Microsoft and Bill Gates
+
+Merging 'Microsoft' into 'Microsoft Corporation'...
+✓ Merge completed successfully
+
+Verifying results...
+✓ Entities remaining: 2 (expected: 2)
+✓ Survivor entity: 'Microsoft Corporation'
+  - Kind: company
+  - Data: {'founded': '1975', 'industry': 'Technology'}
+✓ Data merged correctly
+✓ Relationships remaining: 2 (expected: 2)
+✓ Relationships correctly redirected to survivor entity
+  - Microsoft Corporation -> Bill Gates: FOUNDED_BY
+  - Bill Gates -> Microsoft Corporation: FOUNDED
+
+============================================================
+✓ ALL TESTS PASSED!
+============================================================
+
+The fix successfully:
+1. Preserves relationships during merge (no CASCADE delete)
+2. Redirects relationships to the survivor entity
+3. Merges data from both entities
+4. Handles the flush() timing correctly
