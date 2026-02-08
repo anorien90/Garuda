@@ -97,9 +97,13 @@ export async function resumeActiveChatTasks() {
   const answerEl = els.chatAnswer;
   if (!answerEl) return;
   
-  // If multiple tasks exist, process the most recent one
-  // (In future, could create separate containers for each task)
+  // Resume only the most recent task; clear older ones to prevent storage buildup
   const mostRecentTask = chatTasks[chatTasks.length - 1];
+  const olderTaskIds = chatTasks.slice(0, -1).map(t => t.taskId);
+  if (olderTaskIds.length > 0) {
+    const remaining = getActiveTasks().filter(t => !olderTaskIds.includes(t.taskId));
+    localStorage.setItem('garuda_active_tasks', JSON.stringify(remaining));
+  }
   
   try {
     const result = await pollTaskResult(mostRecentTask.taskId, {

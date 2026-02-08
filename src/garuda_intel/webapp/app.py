@@ -100,7 +100,7 @@ init_event_logging()
 task_queue = TaskQueueService(store)
 
 
-def _register_task_handlers(tq, agent_svc, store_inst, gap_analyzer_inst, adaptive_crawler_inst):
+def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler):
     """Register task handlers for the queue worker."""
 
     def _handle_agent_reflect(task_id, params):
@@ -212,11 +212,11 @@ def _register_task_handlers(tq, agent_svc, store_inst, gap_analyzer_inst, adapti
         tq.update_progress(task_id, 0.1, f"Starting {mode} crawl")
         
         if mode == "intelligent":
-            plan = gap_analyzer_inst.generate_crawl_plan(
+            plan = gap_analyzer.generate_crawl_plan(
                 params.get("entity_name", ""), params.get("entity_type")
             )
             tq.update_progress(task_id, 0.3, "Crawl plan generated, executing crawl")
-            results = adaptive_crawler_inst.intelligent_crawl(
+            results = adaptive_crawler.intelligent_crawl(
                 entity_name=params.get("entity_name", ""),
                 entity_type=params.get("entity_type"),
                 max_pages=int(params.get("max_pages", 50)),
@@ -229,16 +229,16 @@ def _register_task_handlers(tq, agent_svc, store_inst, gap_analyzer_inst, adapti
             entity_type = params.get("type")
             use_intelligent = params.get("use_intelligent", False)
             if not use_intelligent:
-                with store_inst.Session() as session:
+                with store.Session() as session:
                     existing = session.query(Entity).filter(
                         Entity.name.ilike(f"%{entity_name}%")
                     ).first()
                     if existing:
                         use_intelligent = True
             if use_intelligent:
-                plan = gap_analyzer_inst.generate_crawl_plan(entity_name, entity_type)
+                plan = gap_analyzer.generate_crawl_plan(entity_name, entity_type)
                 tq.update_progress(task_id, 0.3, "Crawl plan generated, executing intelligent crawl")
-                results = adaptive_crawler_inst.intelligent_crawl(
+                results = adaptive_crawler.intelligent_crawl(
                     entity_name=entity_name,
                     entity_type=entity_type,
                     max_pages=int(params.get("max_pages", 50)),

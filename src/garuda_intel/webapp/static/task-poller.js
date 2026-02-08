@@ -177,9 +177,9 @@ export function renderTaskStatus(el, status, message, progress, taskId) {
   const color = statusColors[status] || statusColors.pending;
   const icon = statusIcons[status] || '⏳';
   
-  // Validate and sanitize taskId (UUIDs are alphanumeric with hyphens only)
-  // Standard UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-  const safeTaskId = String(taskId).replace(/[^a-fA-F0-9-]/g, '').substring(0, 36);
+  // Validate and sanitize taskId (strict UUID v4 format check)
+  const uuidRegex = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+  const safeTaskId = uuidRegex.test(String(taskId)) ? String(taskId) : String(taskId).replace(/[^a-fA-F0-9-]/g, '').substring(0, 36);
 
   el.innerHTML = `
     <div class="p-4 space-y-2">
