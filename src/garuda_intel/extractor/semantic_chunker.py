@@ -41,8 +41,8 @@ class SemanticChunker:
     def chunk_by_topic(
         self,
         text: str,
-        max_chunk_size: int = 4000,
-        min_chunk_size: int = 500,
+        max_chunk_size: int = 1500,
+        min_chunk_size: int = 100,
         preserve_paragraphs: bool = True
     ) -> List[TextChunk]:
         """
@@ -60,12 +60,21 @@ class SemanticChunker:
         if not text or max_chunk_size <= 0:
             return []
         
-        # If text is small enough, return as single chunk
-        if len(text) <= max_chunk_size:
+        # Check if text is unstructured (no newlines or very few)
+        # Unstructured text should be split even if under max_chunk_size
+        newline_count = text.count('\n')
+        is_unstructured = newline_count < 3 and len(text) > 500
+        
+        # If text is small enough and structured, return as single chunk
+        if len(text) <= max_chunk_size and not is_unstructured:
             return [TextChunk(text=text, start_index=0, end_index=len(text))]
         
         # Detect sections and headings
         sections = self._split_by_sections(text)
+        
+        # Check if all sections have no headings (unstructured text)
+        # In this case, treat each section as a separate chunk
+        all_headings_none = all(heading is None for heading, _ in sections)
         
         # Build chunks respecting section boundaries
         chunks = []
@@ -76,6 +85,36 @@ class SemanticChunker:
         
         for section_heading, section_text in sections:
             section_len = len(section_text)
+            
+            # For unstructured text, create a chunk for each section
+            if all_headings_none and len(sections) > 1:
+                # If section is too large, split it further
+                if section_len > max_chunk_size:
+                    subsections = self._split_large_section(
+                        section_text,
+                        max_chunk_size,
+                        min_chunk_size,
+                        preserve_paragraphs
+                    )
+                    for subsection in subsections:
+                        chunks.append(TextChunk(
+                            text=subsection,
+                            start_index=chunk_start,
+                            end_index=chunk_start + len(subsection),
+                            topic_context=None
+                        ))
+                        chunk_start += len(subsection)
+                else:
+                    # Each section becomes its own chunk
+                    if len(section_text.strip()) >= min_chunk_size:
+                        chunks.append(TextChunk(
+                            text=section_text,
+                            start_index=chunk_start,
+                            end_index=chunk_start + len(section_text),
+                            topic_context=None
+                        ))
+                    chunk_start += len(section_text)
+                continue
             
             # If adding this section would exceed max size, finalize current chunk
             if current_chunk and current_size + section_len > max_chunk_size:
@@ -155,12 +194,21 @@ class SemanticChunker:
         """
         Split text by section headings.
         
+        Handles both structured text (with headings/newlines) and
+        unstructured web-scraped text (continuous blocks without breaks).
+        
         Args:
             text: Text to split
             
         Returns:
             List of (heading, section_text) tuples
         """
+        # Check if text is mostly unstructured (no newlines or very few)
+        newline_count = text.count('\n')
+        if newline_count < 3 and len(text) > 500:
+            # Unstructured text - split by sentence boundaries instead
+            return self._split_unstructured_text(text)
+        
         sections = []
         lines = text.split('\n')
         
@@ -212,8 +260,22 @@ class SemanticChunker:
             return True
         
         # Lines ending with colon (section labels)
-        if line.endswith(':') and len(line) < 100:
-            return True
+        # Must be short, few words, and not contain sentence-ending punctuation
+        if line.endswith(':') and len(line) < 80 and len(line.split()) <= 8:
+            if '.' not in line and '!' not in line and '?' not in line:
+                # Exclude common sentence patterns
+                line_lower = line.lower()
+                sentence_patterns = [
+                    'as follows:',
+                    'are as follows:',
+                    'is as follows:',
+                    'are looking for',
+                    'if you are',
+                    'the official',
+                    'you are looking'
+                ]
+                if not any(pattern in line_lower for pattern in sentence_patterns):
+                    return True
         
         # Numbered headings (1. Introduction, etc.)
         if re.match(r'^\d+\.\s+[A-Z]', line):
@@ -224,6 +286,47 @@ class SemanticChunker:
             return True
         
         return False
+    
+    def _split_unstructured_text(self, text: str) -> List[Tuple[Optional[str], str]]:
+        """
+        Split unstructured text (no newlines/paragraphs) into sections
+        by grouping sentences together.
+        
+        Args:
+            text: Continuous text without structure
+            
+        Returns:
+            List of (heading, section_text) tuples
+        """
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        
+        if not sentences:
+            return [(None, text)]
+        
+        # Group sentences into sections of reasonable size
+        sections = []
+        current_group = []
+        current_size = 0
+        target_section_size = 800  # Target size for each section
+        
+        for sentence in sentences:
+            sent_len = len(sentence)
+            
+            if current_group and current_size + sent_len > target_section_size:
+                section_text = ' '.join(current_group)
+                sections.append((None, section_text))
+                current_group = [sentence]
+                current_size = sent_len
+            else:
+                current_group.append(sentence)
+                current_size += sent_len + 1
+        
+        # Add remaining sentences
+        if current_group:
+            section_text = ' '.join(current_group)
+            sections.append((None, section_text))
+        
+        return sections if sections else [(None, text)]
     
     def _split_large_section(
         self,
@@ -335,7 +438,7 @@ class SemanticChunker:
     def chunk_with_overlap(
         self,
         text: str,
-        chunk_size: int = 4000,
+        chunk_size: int = 1500,
         overlap: int = 200
     ) -> List[TextChunk]:
         """

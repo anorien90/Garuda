@@ -42,7 +42,7 @@ class IntelExtractor:
         self,
         ollama_url: str = "http://localhost:11434/api/generate",
         model: str = "granite3.1-dense:8b",
-        extraction_chunk_chars: int = 4000,
+        extraction_chunk_chars: int = 1500,
         max_chunks: int = 20,
         extract_timeout: int = 900,  # 15 minutes default
         cache_manager: Optional[CacheManager] = None,
