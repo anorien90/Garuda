@@ -182,6 +182,12 @@ class AgentService:
         
         entities = session.execute(stmt).scalars().all()
         
+        # Exclude entities already soft-merged into another entity
+        entities = [
+            e for e in entities
+            if not (e.metadata_json and e.metadata_json.get("merged_into"))
+        ]
+        
         # Group by normalized name patterns
         name_groups = defaultdict(list)
         for entity in entities:
