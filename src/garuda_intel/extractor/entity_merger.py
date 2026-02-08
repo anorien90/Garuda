@@ -23,6 +23,9 @@ from ..database.models import (
     DynamicFieldDefinition,
     EntityFieldValue,
     FieldDiscoveryLog,
+    Intelligence,
+    Page,
+    MediaItem,
 )
 
 
@@ -1284,6 +1287,10 @@ class SemanticEntityDeduplicator:
         - The most specific kind (highest in hierarchy) is preserved
         - The richest name (longest) is preserved
         - All data fields are merged (source fills gaps in target)
+        - All relationships are transferred to target
+        - All associated records (Intelligence, Page, MediaItem, etc.) are transferred
+        - Self-referential relationships are removed
+        - Duplicate relationships are deduplicated
         """
         source = session.execute(
             select(Entity).where(Entity.id == source_id)
@@ -1315,6 +1322,45 @@ class SemanticEntityDeduplicator:
         target.data = target_data
         flag_modified(target, 'data')
         
+        # Merge metadata_json (source fills gaps in target)
+        source_metadata = source.metadata_json or {}
+        target_metadata = target.metadata_json or {}
+        for key, value in source_metadata.items():
+            if key != "merged_from" and value and not target_metadata.get(key):
+                target_metadata[key] = value
+        target.metadata_json = target_metadata
+        flag_modified(target, 'metadata_json')
+        
+        # Transfer EntityFieldValue records
+        for field_value in session.execute(
+            select(EntityFieldValue).where(EntityFieldValue.entity_id == source_id)
+        ).scalars().all():
+            field_value.entity_id = target_id
+        
+        # Transfer Intelligence records
+        for intel in session.execute(
+            select(Intelligence).where(Intelligence.entity_id == source_id)
+        ).scalars().all():
+            intel.entity_id = target_id
+        
+        # Transfer Page references
+        for page in session.execute(
+            select(Page).where(Page.entity_id == source_id)
+        ).scalars().all():
+            page.entity_id = target_id
+        
+        # Transfer MediaItem references
+        for media_item in session.execute(
+            select(MediaItem).where(MediaItem.entity_id == source_id)
+        ).scalars().all():
+            media_item.entity_id = target_id
+        
+        # Transfer FieldDiscoveryLog references
+        for log in session.execute(
+            select(FieldDiscoveryLog).where(FieldDiscoveryLog.entity_id == source_id)
+        ).scalars().all():
+            log.entity_id = target_id
+        
         # Redirect relationships
         for rel in session.execute(
             select(Relationship).where(Relationship.source_id == source_id)
@@ -1325,6 +1371,42 @@ class SemanticEntityDeduplicator:
             select(Relationship).where(Relationship.target_id == source_id)
         ).scalars().all():
             rel.target_id = target_id
+        
+        # CRITICAL: Flush to persist relationship redirects BEFORE deleting source entity
+        # This prevents CASCADE delete from wiping relationships
+        session.flush()
+        
+        # Remove self-referential relationships (where source == target after redirect)
+        self_refs = session.execute(
+            select(Relationship).where(
+                Relationship.source_id == target_id,
+                Relationship.target_id == target_id
+            )
+        ).scalars().all()
+        for rel in self_refs:
+            session.delete(rel)
+        
+        # Deduplicate relationships: keep only one for each (source_id, target_id, relation_type)
+        all_rels = session.execute(
+            select(Relationship).where(
+                (Relationship.source_id == target_id) | (Relationship.target_id == target_id)
+            )
+        ).scalars().all()
+        
+        # Group by (source_id, target_id, relation_type)
+        rel_groups: Dict[Tuple[str, str, str], List[Relationship]] = {}
+        for rel in all_rels:
+            key = (str(rel.source_id), str(rel.target_id), rel.relation_type or "")
+            if key not in rel_groups:
+                rel_groups[key] = []
+            rel_groups[key].append(rel)
+        
+        # For each group with duplicates, keep only one (sorted by id for stability)
+        for key, rels in rel_groups.items():
+            if len(rels) > 1:
+                rels_sorted = sorted(rels, key=lambda r: str(r.id))
+                for rel in rels_sorted[1:]:
+                    session.delete(rel)
         
         # Record merge in metadata
         merge_history = target.metadata_json.get("merged_from", []) if target.metadata_json else []

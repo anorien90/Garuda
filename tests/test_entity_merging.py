@@ -21,6 +21,9 @@ from garuda_intel.database.models import (
     DynamicFieldDefinition,
     EntityFieldValue,
     FieldDiscoveryLog,
+    Intelligence,
+    Page,
+    MediaItem,
 )
 from garuda_intel.extractor.entity_merger import (
     EntityMerger,
@@ -998,3 +1001,447 @@ class TestDeduplicationPreservesHighestKind:
             assert survivor.data.get("founded") == "Microsoft Corporation"
             assert survivor.data.get("born") == "1955"
             assert survivor.data.get("nationality") == "American"
+
+
+class TestMergeTransfersAllReferences:
+    """Test that _merge_entities properly transfers all references and handles edge cases."""
+    
+    def test_merge_transfers_relationships_with_flush(self, db_session):
+        """Test that relationships survive the merge with proper flush before delete."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            # Create source and target entities
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corp",
+                kind="company",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+            )
+            # Create a third entity to have relationships with
+            entity_c = Entity(
+                id=uuid.uuid4(),
+                name="Bill Gates",
+                kind="person",
+            )
+            session.add_all([source, target, entity_c])
+            session.commit()
+            
+            # Create relationships: source -> entity_c and entity_c -> source
+            rel1 = Relationship(
+                id=uuid.uuid4(),
+                source_id=source.id,
+                target_id=entity_c.id,
+                relation_type="FOUNDED_BY",
+            )
+            rel2 = Relationship(
+                id=uuid.uuid4(),
+                source_id=entity_c.id,
+                target_id=source.id,
+                relation_type="FOUNDED",
+            )
+            session.add_all([rel1, rel2])
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+            entity_c_id = str(entity_c.id)
+        
+        # Merge source into target
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Verify relationships survived and point to target
+        with db_session() as session:
+            relationships = session.execute(select(Relationship)).scalars().all()
+            assert len(relationships) == 2, "Both relationships should survive"
+            
+            # Check that relationships now point to target instead of source
+            rel_types = {}
+            for rel in relationships:
+                if str(rel.source_id) == target_id and str(rel.target_id) == entity_c_id:
+                    rel_types['target_to_c'] = rel.relation_type
+                elif str(rel.source_id) == entity_c_id and str(rel.target_id) == target_id:
+                    rel_types['c_to_target'] = rel.relation_type
+            
+            assert rel_types.get('target_to_c') == "FOUNDED_BY"
+            assert rel_types.get('c_to_target') == "FOUNDED"
+    
+    def test_merge_removes_self_referential_relationships(self, db_session):
+        """Test that self-referential relationships are removed after merge."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            # Create source and target entities
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Company A",
+                kind="company",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Company A Inc",
+                kind="company",
+            )
+            session.add_all([source, target])
+            session.commit()
+            
+            # Create a relationship FROM source TO target
+            # After merge, this would become target -> target (self-loop)
+            rel = Relationship(
+                id=uuid.uuid4(),
+                source_id=source.id,
+                target_id=target.id,
+                relation_type="SUBSIDIARY_OF",
+            )
+            session.add(rel)
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+        
+        # Merge source into target
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Verify self-referential relationship is removed
+        with db_session() as session:
+            relationships = session.execute(select(Relationship)).scalars().all()
+            assert len(relationships) == 0, "Self-referential relationship should be removed"
+    
+    def test_merge_deduplicates_relationships(self, db_session):
+        """Test that duplicate relationships are deduplicated, keeping highest confidence."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            # Create source, target, and a third entity
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft",
+                kind="company",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+            )
+            entity_c = Entity(
+                id=uuid.uuid4(),
+                name="Bill Gates",
+                kind="person",
+            )
+            session.add_all([source, target, entity_c])
+            session.commit()
+            
+            # Both source and target have a relationship to entity_c
+            # After merge, both will be from target -> entity_c (duplicate)
+            rel1 = Relationship(
+                id=uuid.uuid4(),
+                source_id=source.id,
+                target_id=entity_c.id,
+                relation_type="FOUNDED_BY",
+            )
+            rel2 = Relationship(
+                id=uuid.uuid4(),
+                source_id=target.id,
+                target_id=entity_c.id,
+                relation_type="FOUNDED_BY",
+            )
+            session.add_all([rel1, rel2])
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+            entity_c_id = str(entity_c.id)
+        
+        # Merge source into target
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Verify only one relationship remains
+        with db_session() as session:
+            relationships = session.execute(select(Relationship)).scalars().all()
+            assert len(relationships) == 1, "Duplicate relationships should be deduplicated"
+            
+            rel = relationships[0]
+            assert str(rel.source_id) == target_id
+            assert str(rel.target_id) == entity_c_id
+            assert rel.relation_type == "FOUNDED_BY"
+    
+    def test_merge_transfers_entity_field_values(self, db_session):
+        """Test that EntityFieldValue records are transferred to target."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            # Create source and target entities
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft",
+                kind="company",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+            )
+            session.add_all([source, target])
+            session.commit()
+            
+            # Create a dynamic field definition
+            field_def = DynamicFieldDefinition(
+                id=uuid.uuid4(),
+                entity_type="company",
+                field_name="revenue",
+                field_type="number",
+            )
+            session.add(field_def)
+            session.commit()
+            
+            # Create field values for source entity
+            field_value = EntityFieldValue(
+                id=uuid.uuid4(),
+                entity_id=source.id,
+                field_definition_id=field_def.id,
+                field_name="revenue",
+                value_text="100B",
+            )
+            session.add(field_value)
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+            field_value_id = str(field_value.id)
+        
+        # Merge source into target
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Verify field value is now associated with target
+        with db_session() as session:
+            field_value = session.execute(
+                select(EntityFieldValue).where(EntityFieldValue.id == field_value_id)
+            ).scalar_one()
+            assert str(field_value.entity_id) == target_id
+            assert field_value.value_text == "100B"
+    
+    def test_merge_transfers_intelligence_records(self, db_session):
+        """Test that Intelligence records are transferred to target."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            # Create source and target entities
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft",
+                kind="company",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+            )
+            session.add_all([source, target])
+            session.commit()
+            
+            # Create intelligence record for source
+            intel = Intelligence(
+                id=uuid.uuid4(),
+                entity_id=source.id,
+                data={"content": "Microsoft is a technology company", "founded": "1975"},
+            )
+            session.add(intel)
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+            intel_id = str(intel.id)
+        
+        # Merge source into target
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Verify intelligence record is now associated with target
+        with db_session() as session:
+            intel = session.execute(
+                select(Intelligence).where(Intelligence.id == intel_id)
+            ).scalar_one()
+            assert str(intel.entity_id) == target_id
+            assert intel.data.get("content") == "Microsoft is a technology company"
+    
+    def test_merge_transfers_page_references(self, db_session):
+        """Test that Page records are transferred to target."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            # Create source and target entities
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft",
+                kind="company",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+            )
+            session.add_all([source, target])
+            session.commit()
+            
+            # Create page record for source
+            page = Page(
+                id=uuid.uuid4(),
+                url="https://microsoft.com",
+                title="Microsoft homepage",
+            )
+            session.add(page)
+            session.commit()
+            
+            # Now set entity_id after page is persisted
+            page.entity_id = source.id
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+            page_id = str(page.id)
+        
+        # Merge source into target
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Verify page record is now associated with target
+        with db_session() as session:
+            page = session.execute(
+                select(Page).where(Page.id == page_id)
+            ).scalar_one()
+            assert str(page.entity_id) == target_id
+            assert page.title == "Microsoft homepage"
+    
+    def test_merge_transfers_media_items(self, db_session):
+        """Test that MediaItem records are transferred to target."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            # Create source and target entities
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft",
+                kind="company",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+            )
+            session.add_all([source, target])
+            session.commit()
+            
+            # Create media item for source
+            media = MediaItem(
+                id=uuid.uuid4(),
+                entity_id=source.id,
+                media_type="image",
+                url="https://example.com/logo.png",
+            )
+            session.add(media)
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+            media_id = str(media.id)
+        
+        # Merge source into target
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Verify media item is now associated with target
+        with db_session() as session:
+            media = session.execute(
+                select(MediaItem).where(MediaItem.id == media_id)
+            ).scalar_one()
+            assert str(media.entity_id) == target_id
+            assert media.media_type == "image"
+    
+    def test_merge_merges_metadata(self, db_session):
+        """Test that source's metadata_json is merged into target (fills gaps only)."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            # Create source with metadata
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft",
+                kind="company",
+                metadata_json={
+                    "website": "https://microsoft.com",
+                    "founded": "1975",
+                    "extra_field": "extra_value",
+                }
+            )
+            # Create target with partial metadata
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+                metadata_json={
+                    "website": "https://www.microsoft.com",  # Different value - should NOT be overwritten
+                    "stock_symbol": "MSFT",
+                }
+            )
+            session.add_all([source, target])
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+        
+        # Merge source into target
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Verify metadata is merged correctly
+        with db_session() as session:
+            target = session.execute(
+                select(Entity).where(Entity.id == target_id)
+            ).scalar_one()
+            
+            # Target's original values should be preserved
+            assert target.metadata_json.get("website") == "https://www.microsoft.com"
+            assert target.metadata_json.get("stock_symbol") == "MSFT"
+            
+            # Source's unique values should be added
+            assert target.metadata_json.get("founded") == "1975"
+            assert target.metadata_json.get("extra_field") == "extra_value"
+            
+            # Merge history should be recorded
+            assert "merged_from" in target.metadata_json
+            merge_history = target.metadata_json["merged_from"]
+            assert len(merge_history) == 1
+            assert merge_history[0]["id"] == source_id
+            assert merge_history[0]["name"] == "Microsoft"
