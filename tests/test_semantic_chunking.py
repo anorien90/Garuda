@@ -8,6 +8,9 @@ import pytest
 
 from garuda_intel.extractor.semantic_chunker import SemanticChunker, TextChunk
 
+# Test constants
+MAX_CHUNK_SIZE_TOLERANCE = 1.2  # Allow 20% overflow for chunk size tests
+
 
 class TestTextChunk:
     """Test TextChunk dataclass."""
@@ -104,7 +107,7 @@ Third paragraph is here.
         # Most chunks should be around max_size or less
         # (some may be slightly larger due to paragraph preservation)
         for chunk in chunks:
-            assert len(chunk.text) <= max_size * 1.2  # Allow 20% overflow
+            assert len(chunk.text) <= max_size * MAX_CHUNK_SIZE_TOLERANCE
     
     def test_chunk_respects_min_size(self, chunker):
         """Test that chunks respect minimum size."""
@@ -310,7 +313,7 @@ Fourth paragraph continues.
         
         # No chunk should be excessively large
         for chunk in chunks:
-            assert len(chunk.text) <= 1500 * 1.2, (
+            assert len(chunk.text) <= 1500 * MAX_CHUNK_SIZE_TOLERANCE, (
                 f"Chunk too large: {len(chunk.text)} chars"
             )
 

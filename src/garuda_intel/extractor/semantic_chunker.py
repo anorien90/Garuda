@@ -28,6 +28,11 @@ class SemanticChunker:
     to create chunks that preserve context and meaning.
     """
     
+    # Constants for unstructured text detection
+    MIN_NEWLINES_FOR_STRUCTURE = 3
+    MIN_LENGTH_FOR_STRUCTURE_CHECK = 500
+    TARGET_SECTION_SIZE = 800  # Target size for unstructured text sections
+    
     def __init__(self):
         """Initialize semantic chunker."""
         self.logger = logging.getLogger(__name__)
@@ -36,6 +41,25 @@ class SemanticChunker:
         self.heading_pattern = re.compile(
             r'^(?:#{1,6}\s+|[A-Z][^.!?]*:|\d+\.\s+[A-Z])',
             re.MULTILINE
+        )
+    
+    def _is_unstructured_text(self, text: str) -> bool:
+        """
+        Check if text appears to be unstructured (e.g., web-scraped content).
+        
+        Unstructured text has few or no newlines and should be split
+        by sentence boundaries rather than paragraph/section boundaries.
+        
+        Args:
+            text: Text to check
+            
+        Returns:
+            True if text appears to be unstructured
+        """
+        newline_count = text.count('\n')
+        return (
+            newline_count < self.MIN_NEWLINES_FOR_STRUCTURE 
+            and len(text) > self.MIN_LENGTH_FOR_STRUCTURE_CHECK
         )
     
     def chunk_by_topic(
@@ -62,8 +86,7 @@ class SemanticChunker:
         
         # Check if text is unstructured (no newlines or very few)
         # Unstructured text should be split even if under max_chunk_size
-        newline_count = text.count('\n')
-        is_unstructured = newline_count < 3 and len(text) > 500
+        is_unstructured = self._is_unstructured_text(text)
         
         # If text is small enough and structured, return as single chunk
         if len(text) <= max_chunk_size and not is_unstructured:
@@ -204,8 +227,7 @@ class SemanticChunker:
             List of (heading, section_text) tuples
         """
         # Check if text is mostly unstructured (no newlines or very few)
-        newline_count = text.count('\n')
-        if newline_count < 3 and len(text) > 500:
+        if self._is_unstructured_text(text):
             # Unstructured text - split by sentence boundaries instead
             return self._split_unstructured_text(text)
         
@@ -307,12 +329,11 @@ class SemanticChunker:
         sections = []
         current_group = []
         current_size = 0
-        target_section_size = 800  # Target size for each section
         
         for sentence in sentences:
             sent_len = len(sentence)
             
-            if current_group and current_size + sent_len > target_section_size:
+            if current_group and current_size + sent_len > self.TARGET_SECTION_SIZE:
                 section_text = ' '.join(current_group)
                 sections.append((None, section_text))
                 current_group = [sentence]
