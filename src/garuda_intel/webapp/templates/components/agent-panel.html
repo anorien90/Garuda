@@ -26,6 +26,9 @@
         <button id="agent-tab-autonomous" class="agent-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
           🤖 Autonomous Mode
         </button>
+        <button id="agent-tab-taskqueue" class="agent-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
+          📋 Task Queue
+        </button>
       </nav>
     </div>
     
@@ -218,6 +221,63 @@
       
       <!-- Results Panel -->
       <div id="autonomous-results" class="space-y-3"></div>
+    </div>
+    
+    <!-- Task Queue Panel -->
+    <div id="agent-panel-taskqueue" class="agent-panel hidden space-y-4">
+      <div class="p-3 rounded-lg bg-cyan-50 dark:bg-cyan-900/20 border border-cyan-200 dark:border-cyan-800">
+        <p class="text-xs text-cyan-800 dark:text-cyan-200">
+          <strong>Task Queue</strong> shows all persistent tasks (LLM operations, crawls, agent actions). Tasks survive page reloads and server restarts. The queue processes one LLM task at a time to protect the Ollama instance.
+        </p>
+      </div>
+      
+      <!-- Queue Stats -->
+      <div id="tq-stats" class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div class="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-center">
+          <div id="tq-stat-pending" class="text-2xl font-bold text-amber-700 dark:text-amber-300">-</div>
+          <div class="text-xs text-amber-600 dark:text-amber-400">Pending</div>
+        </div>
+        <div class="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-center">
+          <div id="tq-stat-running" class="text-2xl font-bold text-blue-700 dark:text-blue-300">-</div>
+          <div class="text-xs text-blue-600 dark:text-blue-400">Running</div>
+        </div>
+        <div class="p-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-center">
+          <div id="tq-stat-completed" class="text-2xl font-bold text-green-700 dark:text-green-300">-</div>
+          <div class="text-xs text-green-600 dark:text-green-400">Completed</div>
+        </div>
+        <div class="p-3 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-center">
+          <div id="tq-stat-failed" class="text-2xl font-bold text-rose-700 dark:text-rose-300">-</div>
+          <div class="text-xs text-rose-600 dark:text-rose-400">Failed</div>
+        </div>
+        <div class="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-center">
+          <div id="tq-stat-cancelled" class="text-2xl font-bold text-slate-700 dark:text-slate-300">-</div>
+          <div class="text-xs text-slate-600 dark:text-slate-400">Cancelled</div>
+        </div>
+      </div>
+      
+      <!-- Controls -->
+      <div class="flex items-center gap-3">
+        <button id="tq-refresh-btn" class="inline-flex items-center rounded-lg bg-cyan-600 text-white px-3 py-1.5 text-sm font-medium shadow-sm hover:bg-cyan-500">
+          🔄 Refresh
+        </button>
+        <select id="tq-filter-status" class="rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-cyan-500">
+          <option value="">All Statuses</option>
+          <option value="pending">Pending</option>
+          <option value="running">Running</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <label class="flex items-center gap-2 text-sm">
+          <input id="tq-auto-refresh" type="checkbox" checked class="rounded border-slate-300 text-cyan-600 focus:ring-cyan-500">
+          <span class="text-slate-700 dark:text-slate-300">Auto-refresh</span>
+        </label>
+      </div>
+      
+      <!-- Task List -->
+      <div id="tq-task-list" class="space-y-2">
+        <div class="text-sm text-slate-500 dark:text-slate-400 text-center py-4">Loading tasks...</div>
+      </div>
     </div>
   </article>
 </div>
@@ -1121,5 +1181,155 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   loadAgentStatus();
+
+  // =========================================================================
+  // TASK QUEUE PANEL
+  // =========================================================================
+  const statusColors = {
+    pending: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+    running: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+    completed: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+    failed: 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300',
+    cancelled: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300',
+  };
+
+  async function tqFetch(path, opts = {}) {
+    const headers = { ...(opts.headers || {}) };
+    const key = getApiKey();
+    if (key) headers['X-API-Key'] = key;
+    const res = await fetch(path, { ...opts, headers });
+    return res.json();
+  }
+
+  async function loadQueueStats() {
+    try {
+      const stats = await tqFetch('/api/tasks/stats');
+      const counts = stats.counts || {};
+      document.getElementById('tq-stat-pending').textContent = counts.pending ?? '-';
+      document.getElementById('tq-stat-running').textContent = counts.running ?? '-';
+      document.getElementById('tq-stat-completed').textContent = counts.completed ?? '-';
+      document.getElementById('tq-stat-failed').textContent = counts.failed ?? '-';
+      document.getElementById('tq-stat-cancelled').textContent = counts.cancelled ?? '-';
+    } catch (e) {
+      console.warn('Failed to load queue stats:', e);
+    }
+  }
+
+  async function loadTaskList() {
+    try {
+      const filterStatus = document.getElementById('tq-filter-status').value;
+      const url = filterStatus ? `/api/tasks/?status=${filterStatus}&limit=50` : '/api/tasks/?limit=50';
+      const data = await tqFetch(url);
+      const tasks = data.tasks || [];
+      const listEl = document.getElementById('tq-task-list');
+
+      if (tasks.length === 0) {
+        listEl.innerHTML = '<div class="text-sm text-slate-500 dark:text-slate-400 text-center py-4">No tasks found</div>';
+        return;
+      }
+
+      listEl.innerHTML = tasks.map(t => {
+        const statusClass = statusColors[t.status] || statusColors.pending;
+        const progressBar = t.status === 'running' && t.progress != null
+          ? `<div class="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 mt-1">
+               <div class="bg-blue-500 h-1.5 rounded-full" style="width:${Math.round((t.progress || 0) * 100)}%"></div>
+             </div>`
+          : '';
+        const errorInfo = t.error
+          ? `<div class="text-xs text-rose-600 dark:text-rose-400 mt-1 truncate" title="${t.error}">⚠️ ${t.error}</div>`
+          : '';
+        const created = t.created_at ? new Date(t.created_at).toLocaleString() : '';
+        const actions = [];
+        if (t.status === 'pending' || t.status === 'running') {
+          actions.push(`<button class="tq-cancel-btn text-xs px-2 py-0.5 rounded bg-rose-600 text-white hover:bg-rose-500" data-task-id="${t.id}">Cancel</button>`);
+        }
+        if (t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') {
+          actions.push(`<button class="tq-delete-btn text-xs px-2 py-0.5 rounded bg-slate-600 text-white hover:bg-slate-500" data-task-id="${t.id}">Delete</button>`);
+        }
+        if (t.status === 'completed' && t.result) {
+          actions.push(`<button class="tq-view-btn text-xs px-2 py-0.5 rounded bg-green-600 text-white hover:bg-green-500" data-task-id="${t.id}">View Result</button>`);
+        }
+
+        return `
+          <div class="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 text-xs font-bold rounded-full ${statusClass}">${t.status}</span>
+                <span class="text-sm font-medium text-slate-800 dark:text-slate-200">${t.task_type}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                ${actions.join(' ')}
+              </div>
+            </div>
+            ${t.progress_message ? `<div class="text-xs text-slate-600 dark:text-slate-400 mt-1">${t.progress_message}</div>` : ''}
+            ${progressBar}
+            ${errorInfo}
+            <div class="text-xs text-slate-400 mt-1">${created} · <span class="font-mono">${t.id.substring(0, 8)}…</span></div>
+          </div>
+        `;
+      }).join('');
+
+      // Bind cancel buttons
+      listEl.querySelectorAll('.tq-cancel-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          await tqFetch(`/api/tasks/${btn.dataset.taskId}/cancel`, { method: 'POST' });
+          refreshTaskQueue();
+        });
+      });
+
+      // Bind delete buttons
+      listEl.querySelectorAll('.tq-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          await tqFetch(`/api/tasks/${btn.dataset.taskId}`, { method: 'DELETE' });
+          refreshTaskQueue();
+        });
+      });
+
+      // Bind view result buttons
+      listEl.querySelectorAll('.tq-view-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const task = await tqFetch(`/api/tasks/${btn.dataset.taskId}`);
+          alert(JSON.stringify(task.result, null, 2));
+        });
+      });
+    } catch (e) {
+      console.warn('Failed to load task list:', e);
+    }
+  }
+
+  function refreshTaskQueue() {
+    loadQueueStats();
+    loadTaskList();
+  }
+
+  // Bind refresh button
+  const tqRefreshBtn = document.getElementById('tq-refresh-btn');
+  if (tqRefreshBtn) tqRefreshBtn.addEventListener('click', refreshTaskQueue);
+
+  // Bind filter change
+  const tqFilter = document.getElementById('tq-filter-status');
+  if (tqFilter) tqFilter.addEventListener('change', loadTaskList);
+
+  // Auto-refresh every 5 seconds when tab is active and checkbox is checked
+  let tqInterval = null;
+  function startTqAutoRefresh() {
+    if (tqInterval) return;
+    tqInterval = setInterval(() => {
+      const panel = document.getElementById('agent-panel-taskqueue');
+      const autoCheck = document.getElementById('tq-auto-refresh');
+      if (panel && !panel.classList.contains('hidden') && autoCheck && autoCheck.checked) {
+        refreshTaskQueue();
+      }
+    }, 5000);
+  }
+  startTqAutoRefresh();
+
+  // Initial load when task queue tab is shown
+  const tqTab = document.getElementById('agent-tab-taskqueue');
+  if (tqTab) {
+    tqTab.addEventListener('click', refreshTaskQueue);
+  }
+  // Also load on page load if panel is visible
+  refreshTaskQueue();
 });
 </script>
