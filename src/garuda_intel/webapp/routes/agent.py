@@ -9,7 +9,7 @@ Provides endpoints for:
 """
 
 import logging
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from typing import Optional
 
 from ..services.event_system import emit_event
@@ -274,6 +274,10 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         })
 
         try:
+            shutdown_mgr = current_app.config.get('shutdown_manager')
+            if shutdown_mgr and shutdown_mgr.is_shutting_down():
+                return jsonify({"error": "Server is shutting down", "shutdown": True}), 503
+            
             report = agent.autonomous_discover(
                 max_entities=max_entities,
                 priority_threshold=priority_threshold,

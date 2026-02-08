@@ -13,6 +13,16 @@ from ..types.entity import EntityProfile
 from .text_processor import TextProcessor
 
 
+def _safe_float(val, default=0.0):
+    """Convert any value to float safely, handling strings, None, etc."""
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 class QueryGenerator:
     """Handles search query generation, result ranking, and answer synthesis."""
 
@@ -78,12 +88,12 @@ class QueryGenerator:
             for i, res in enumerate(search_results[:10]):
                 rank = rankings_map.get(i, {})
                 self.logger.debug(f"Result {i} ranking: {rank}")
-                res["llm_score"] = rank.get("score", 0)
+                res["llm_score"] = _safe_float(rank.get("score", 0))
                 res["is_official"] = rank.get("is_official", False)
                 res["llm_reason"] = rank.get("reason", "")
                 ranked_results.append(res)
 
-            return sorted(ranked_results, key=lambda x: x.get("llm_score", 0), reverse=True)
+            return sorted(ranked_results, key=lambda x: _safe_float(x.get("llm_score", 0)), reverse=True)
 
         except Exception as e:
             self.logger.warning(f"Result ranking failed: {e}")
@@ -109,13 +119,13 @@ class QueryGenerator:
                 resp = requests.post(self.ollama_url, json=payload, timeout=20)
                 result_raw = resp.json().get("response", "{}")
                 result = self.text_processor.safe_json_loads(result_raw, fallback={})
-                link["llm_score"] = result.get("score", 0)
+                link["llm_score"] = _safe_float(result.get("score", 0))
                 link["llm_reason"] = result.get("reason", "")
             except Exception:
                 link["llm_score"] = 0
             ranked.append(link)
 
-        return sorted(ranked, key=lambda x: x.get("llm_score", 0), reverse=True)
+        return sorted(ranked, key=lambda x: _safe_float(x.get("llm_score", 0)), reverse=True)
 
     def generate_seed_queries(self, user_question: str, entity_name: str = "") -> List[str]:
         """Generates 3-4 specific search strings to find new data online."""

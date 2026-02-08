@@ -1,5 +1,8 @@
 """Garuda Intel Webapp - Main Application Entry Point."""
 
+import signal
+import sys
+import threading
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from functools import wraps
@@ -24,6 +27,7 @@ from ..services.entity_gap_analyzer import EntityGapAnalyzer
 from ..services.adaptive_crawler import AdaptiveCrawlerService
 from ..services.media_processor import MediaProcessor
 from .services.event_system import init_event_logging
+from .utils.shutdown import ShutdownManager
 
 # Import route blueprints
 from .routes import static, recorder, search, crawling, entities, relationships
@@ -174,6 +178,27 @@ app.register_blueprint(
 
 def main():
     """Run the Flask application."""
+    shutdown_manager = ShutdownManager()
+    app.config['shutdown_manager'] = shutdown_manager
+    
+    def signal_handler(signum, frame):
+        """Handle shutdown signals gracefully.
+        
+        Args:
+            signum: Signal number (not used directly but required by signal handler interface)
+            frame: Current stack frame (not used directly but required by signal handler interface)
+        """
+        shutdown_manager.request_shutdown()
+    
+    # Only register signal handlers in production mode
+    # In debug mode, Flask's reloader interferes with signal handling
+    if not settings.debug:
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        logger.info("Graceful shutdown handlers registered (production mode)")
+    else:
+        logger.info("Running in debug mode - signal handlers disabled")
+    
     app.run(host="0.0.0.0", port=8080, debug=settings.debug)
 
 
