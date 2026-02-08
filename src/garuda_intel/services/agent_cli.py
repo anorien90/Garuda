@@ -277,59 +277,156 @@ def cmd_chat(settings: Settings, args: argparse.Namespace) -> None:
 def cmd_autonomous(settings: Settings, args: argparse.Namespace) -> None:
     """Run autonomous discovery mode."""
     logger = setup_logging(args.verbose)
-    logger.info("Starting autonomous discovery mode...")
+    
+    action = getattr(args, 'action', 'discover')
+    logger.info(f"Starting autonomous mode: {action}...")
 
     _, _, _, agent = get_services(settings)
 
-    report = agent.autonomous_discover(
-        max_entities=args.max_entities,
-        priority_threshold=args.priority_threshold,
-        max_depth=args.depth,
-        auto_crawl=args.auto_crawl,
-        max_pages=args.max_pages,
-    )
+    # Dispatch based on action
+    if action == "reflect-relate":
+        report = agent.reflect_relate(
+            target_entities=args.target_entities if hasattr(args, 'target_entities') else None,
+            max_depth=args.depth,
+            top_n=args.top_n if hasattr(args, 'top_n') else 20,
+        )
+    elif action == "investigate-crawl":
+        report = agent.investigate_crawl(
+            investigation_tasks=None,  # Auto-generate
+            max_entities=args.max_entities,
+            max_pages=args.max_pages,
+            max_depth=args.depth,
+            priority_threshold=args.priority_threshold,
+        )
+    elif action == "combined":
+        report = agent.combined_autonomous(
+            target_entities=args.target_entities if hasattr(args, 'target_entities') else None,
+            max_entities=args.max_entities,
+            max_pages=args.max_pages,
+            max_depth=args.depth,
+            priority_threshold=args.priority_threshold,
+        )
+    else:  # "discover"
+        report = agent.autonomous_discover(
+            max_entities=args.max_entities,
+            priority_threshold=args.priority_threshold,
+            max_depth=args.depth,
+            auto_crawl=args.auto_crawl,
+            max_pages=args.max_pages,
+        )
 
     if args.format == "json":
         print(json.dumps(report, indent=2, default=str))
     else:
         print("\n" + "=" * 60)
-        print("AUTONOMOUS DISCOVERY REPORT")
+        print(f"AUTONOMOUS MODE REPORT: {action.upper()}")
         print("=" * 60)
 
         stats = report.get("statistics", {})
-        print(f"\nEntities analyzed: {stats.get('entities_analyzed', 0)}")
-        print(f"Dead ends found: {stats.get('dead_ends_found', 0)}")
-        print(f"Knowledge gaps found: {stats.get('gaps_found', 0)}")
-        print(f"Crawl plans generated: {stats.get('crawl_plans_generated', 0)}")
-        print(f"Crawls executed: {stats.get('crawls_executed', 0)}")
+        
+        # Print mode-specific statistics
+        if action == "reflect-relate":
+            print(f"\nEntities analyzed: {stats.get('entities_analyzed', 0)}")
+            print(f"Potential relations found: {stats.get('potential_relations_found', 0)}")
+            print(f"Investigation tasks created: {stats.get('investigation_tasks_created', 0)}")
+            
+            potential_relations = report.get("potential_relations", [])
+            if potential_relations:
+                print(f"\n--- Potential Relations ({len(potential_relations)}) ---")
+                for pr in potential_relations[:10]:
+                    print(f"\n  {pr.get('entity_a')} ↔ {pr.get('entity_b')}")
+                    print(f"    Confidence: {pr.get('confidence', 0):.2f} | {pr.get('reason', 'N/A')}")
+            
+            investigation_tasks = report.get("investigation_tasks", [])
+            if investigation_tasks:
+                print(f"\n--- Investigation Tasks ({len(investigation_tasks)}) ---")
+                for task in investigation_tasks[:10]:
+                    print(f"\n  [{task.get('task_type', 'N/A')}] {task.get('entity_name', 'Unknown')}")
+                    if task.get('related_to'):
+                        print(f"    Related to: {task.get('related_to')}")
+                    print(f"    Reason: {task.get('reason', 'N/A')}")
+                    print(f"    Priority: {task.get('priority', 0):.2f}")
+        
+        elif action == "investigate-crawl":
+            print(f"\nTasks received: {stats.get('tasks_received', 0)}")
+            print(f"Tasks processed: {stats.get('tasks_processed', 0)}")
+            print(f"Crawl plans generated: {stats.get('crawl_plans_generated', 0)}")
+            print(f"Crawls executed: {stats.get('crawls_executed', 0)}")
+            print(f"Pages discovered: {stats.get('pages_discovered', 0)}")
+            
+            crawl_plans = report.get("crawl_plans", [])
+            if crawl_plans:
+                print(f"\n--- Crawl Plans ({len(crawl_plans)}) ---")
+                for plan in crawl_plans[:10]:
+                    print(f"\n  {plan.get('entity_name', 'Unknown')}")
+                    print(f"    Mode: {plan.get('mode', '-')} | Strategy: {plan.get('strategy', '-')}")
+            
+            crawl_results = report.get("crawl_results", [])
+            if crawl_results:
+                print(f"\n--- Crawl Results ({len(crawl_results)}) ---")
+                for result in crawl_results[:10]:
+                    entity_name = result.get('entity_name', 'Unknown')
+                    if 'error' in result:
+                        print(f"\n  ✗ {entity_name}: {result.get('error', 'Unknown error')}")
+                    else:
+                        crawl_result = result.get('result', {})
+                        pages = crawl_result.get('pages_crawled', 0)
+                        print(f"\n  ✓ {entity_name}: {pages} pages crawled")
+        
+        elif action == "combined":
+            print(f"\nTotal entities analyzed: {stats.get('total_entities_analyzed', 0)}")
+            print(f"Total crawls executed: {stats.get('total_crawls_executed', 0)}")
+            print(f"Total pages discovered: {stats.get('total_pages_discovered', 0)}")
+            
+            reflect_report = report.get("reflect_relate_report", {})
+            investigate_report = report.get("investigate_crawl_report", {})
+            
+            print("\n--- Phase 1: Reflect & Relate ---")
+            rr_stats = reflect_report.get("statistics", {})
+            print(f"  Entities analyzed: {rr_stats.get('entities_analyzed', 0)}")
+            print(f"  Potential relations: {rr_stats.get('potential_relations_found', 0)}")
+            print(f"  Investigation tasks: {rr_stats.get('investigation_tasks_created', 0)}")
+            
+            print("\n--- Phase 2: Investigate Crawl ---")
+            ic_stats = investigate_report.get("statistics", {})
+            print(f"  Tasks processed: {ic_stats.get('tasks_processed', 0)}")
+            print(f"  Crawls executed: {ic_stats.get('crawls_executed', 0)}")
+            print(f"  Pages discovered: {ic_stats.get('pages_discovered', 0)}")
+        
+        else:  # "discover"
+            print(f"\nEntities analyzed: {stats.get('entities_analyzed', 0)}")
+            print(f"Dead ends found: {stats.get('dead_ends_found', 0)}")
+            print(f"Knowledge gaps found: {stats.get('gaps_found', 0)}")
+            print(f"Crawl plans generated: {stats.get('crawl_plans_generated', 0)}")
+            print(f"Crawls executed: {stats.get('crawls_executed', 0)}")
 
-        dead_ends = report.get("dead_ends", [])
-        if dead_ends:
-            print(f"\n--- Dead-End Entities ({len(dead_ends)}) ---")
-            print(f"\n{'Name':<30} {'Kind':<15} {'Out':<5} {'In':<5} {'Dead End':<10}")
-            print("-" * 65)
-            for de in dead_ends[:15]:
-                print(
-                    f"{(de.get('name') or '')[:28]:<30} "
-                    f"{(de.get('kind') or 'N/A'):<15} "
-                    f"{de.get('outgoing_relations', 0):<5} "
-                    f"{de.get('incoming_relations', 0):<5} "
-                    f"{'Yes' if de.get('is_dead_end') else 'No':<10}"
-                )
+            dead_ends = report.get("dead_ends", [])
+            if dead_ends:
+                print(f"\n--- Dead-End Entities ({len(dead_ends)}) ---")
+                print(f"\n{'Name':<30} {'Kind':<15} {'Out':<5} {'In':<5} {'Dead End':<10}")
+                print("-" * 65)
+                for de in dead_ends[:15]:
+                    print(
+                        f"{(de.get('name') or '')[:28]:<30} "
+                        f"{(de.get('kind') or 'N/A'):<15} "
+                        f"{de.get('outgoing_relations', 0):<5} "
+                        f"{de.get('incoming_relations', 0):<5} "
+                        f"{'Yes' if de.get('is_dead_end') else 'No':<10}"
+                    )
 
-        gaps = report.get("knowledge_gaps", [])
-        if gaps:
-            print(f"\n--- Knowledge Gaps ({len(gaps)}) ---")
-            for gap in gaps[:10]:
-                print(f"\n  {gap.get('entity_name', 'Unknown')} (gap score: {gap.get('gap_score', 0)})")
-                print(f"    Intel: {gap.get('intelligence_count', 0)} | Missing: {', '.join(gap.get('missing_fields', []))}")
+            gaps = report.get("knowledge_gaps", [])
+            if gaps:
+                print(f"\n--- Knowledge Gaps ({len(gaps)}) ---")
+                for gap in gaps[:10]:
+                    print(f"\n  {gap.get('entity_name', 'Unknown')} (gap score: {gap.get('gap_score', 0)})")
+                    print(f"    Intel: {gap.get('intelligence_count', 0)} | Missing: {', '.join(gap.get('missing_fields', []))}")
 
-        plans = report.get("crawl_plans", [])
-        if plans:
-            print(f"\n--- Crawl Plans ({len(plans)}) ---")
-            for plan in plans[:10]:
-                print(f"\n  {plan.get('entity_name', 'Unknown')} (priority: {plan.get('priority_score', 0):.3f})")
-                print(f"    Mode: {plan.get('mode', '-')} | Strategy: {plan.get('strategy', '-')}")
+            plans = report.get("crawl_plans", [])
+            if plans:
+                print(f"\n--- Crawl Plans ({len(plans)}) ---")
+                for plan in plans[:10]:
+                    print(f"\n  {plan.get('entity_name', 'Unknown')} (priority: {plan.get('priority_score', 0):.3f})")
+                    print(f"    Mode: {plan.get('mode', '-')} | Strategy: {plan.get('strategy', '-')}")
 
         if report.get("message"):
             print(f"\n{report['message']}")
@@ -540,6 +637,12 @@ def main():
         help="Autonomous discovery: find dead-ends, gaps, and generate crawl plans"
     )
     autonomous_parser.add_argument(
+        "-a", "--action",
+        choices=["discover", "reflect-relate", "investigate-crawl", "combined"],
+        default="discover",
+        help="Autonomous action mode (default: discover)"
+    )
+    autonomous_parser.add_argument(
         "-n", "--max-entities",
         type=int,
         default=10,
@@ -567,6 +670,17 @@ def main():
         type=int,
         default=25,
         help="Max pages per crawl (default: 25)"
+    )
+    autonomous_parser.add_argument(
+        "--target-entities",
+        nargs="+",
+        help="Target entity names to focus on (for reflect-relate and combined modes)"
+    )
+    autonomous_parser.add_argument(
+        "--top-n",
+        type=int,
+        default=20,
+        help="Maximum potential relations to suggest (for reflect-relate mode, default: 20)"
     )
     
     args = parser.parse_args()

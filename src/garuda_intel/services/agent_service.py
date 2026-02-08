@@ -70,6 +70,10 @@ class AgentService:
         self.priority_relation_weight = priority_relation_weight
         self.logger = logging.getLogger(__name__)
         
+        # Process tracking for autonomous modes
+        self._running_processes: Dict[str, Dict[str, Any]] = {}
+        self._process_counter: int = 0
+        
         # Initialize sub-components
         if hasattr(store, 'Session'):
             self.entity_merger = EntityMerger(store.Session, self.logger)
@@ -1310,3 +1314,515 @@ class AgentService:
                 "entity_name": entity_name,
                 "error": str(e),
             }
+
+    # =========================================================================
+    # REFINED AUTONOMOUS MODES
+    # =========================================================================
+
+    def reflect_relate(
+        self,
+        target_entities: Optional[List[str]] = None,
+        max_depth: int = 2,
+        top_n: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        Reflect & Relate mode: Find indirect connections and create investigation tasks.
+        
+        This mode:
+        1. Runs reflect_and_refine to get current data quality
+        2. Analyzes entity graph to find indirect connections
+        3. Suggests potential relations based on shared neighbors
+        4. Creates investigation tasks for gaps and potential relations
+        
+        Args:
+            target_entities: Optional list of entity names to focus on
+            max_depth: Maximum depth for graph traversal
+            top_n: Maximum number of potential relations to suggest
+            
+        Returns:
+            Report with reflection results, potential relations, and investigation tasks
+        """
+        # Create process entry
+        self._process_counter += 1
+        process_id = f"reflect_relate_{self._process_counter}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        self._running_processes[process_id] = {
+            "process_id": process_id,
+            "action": "reflect_relate",
+            "status": "running",
+            "started_at": datetime.now().isoformat(),
+        }
+        
+        self.logger.info(f"Starting reflect & relate mode (process {process_id})")
+        
+        report: Dict[str, Any] = {
+            "mode": "reflect_relate",
+            "process_id": process_id,
+            "started_at": datetime.now().isoformat(),
+            "reflect_report": {},
+            "potential_relations": [],
+            "investigation_tasks": [],
+            "statistics": {
+                "entities_analyzed": 0,
+                "potential_relations_found": 0,
+                "investigation_tasks_created": 0,
+            },
+        }
+        
+        try:
+            # Step 1: Run reflect and refine to get current data quality
+            reflect_result = self.reflect_and_refine(
+                target_entities=target_entities,
+                dry_run=True,
+            )
+            report["reflect_report"] = reflect_result
+            
+            # Check for stop request
+            if self._running_processes.get(process_id, {}).get("status") == "stopping":
+                report["status"] = "stopped"
+                self._running_processes[process_id]["status"] = "stopped"
+                self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+                return report
+            
+            with self.store.Session() as session:
+                # Step 2: Get entities to analyze
+                if target_entities:
+                    entities_query = select(Entity).where(Entity.name.in_(target_entities))
+                else:
+                    entities_query = select(Entity).limit(100)
+                
+                entities = list(session.execute(entities_query).scalars().all())
+                report["statistics"]["entities_analyzed"] = len(entities)
+                
+                # Step 3: Find indirect connections
+                entity_neighbors: Dict[str, Set[str]] = {}
+                entity_map: Dict[str, Entity] = {}
+                
+                for entity in entities:
+                    entity_id = str(entity.id)
+                    entity_map[entity_id] = entity
+                    related = self._get_related_entities(session, entity_id)
+                    entity_neighbors[entity_id] = set(related.keys())
+                
+                # Check for stop request
+                if self._running_processes.get(process_id, {}).get("status") == "stopping":
+                    report["status"] = "stopped"
+                    self._running_processes[process_id]["status"] = "stopped"
+                    self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+                    return report
+                
+                # Step 4: Find potential indirect relations
+                potential_relations = []
+                seen_pairs = set()
+                
+                for entity_id_a, neighbors_a in entity_neighbors.items():
+                    for entity_id_b, neighbors_b in entity_neighbors.items():
+                        if entity_id_a >= entity_id_b:  # Skip self and duplicates
+                            continue
+                        
+                        pair_key = (entity_id_a, entity_id_b)
+                        if pair_key in seen_pairs:
+                            continue
+                        seen_pairs.add(pair_key)
+                        
+                        # Check if they're NOT directly connected
+                        if entity_id_b not in neighbors_a and entity_id_a not in neighbors_b:
+                            # Find shared neighbors
+                            shared = neighbors_a & neighbors_b
+                            if len(shared) >= 1:  # At least one shared neighbor
+                                entity_a = entity_map[entity_id_a]
+                                entity_b = entity_map[entity_id_b]
+                                
+                                # Calculate confidence based on shared neighbor count
+                                confidence = min(0.95, 0.3 + (len(shared) * 0.15))
+                                
+                                potential_relations.append({
+                                    "entity_a": entity_a.name,
+                                    "entity_a_kind": entity_a.kind,
+                                    "entity_b": entity_b.name,
+                                    "entity_b_kind": entity_b.kind,
+                                    "shared_neighbors": len(shared),
+                                    "confidence": confidence,
+                                    "reason": f"Share {len(shared)} common connection(s)",
+                                })
+                
+                # Sort by confidence and take top N
+                potential_relations.sort(key=lambda x: x["confidence"], reverse=True)
+                potential_relations = potential_relations[:top_n]
+                report["potential_relations"] = potential_relations
+                report["statistics"]["potential_relations_found"] = len(potential_relations)
+                
+                # Check for stop request
+                if self._running_processes.get(process_id, {}).get("status") == "stopping":
+                    report["status"] = "stopped"
+                    self._running_processes[process_id]["status"] = "stopped"
+                    self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+                    return report
+                
+                # Step 5: Create investigation tasks
+                investigation_tasks = []
+                
+                # Tasks from potential relations
+                for pr in potential_relations:
+                    investigation_tasks.append({
+                        "task_type": "investigate_relation",
+                        "entity_name": pr["entity_a"],
+                        "related_to": pr["entity_b"],
+                        "reason": pr["reason"],
+                        "priority": pr["confidence"],
+                    })
+                
+                # Tasks from knowledge gaps (from reflect report)
+                merge_candidates = reflect_result.get("merge_candidates", [])
+                for candidate in merge_candidates[:10]:  # Top 10 merge candidates
+                    investigation_tasks.append({
+                        "task_type": "verify_connection",
+                        "entity_name": candidate.get("entity_1", ""),
+                        "related_to": candidate.get("entity_2", ""),
+                        "reason": f"Potential duplicate (similarity: {candidate.get('similarity', 0):.2f})",
+                        "priority": candidate.get("similarity", 0.5),
+                    })
+                
+                # Tasks from data quality issues
+                quality_report = reflect_result.get("quality_report", {})
+                entities_missing_kind = quality_report.get("entities_missing_kind", 0)
+                entities_missing_data = quality_report.get("entities_missing_data", 0)
+                
+                if entities_missing_kind > 0 or entities_missing_data > 0:
+                    # Get some entities with missing data
+                    missing_data_query = select(Entity).where(
+                        or_(Entity.kind == None, Entity.data == None)
+                    ).limit(5)
+                    missing_entities = list(session.execute(missing_data_query).scalars().all())
+                    
+                    for entity in missing_entities:
+                        investigation_tasks.append({
+                            "task_type": "fill_gap",
+                            "entity_name": entity.name,
+                            "related_to": None,
+                            "reason": f"Missing {'kind' if not entity.kind else 'data'}",
+                            "priority": 0.6,
+                        })
+                
+                report["investigation_tasks"] = investigation_tasks
+                report["statistics"]["investigation_tasks_created"] = len(investigation_tasks)
+            
+            report["completed_at"] = datetime.now().isoformat()
+            self._running_processes[process_id]["status"] = "completed"
+            self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+            
+        except Exception as e:
+            self.logger.exception(f"Reflect & relate failed: {e}")
+            report["error"] = str(e)
+            report["status"] = "failed"
+            self._running_processes[process_id]["status"] = "failed"
+            self._running_processes[process_id]["error"] = str(e)
+            self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+        
+        return report
+
+    def investigate_crawl(
+        self,
+        investigation_tasks: Optional[List[Dict[str, Any]]] = None,
+        max_entities: int = 10,
+        max_pages: int = 25,
+        max_depth: int = 3,
+        priority_threshold: float = 0.3,
+    ) -> Dict[str, Any]:
+        """
+        Investigate Crawl mode: Execute crawls based on investigation tasks.
+        
+        This mode:
+        1. Takes investigation tasks (or generates them via reflect_relate)
+        2. Filters tasks by priority threshold
+        3. Generates crawl plans for each task
+        4. Executes crawls to gather missing information
+        
+        Args:
+            investigation_tasks: List of investigation task dicts (or None to auto-generate)
+            max_entities: Maximum number of entities to crawl
+            max_pages: Maximum pages per entity crawl
+            max_depth: Maximum crawl depth
+            priority_threshold: Minimum task priority to process
+            
+        Returns:
+            Report with crawl plans and results
+        """
+        # Create process entry
+        self._process_counter += 1
+        process_id = f"investigate_crawl_{self._process_counter}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        self._running_processes[process_id] = {
+            "process_id": process_id,
+            "action": "investigate_crawl",
+            "status": "running",
+            "started_at": datetime.now().isoformat(),
+            "tasks_total": 0,
+            "tasks_completed": 0,
+        }
+        
+        self.logger.info(f"Starting investigate crawl mode (process {process_id})")
+        
+        report: Dict[str, Any] = {
+            "mode": "investigate_crawl",
+            "process_id": process_id,
+            "started_at": datetime.now().isoformat(),
+            "investigation_tasks_used": [],
+            "crawl_plans": [],
+            "crawl_results": [],
+            "statistics": {
+                "tasks_received": 0,
+                "tasks_processed": 0,
+                "crawl_plans_generated": 0,
+                "crawls_executed": 0,
+                "pages_discovered": 0,
+            },
+        }
+        
+        try:
+            # Step 1: Get investigation tasks
+            if investigation_tasks is None:
+                self.logger.info("No investigation tasks provided, generating via reflect_relate...")
+                reflect_result = self.reflect_relate()
+                investigation_tasks = reflect_result.get("investigation_tasks", [])
+            
+            report["statistics"]["tasks_received"] = len(investigation_tasks)
+            
+            # Check for stop request
+            if self._running_processes.get(process_id, {}).get("status") == "stopping":
+                report["status"] = "stopped"
+                self._running_processes[process_id]["status"] = "stopped"
+                self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+                return report
+            
+            # Step 2: Filter tasks by priority threshold
+            filtered_tasks = [
+                task for task in investigation_tasks
+                if task.get("priority", 0) >= priority_threshold
+            ]
+            filtered_tasks.sort(key=lambda x: x.get("priority", 0), reverse=True)
+            filtered_tasks = filtered_tasks[:max_entities]
+            
+            report["investigation_tasks_used"] = filtered_tasks
+            self._running_processes[process_id]["tasks_total"] = len(filtered_tasks)
+            
+            # Step 3: Generate crawl plans
+            from .entity_gap_analyzer import EntityGapAnalyzer
+            
+            gap_analyzer = EntityGapAnalyzer(self.store)
+            crawl_plans = []
+            
+            for task in filtered_tasks:
+                entity_name = task.get("entity_name", "")
+                if not entity_name:
+                    continue
+                
+                # Check for stop request
+                if self._running_processes.get(process_id, {}).get("status") == "stopping":
+                    report["status"] = "stopped"
+                    break
+                
+                # Get entity from DB
+                with self.store.Session() as session:
+                    entity = session.execute(
+                        select(Entity).where(Entity.name == entity_name)
+                    ).scalar_one_or_none()
+                    
+                    if entity:
+                        plan = gap_analyzer.generate_crawl_plan(
+                            entity=entity,
+                            task_type=task.get("task_type", "fill_gap"),
+                            context=task.get("reason", ""),
+                        )
+                        if plan:
+                            plan["investigation_task"] = task
+                            crawl_plans.append(plan)
+            
+            report["crawl_plans"] = crawl_plans
+            report["statistics"]["crawl_plans_generated"] = len(crawl_plans)
+            
+            # Check for stop request
+            if self._running_processes.get(process_id, {}).get("status") == "stopping":
+                report["status"] = "stopped"
+                self._running_processes[process_id]["status"] = "stopped"
+                self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+                return report
+            
+            # Step 4: Execute crawls
+            crawl_results = []
+            for idx, plan in enumerate(crawl_plans):
+                # Check for stop request
+                if self._running_processes.get(process_id, {}).get("status") == "stopping":
+                    report["status"] = "stopped"
+                    break
+                
+                self._running_processes[process_id]["current_task"] = plan.get("entity_name", "")
+                self._running_processes[process_id]["tasks_completed"] = idx
+                
+                result = self._execute_autonomous_crawl(plan, max_pages=max_pages)
+                if result:
+                    crawl_results.append(result)
+                    
+                    # Count pages discovered
+                    crawl_result = result.get("result", {})
+                    if isinstance(crawl_result, dict):
+                        pages = crawl_result.get("pages_crawled", 0)
+                        report["statistics"]["pages_discovered"] += pages
+                
+                self._running_processes[process_id]["tasks_completed"] = idx + 1
+            
+            report["crawl_results"] = crawl_results
+            report["statistics"]["tasks_processed"] = len(filtered_tasks)
+            report["statistics"]["crawls_executed"] = len(crawl_results)
+            
+            report["completed_at"] = datetime.now().isoformat()
+            self._running_processes[process_id]["status"] = "completed"
+            self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+            
+        except Exception as e:
+            self.logger.exception(f"Investigate crawl failed: {e}")
+            report["error"] = str(e)
+            report["status"] = "failed"
+            self._running_processes[process_id]["status"] = "failed"
+            self._running_processes[process_id]["error"] = str(e)
+            self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+        
+        return report
+
+    def combined_autonomous(
+        self,
+        target_entities: Optional[List[str]] = None,
+        max_entities: int = 10,
+        max_pages: int = 25,
+        max_depth: int = 3,
+        priority_threshold: float = 0.3,
+    ) -> Dict[str, Any]:
+        """
+        Combined Autonomous mode: Run reflect_relate then investigate_crawl.
+        
+        This mode runs both phases in sequence:
+        1. Reflect & Relate to find gaps and potential relations
+        2. Investigate Crawl to fill those gaps
+        
+        Args:
+            target_entities: Optional list of entity names to focus on
+            max_entities: Maximum entities to crawl
+            max_pages: Maximum pages per entity crawl
+            max_depth: Maximum crawl depth
+            priority_threshold: Minimum task priority to process
+            
+        Returns:
+            Combined report with both sub-reports
+        """
+        # Create process entry
+        self._process_counter += 1
+        process_id = f"combined_autonomous_{self._process_counter}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        self._running_processes[process_id] = {
+            "process_id": process_id,
+            "action": "combined_autonomous",
+            "status": "running",
+            "started_at": datetime.now().isoformat(),
+            "current_phase": "reflect_relate",
+        }
+        
+        self.logger.info(f"Starting combined autonomous mode (process {process_id})")
+        
+        report: Dict[str, Any] = {
+            "mode": "combined_autonomous",
+            "process_id": process_id,
+            "started_at": datetime.now().isoformat(),
+            "reflect_relate_report": {},
+            "investigate_crawl_report": {},
+            "statistics": {
+                "total_entities_analyzed": 0,
+                "total_crawls_executed": 0,
+                "total_pages_discovered": 0,
+            },
+        }
+        
+        try:
+            # Phase 1: Reflect & Relate
+            self.logger.info("Phase 1: Reflect & Relate")
+            reflect_report = self.reflect_relate(target_entities=target_entities)
+            report["reflect_relate_report"] = reflect_report
+            
+            # Check for stop request
+            if self._running_processes.get(process_id, {}).get("status") == "stopping":
+                report["status"] = "stopped"
+                self._running_processes[process_id]["status"] = "stopped"
+                self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+                return report
+            
+            # Phase 2: Investigate Crawl
+            self._running_processes[process_id]["current_phase"] = "investigate_crawl"
+            self.logger.info("Phase 2: Investigate Crawl")
+            
+            investigation_tasks = reflect_report.get("investigation_tasks", [])
+            investigate_report = self.investigate_crawl(
+                investigation_tasks=investigation_tasks,
+                max_entities=max_entities,
+                max_pages=max_pages,
+                max_depth=max_depth,
+                priority_threshold=priority_threshold,
+            )
+            report["investigate_crawl_report"] = investigate_report
+            
+            # Combine statistics
+            report["statistics"]["total_entities_analyzed"] = (
+                reflect_report.get("statistics", {}).get("entities_analyzed", 0)
+            )
+            report["statistics"]["total_crawls_executed"] = (
+                investigate_report.get("statistics", {}).get("crawls_executed", 0)
+            )
+            report["statistics"]["total_pages_discovered"] = (
+                investigate_report.get("statistics", {}).get("pages_discovered", 0)
+            )
+            
+            report["completed_at"] = datetime.now().isoformat()
+            self._running_processes[process_id]["status"] = "completed"
+            self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+            
+        except Exception as e:
+            self.logger.exception(f"Combined autonomous mode failed: {e}")
+            report["error"] = str(e)
+            report["status"] = "failed"
+            self._running_processes[process_id]["status"] = "failed"
+            self._running_processes[process_id]["error"] = str(e)
+            self._running_processes[process_id]["completed_at"] = datetime.now().isoformat()
+        
+        return report
+
+    # =========================================================================
+    # PROCESS MANAGEMENT
+    # =========================================================================
+
+    def get_process_status(self, process_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get status of one or all running processes.
+        
+        Args:
+            process_id: Optional specific process ID to check
+            
+        Returns:
+            Process status dict or list of all processes
+        """
+        if process_id:
+            return self._running_processes.get(process_id, {"error": "Process not found"})
+        return {"processes": list(self._running_processes.values())}
+
+    def stop_process(self, process_id: str) -> Dict[str, Any]:
+        """
+        Mark a process for stopping.
+        
+        Args:
+            process_id: ID of the process to stop
+            
+        Returns:
+            Result dict with success or error
+        """
+        if process_id in self._running_processes:
+            self._running_processes[process_id]["status"] = "stopping"
+            self._running_processes[process_id]["stop_requested_at"] = datetime.now().isoformat()
+            return {"success": True, "process_id": process_id, "status": "stopping"}
+        return {"error": "Process not found", "process_id": process_id}

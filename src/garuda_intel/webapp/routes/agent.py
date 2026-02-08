@@ -300,6 +300,149 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             logger.exception("Autonomous discovery failed")
             return jsonify({"error": str(e)}), 500
 
+    @bp_agent.post("/autonomous/reflect-relate")
+    @api_key_required
+    def api_agent_reflect_relate():
+        """
+        Reflect & Relate: Find indirect connections and create investigation tasks.
+        
+        Request body (JSON):
+            - target_entities (list, optional): Entity names to focus on
+            - max_depth (int, optional): Maximum graph traversal depth (default: 2)
+            - top_n (int, optional): Maximum potential relations to suggest (default: 20)
+        
+        Returns:
+            Report with reflection results, potential relations, and investigation tasks
+        """
+        body = request.get_json(silent=True) or {}
+        target_entities = body.get("target_entities")
+        max_depth = int(body.get("max_depth", 2))
+        top_n = int(body.get("top_n", 20))
+        
+        emit_event("agent", "reflect-relate started", payload={"target_entities": target_entities})
+        try:
+            report = agent.reflect_relate(
+                target_entities=target_entities,
+                max_depth=max_depth,
+                top_n=top_n
+            )
+            emit_event("agent", "reflect-relate completed", payload=report.get("statistics", {}))
+            return jsonify(report)
+        except Exception as e:
+            emit_event("agent", f"reflect-relate failed: {e}", level="error")
+            logger.exception("Reflect-relate failed")
+            return jsonify({"error": str(e)}), 500
+
+    @bp_agent.post("/autonomous/investigate-crawl")
+    @api_key_required
+    def api_agent_investigate_crawl():
+        """
+        Investigate Crawl: Execute crawls based on investigation tasks.
+        
+        Request body (JSON):
+            - investigation_tasks (list, optional): List of investigation task dicts
+            - max_entities (int, optional): Maximum entities to crawl (default: 10)
+            - max_pages (int, optional): Maximum pages per crawl (default: 25)
+            - max_depth (int, optional): Maximum crawl depth (default: 3)
+            - priority_threshold (float, optional): Minimum task priority (default: 0.3)
+        
+        Returns:
+            Report with crawl plans and results
+        """
+        body = request.get_json(silent=True) or {}
+        investigation_tasks = body.get("investigation_tasks")
+        max_entities = int(body.get("max_entities", 10))
+        max_pages = int(body.get("max_pages", 25))
+        max_depth = int(body.get("max_depth", 3))
+        priority_threshold = float(body.get("priority_threshold", 0.3))
+        
+        emit_event("agent", "investigate-crawl started")
+        try:
+            report = agent.investigate_crawl(
+                investigation_tasks=investigation_tasks,
+                max_entities=max_entities,
+                max_pages=max_pages,
+                max_depth=max_depth,
+                priority_threshold=priority_threshold
+            )
+            emit_event("agent", "investigate-crawl completed", payload=report.get("statistics", {}))
+            return jsonify(report)
+        except Exception as e:
+            emit_event("agent", f"investigate-crawl failed: {e}", level="error")
+            logger.exception("Investigate-crawl failed")
+            return jsonify({"error": str(e)}), 500
+
+    @bp_agent.post("/autonomous/combined")
+    @api_key_required
+    def api_agent_combined_autonomous():
+        """
+        Combined Autonomous: Run reflect_relate then investigate_crawl.
+        
+        Request body (JSON):
+            - target_entities (list, optional): Entity names to focus on
+            - max_entities (int, optional): Maximum entities to crawl (default: 10)
+            - max_pages (int, optional): Maximum pages per crawl (default: 25)
+            - max_depth (int, optional): Maximum crawl depth (default: 3)
+            - priority_threshold (float, optional): Minimum task priority (default: 0.3)
+        
+        Returns:
+            Combined report with both sub-reports
+        """
+        body = request.get_json(silent=True) or {}
+        target_entities = body.get("target_entities")
+        max_entities = int(body.get("max_entities", 10))
+        max_pages = int(body.get("max_pages", 25))
+        max_depth = int(body.get("max_depth", 3))
+        priority_threshold = float(body.get("priority_threshold", 0.3))
+        
+        emit_event("agent", "combined-autonomous started")
+        try:
+            report = agent.combined_autonomous(
+                target_entities=target_entities,
+                max_entities=max_entities,
+                max_pages=max_pages,
+                max_depth=max_depth,
+                priority_threshold=priority_threshold
+            )
+            emit_event("agent", "combined-autonomous completed", payload=report.get("statistics", {}))
+            return jsonify(report)
+        except Exception as e:
+            emit_event("agent", f"combined-autonomous failed: {e}", level="error")
+            logger.exception("Combined-autonomous failed")
+            return jsonify({"error": str(e)}), 500
+
+    @bp_agent.post("/autonomous/stop")
+    @api_key_required
+    def api_agent_stop_process():
+        """
+        Stop a running autonomous process.
+        
+        Request body (JSON):
+            - process_id (str, required): ID of the process to stop
+        
+        Returns:
+            Result dict with success or error
+        """
+        body = request.get_json(silent=True) or {}
+        process_id = body.get("process_id")
+        if not process_id:
+            return jsonify({"error": "process_id required"}), 400
+        
+        emit_event("agent", f"stop-process requested: {process_id}")
+        result = agent.stop_process(process_id)
+        return jsonify(result)
+
+    @bp_agent.get("/autonomous/processes")
+    @api_key_required
+    def api_agent_processes():
+        """
+        Get status of all running/completed processes.
+        
+        Returns:
+            Dict with list of process statuses
+        """
+        return jsonify(agent.get_process_status())
+
     @bp_agent.get("/status")
     @api_key_required
     def api_agent_status():
@@ -311,7 +454,7 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         """
         return jsonify({
             "enabled": getattr(settings, 'agent_enabled', True),
-            "modes": ["deep_rag"],
+            "modes": ["deep_rag", "reflect_relate", "investigate_crawl", "combined_autonomous", "autonomous_discover"],
             "config": {
                 "max_exploration_depth": getattr(settings, 'agent_max_exploration_depth', 3),
                 "entity_merge_threshold": getattr(settings, 'agent_entity_merge_threshold', 0.85),
