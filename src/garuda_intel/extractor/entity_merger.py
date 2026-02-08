@@ -1326,7 +1326,7 @@ class SemanticEntityDeduplicator:
         source_metadata = source.metadata_json or {}
         target_metadata = target.metadata_json or {}
         for key, value in source_metadata.items():
-            if key != "merged_from" and value and (key not in target_metadata or not target_metadata.get(key)):
+            if key != "merged_from" and value and not target_metadata.get(key):
                 target_metadata[key] = value
         target.metadata_json = target_metadata
         flag_modified(target, 'metadata_json')
@@ -1401,12 +1401,10 @@ class SemanticEntityDeduplicator:
                 rel_groups[key] = []
             rel_groups[key].append(rel)
         
-        # For each group with duplicates, keep only the first one (arbitrary but consistent)
+        # For each group with duplicates, keep only one (sorted by id for stability)
         for key, rels in rel_groups.items():
             if len(rels) > 1:
-                # Sort by id for stable ordering, keep the first, delete the rest
                 rels_sorted = sorted(rels, key=lambda r: str(r.id))
-                # Keep the first, delete the rest
                 for rel in rels_sorted[1:]:
                     session.delete(rel)
         
