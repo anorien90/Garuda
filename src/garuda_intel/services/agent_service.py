@@ -1701,6 +1701,7 @@ class AgentService:
                 with self.store.Session() as session:
                     entity = session.execute(
                         select(Entity).where(Entity.name == entity_name)
+                        .order_by(Entity.created_at)
                     ).scalars().first()
                     
                     if entity:
