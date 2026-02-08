@@ -100,7 +100,7 @@ init_event_logging()
 task_queue = TaskQueueService(store)
 
 
-def _register_task_handlers(tq, agent_svc):
+def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler):
     """Register task handlers for the queue worker."""
 
     def _handle_agent_reflect(task_id, params):
@@ -185,6 +185,78 @@ def _register_task_handlers(tq, agent_svc):
         tq.update_progress(task_id, 1.0, "Chat complete")
         return result
 
+    def _handle_chat(task_id, params):
+        """Handle general chat tasks (same as agent chat for now)."""
+        import asyncio
+        tq.update_progress(task_id, 0.1, "Processing chat query")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                agent_svc.chat_async(
+                    question=params.get("question", ""),
+                    entity=params.get("entity"),
+                )
+            )
+        finally:
+            loop.close()
+        tq.update_progress(task_id, 1.0, "Chat complete")
+        return result
+
+    def _handle_crawl(task_id, params):
+        """Handle crawl tasks (standard, intelligent, or unified)."""
+        from ...search import run_crawl_api
+        from ...database.models import Entity
+        
+        mode = params.get("mode", "standard")
+        tq.update_progress(task_id, 0.1, f"Starting {mode} crawl")
+        
+        if mode == "intelligent":
+            plan = gap_analyzer.generate_crawl_plan(
+                params.get("entity_name", ""), params.get("entity_type")
+            )
+            tq.update_progress(task_id, 0.3, "Crawl plan generated, executing crawl")
+            results = adaptive_crawler.intelligent_crawl(
+                entity_name=params.get("entity_name", ""),
+                entity_type=params.get("entity_type"),
+                max_pages=int(params.get("max_pages", 50)),
+                max_depth=int(params.get("max_depth", 2)),
+            )
+            tq.update_progress(task_id, 1.0, "Intelligent crawl complete")
+            return {"plan": plan, "results": results, "mode": "intelligent"}
+        elif mode == "unified":
+            entity_name = params.get("entity", "")
+            entity_type = params.get("type")
+            use_intelligent = params.get("use_intelligent", False)
+            if not use_intelligent:
+                with store.Session() as session:
+                    existing = session.query(Entity).filter(
+                        Entity.name.ilike(f"%{entity_name}%")
+                    ).first()
+                    if existing:
+                        use_intelligent = True
+            if use_intelligent:
+                plan = gap_analyzer.generate_crawl_plan(entity_name, entity_type)
+                tq.update_progress(task_id, 0.3, "Crawl plan generated, executing intelligent crawl")
+                results = adaptive_crawler.intelligent_crawl(
+                    entity_name=entity_name,
+                    entity_type=entity_type,
+                    max_pages=int(params.get("max_pages", 50)),
+                    max_depth=int(params.get("max_depth", 2)),
+                )
+                tq.update_progress(task_id, 1.0, "Unified intelligent crawl complete")
+                return {"mode": "intelligent", "plan": plan, "results": results}
+            else:
+                tq.update_progress(task_id, 0.3, "Running standard crawl")
+                result = run_crawl_api(params)
+                tq.update_progress(task_id, 1.0, "Standard crawl complete")
+                return {"mode": "standard", "results": result}
+        else:
+            tq.update_progress(task_id, 0.3, "Running standard crawl")
+            result = run_crawl_api(params)
+            tq.update_progress(task_id, 1.0, "Crawl complete")
+            return result
+
     tq.register_handler(TaskQueueService.TASK_AGENT_REFLECT, _handle_agent_reflect)
     tq.register_handler(TaskQueueService.TASK_AGENT_EXPLORE, _handle_agent_explore)
     tq.register_handler(TaskQueueService.TASK_AGENT_AUTONOMOUS, _handle_agent_autonomous)
@@ -192,6 +264,8 @@ def _register_task_handlers(tq, agent_svc):
     tq.register_handler(TaskQueueService.TASK_AGENT_INVESTIGATE, _handle_agent_investigate)
     tq.register_handler(TaskQueueService.TASK_AGENT_COMBINED, _handle_agent_combined)
     tq.register_handler(TaskQueueService.TASK_AGENT_CHAT, _handle_agent_chat)
+    tq.register_handler(TaskQueueService.TASK_CHAT, _handle_chat)
+    tq.register_handler(TaskQueueService.TASK_CRAWL, _handle_crawl)
 
 
 # Auth helper
@@ -291,7 +365,7 @@ _agent_for_queue = _AgentService(
     priority_unknown_weight=getattr(settings, 'agent_priority_unknown_weight', 0.7),
     priority_relation_weight=getattr(settings, 'agent_priority_relation_weight', 0.3),
 )
-_register_task_handlers(task_queue, _agent_for_queue)
+_register_task_handlers(task_queue, _agent_for_queue, store, gap_analyzer, adaptive_crawler)
 
 # Start the task queue worker
 task_queue.start_worker()

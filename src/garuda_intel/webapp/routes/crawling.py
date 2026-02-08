@@ -11,6 +11,15 @@ bp = Blueprint('crawling', __name__, url_prefix='/api/crawl')
 logger = logging.getLogger(__name__)
 
 
+def _get_task_queue():
+    """Get the task queue service from the app context (lazy import to avoid circular imports)."""
+    try:
+        from ..app import task_queue
+        return task_queue
+    except Exception:
+        return None
+
+
 def init_routes(api_key_required, settings, store, llm, entity_crawler, crawl_learner, gap_analyzer, adaptive_crawler):
     """Initialize routes with required dependencies."""
     
@@ -18,6 +27,15 @@ def init_routes(api_key_required, settings, store, llm, entity_crawler, crawl_le
     @api_key_required
     def api_crawl():
         body = request.get_json(silent=True) or {}
+        
+        # Support queued execution
+        if body.get("queued"):
+            tq = _get_task_queue()
+            if tq:
+                from ...services.task_queue import TaskQueueService
+                task_id = tq.submit(TaskQueueService.TASK_CRAWL, body)
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Crawl task queued"}), 202
+        
         emit_event("crawl", "start", payload={"body": body})
         try:
             result = run_crawl_api(body)
@@ -72,6 +90,20 @@ def init_routes(api_key_required, settings, store, llm, entity_crawler, crawl_le
         entity_type = data.get("entity_type")
         max_pages = data.get("max_pages", 50)
         max_depth = data.get("max_depth", 2)
+        
+        # Support queued execution
+        if data.get("queued"):
+            tq = _get_task_queue()
+            if tq:
+                from ...services.task_queue import TaskQueueService
+                task_id = tq.submit(TaskQueueService.TASK_CRAWL, {
+                    "mode": "intelligent",
+                    "entity_name": entity_name,
+                    "entity_type": entity_type,
+                    "max_pages": max_pages,
+                    "max_depth": max_depth,
+                })
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Intelligent crawl task queued"}), 202
         
         emit_event(
             "intelligent_crawl",
@@ -134,6 +166,21 @@ def init_routes(api_key_required, settings, store, llm, entity_crawler, crawl_le
         
         entity_type = data.get("type")
         use_intelligent = data.get("use_intelligent", False)
+        
+        # Support queued execution
+        if data.get("queued"):
+            tq = _get_task_queue()
+            if tq:
+                from ...services.task_queue import TaskQueueService
+                task_id = tq.submit(TaskQueueService.TASK_CRAWL, {
+                    "mode": "unified",
+                    "entity": entity_name,
+                    "type": entity_type,
+                    "use_intelligent": use_intelligent,
+                    "max_pages": data.get("max_pages", 50),
+                    "max_depth": data.get("max_depth", 2),
+                })
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Unified crawl task queued"}), 202
         
         if not use_intelligent:
             with store.Session() as session:
