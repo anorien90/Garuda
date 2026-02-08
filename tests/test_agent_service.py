@@ -767,3 +767,118 @@ class TestExecuteAutonomousCrawlPassesQueries:
             mock_crawler_instance.intelligent_crawl.assert_called_once()
             call_kwargs = mock_crawler_instance.intelligent_crawl.call_args
             assert call_kwargs.kwargs.get("additional_queries") == plan["queries"]
+
+
+class TestCanonicalSuffixStripping:
+    """Test that _canonical strips company suffixes for graph deduplication."""
+
+    def test_canonical_strips_corporation(self):
+        """Microsoft Corporation and Microsoft should canonicalize identically."""
+        from garuda_intel.webapp.utils.helpers import _canonical
+        assert _canonical("Microsoft Corporation") == _canonical("Microsoft")
+
+    def test_canonical_strips_corp(self):
+        """Corp suffix should be stripped."""
+        from garuda_intel.webapp.utils.helpers import _canonical
+        assert _canonical("Microsoft Corp") == _canonical("Microsoft")
+
+    def test_canonical_strips_inc(self):
+        """Inc suffix should be stripped."""
+        from garuda_intel.webapp.utils.helpers import _canonical
+        assert _canonical("Apple Inc") == _canonical("Apple")
+
+    def test_canonical_strips_llc(self):
+        """LLC suffix should be stripped."""
+        from garuda_intel.webapp.utils.helpers import _canonical
+        assert _canonical("Google LLC") == _canonical("Google")
+
+    def test_canonical_strips_ltd(self):
+        """Ltd suffix should be stripped."""
+        from garuda_intel.webapp.utils.helpers import _canonical
+        assert _canonical("Barclays Ltd") == _canonical("Barclays")
+
+    def test_canonical_strips_company(self):
+        """Company suffix should be stripped."""
+        from garuda_intel.webapp.utils.helpers import _canonical
+        assert _canonical("Ford Motor Company") == _canonical("Ford Motor")
+
+    def test_canonical_preserves_distinct_names(self):
+        """Distinct company names should remain distinct after canonicalization."""
+        from garuda_intel.webapp.utils.helpers import _canonical
+        assert _canonical("Microsoft") != _canonical("Apple")
+
+    def test_canonical_none_returns_empty(self):
+        """None input should return empty string."""
+        from garuda_intel.webapp.utils.helpers import _canonical
+        assert _canonical(None) == ""
+
+
+class TestMergedEntityFiltering:
+    """Test that _find_duplicate_entities excludes soft-merged entities."""
+
+    def test_find_duplicates_excludes_merged_entities(self):
+        """Entities with merged_into metadata should be excluded from duplicate detection."""
+        from garuda_intel.services.agent_service import AgentService
+
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+
+        # Create mock entities - one normal, one already merged
+        normal_entity = MagicMock()
+        normal_entity.id = "entity-1"
+        normal_entity.name = "Microsoft"
+        normal_entity.kind = "company"
+        normal_entity.metadata_json = None
+
+        merged_entity = MagicMock()
+        merged_entity.id = "entity-2"
+        merged_entity.name = "Microsoft Corporation"
+        merged_entity.kind = "organization"
+        merged_entity.metadata_json = {"merged_into": "entity-1", "merge_reason": "duplicate"}
+
+        # Mock query to return both entities
+        mock_session.execute.return_value.scalars.return_value.all.return_value = [
+            normal_entity, merged_entity
+        ]
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+        groups = agent._find_duplicate_entities(mock_session, target_entities=None)
+
+        # Should NOT find any duplicate groups since the merged entity is excluded
+        # leaving only one entity per normalized name
+        assert len(groups) == 0
+
+    def test_find_duplicates_includes_unmerged_entities(self):
+        """Entities without merged_into metadata should be included in duplicate detection."""
+        from garuda_intel.services.agent_service import AgentService
+
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+
+        # Create two unmerged entities that normalize to the same name
+        entity1 = MagicMock()
+        entity1.id = "entity-1"
+        entity1.name = "Microsoft"
+        entity1.kind = "company"
+        entity1.metadata_json = None
+
+        entity2 = MagicMock()
+        entity2.id = "entity-2"
+        entity2.name = "Microsoft Corporation"
+        entity2.kind = "organization"
+        entity2.metadata_json = {}  # No merged_into
+
+        # Mock query to return both
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [entity1, entity2]
+        # For _count_relations calls, return 0
+        mock_scalar_result = MagicMock()
+        mock_scalar_result.scalar.return_value = 0
+        mock_session.execute.side_effect = [mock_result, mock_scalar_result, mock_scalar_result]
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+        groups = agent._find_duplicate_entities(mock_session, target_entities=None)
+
+        # Should find one duplicate group (both normalize to "microsoft")
+        assert len(groups) == 1
+        assert groups[0]["count"] == 2

@@ -167,6 +167,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 #       - Process entities in batches of 1000-5000
                 #       - Use offset-based or cursor-based pagination
                 for row in session.query(db_models.Entity).limit(20000).all():
+                    # Skip entities that have been soft-merged into another entity
+                    if row.metadata_json and row.metadata_json.get("merged_into"):
+                        continue
                     canon = _canonical(row.name)
                     ent_uuid = str(row.id)
                     norm_kind = _norm_kind(row.kind)  # Calculate once

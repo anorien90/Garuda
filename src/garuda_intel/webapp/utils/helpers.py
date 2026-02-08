@@ -6,15 +6,32 @@ from uuid import uuid5, NAMESPACE_URL
 from collections import Counter
 
 
+# Common company/organization suffixes to strip during canonicalization
+_COMPANY_SUFFIXES = [
+    "corporation", "corp", "inc", "incorporated", "llc", "ltd",
+    "limited", "co", "company", "plc", "ag", "gmbh", "sa",
+]
+
+
 def _canonical(name) -> str:
-    """Normalize entity names to canonical form."""
+    """Normalize entity names to canonical form.
+    
+    Strips company suffixes so 'Microsoft Corporation' and 'Microsoft'
+    both canonicalize to 'microsoft'.
+    """
     if name is None:
         return ""
     try:
         s = str(name)
     except Exception:
         return ""
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", s.lower())).strip()
+    result = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", s.lower())).strip()
+    # Strip trailing company/org suffixes for consistent deduplication
+    for suffix in _COMPANY_SUFFIXES:
+        if result.endswith(" " + suffix):
+            result = result[: -(len(suffix) + 1)].strip()
+            break
+    return result
 
 
 def _best_label(variants_counter: Counter[str]) -> str:
