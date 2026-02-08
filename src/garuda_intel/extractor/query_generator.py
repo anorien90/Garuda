@@ -129,10 +129,31 @@ class QueryGenerator:
             payload = {"model": self.model, "prompt": prompt, "stream": False, "format": "json"}
             resp = requests.post(self.ollama_url, json=payload, timeout=20)
             data = self.text_processor.safe_json_loads(resp.json().get("response", "[]"), fallback=[])
-            return data if isinstance(data, list) else [f"{entity_name} {user_question}"]
+            if isinstance(data, list):
+                # Filter to only valid non-empty strings
+                queries = [q.strip() for q in data if isinstance(q, str) and q.strip()]
+                if queries:
+                    return queries
+            # Fallback: generate basic search queries from the question
+            return self._build_fallback_queries(user_question, entity_name)
 
         except Exception:
-            return [f"{entity_name} {user_question}"]
+            return self._build_fallback_queries(user_question, entity_name)
+    
+    def _build_fallback_queries(self, user_question: str, entity_name: str = "") -> List[str]:
+        """Build fallback search queries when LLM generation fails."""
+        queries = []
+        # Use entity name if available
+        if entity_name.strip():
+            queries.append(f"{entity_name.strip()} {user_question.strip()}")
+            queries.append(f"{entity_name.strip()} official information")
+            queries.append(f"{entity_name.strip()} biography news")
+        else:
+            # Extract key terms from the question for better search queries
+            queries.append(user_question.strip())
+            queries.append(f"{user_question.strip()} official information")
+            queries.append(f"{user_question.strip()} latest news facts")
+        return queries
     
     def paraphrase_query(self, query: str) -> List[str]:
         """
