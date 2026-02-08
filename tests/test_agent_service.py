@@ -464,3 +464,148 @@ class TestAutonomousDiscover:
         assert report["statistics"]["gaps_found"] == 0
         assert report["statistics"]["crawl_plans_generated"] == 0
         assert report["statistics"]["crawls_executed"] == 0
+
+
+class TestReflectRelate:
+    """Test reflect & relate mode in AgentService."""
+
+    def test_reflect_relate_returns_report_structure(self):
+        """Test that reflect_relate returns correct report structure."""
+        from garuda_intel.services.agent_service import AgentService
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+        mock_store.Session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_store.Session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_session.execute.return_value.all.return_value = []
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value.scalar.return_value = 0
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+        report = agent.reflect_relate()
+
+        assert report["mode"] == "reflect_relate"
+        assert "process_id" in report
+        assert "started_at" in report
+        assert "completed_at" in report
+        assert "reflect_report" in report
+        assert "potential_relations" in report
+        assert "investigation_tasks" in report
+        assert "statistics" in report
+        stats = report["statistics"]
+        assert "entities_analyzed" in stats
+        assert "potential_relations_found" in stats
+        assert "investigation_tasks_created" in stats
+
+    def test_reflect_relate_empty_db(self):
+        """Test reflect_relate with empty database."""
+        from garuda_intel.services.agent_service import AgentService
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+        mock_store.Session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_store.Session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_session.execute.return_value.all.return_value = []
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value.scalar.return_value = 0
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+        report = agent.reflect_relate()
+
+        assert report["statistics"]["entities_analyzed"] == 0
+        assert report["statistics"]["potential_relations_found"] == 0
+        assert report["statistics"]["investigation_tasks_created"] == 0
+
+
+class TestInvestigateCrawl:
+    """Test investigate crawl mode."""
+
+    def test_investigate_crawl_returns_report_structure(self):
+        """Test that investigate_crawl returns correct report structure."""
+        from garuda_intel.services.agent_service import AgentService
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+        mock_store.Session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_store.Session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_session.execute.return_value.all.return_value = []
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value.scalar.return_value = 0
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+        report = agent.investigate_crawl(investigation_tasks=[])
+
+        assert report["mode"] == "investigate_crawl"
+        assert "process_id" in report
+        assert "crawl_plans" in report
+        assert "crawl_results" in report
+        assert "statistics" in report
+        stats = report["statistics"]
+        assert "tasks_received" in stats
+        assert "tasks_processed" in stats
+        assert "crawl_plans_generated" in stats
+        assert "crawls_executed" in stats
+
+
+class TestCombinedAutonomous:
+    """Test combined autonomous mode."""
+
+    def test_combined_autonomous_returns_report_structure(self):
+        """Test that combined_autonomous returns correct report structure."""
+        from garuda_intel.services.agent_service import AgentService
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+        mock_store.Session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_store.Session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_session.execute.return_value.all.return_value = []
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value.scalar.return_value = 0
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+        report = agent.combined_autonomous()
+
+        assert report["mode"] == "combined_autonomous"
+        assert "process_id" in report
+        assert "reflect_relate_report" in report
+        assert "investigate_crawl_report" in report
+        assert "statistics" in report
+
+
+class TestProcessManagement:
+    """Test process tracking and management."""
+
+    def test_get_process_status_empty(self):
+        """Test getting process status when no processes exist."""
+        from garuda_intel.services.agent_service import AgentService
+        mock_store = MagicMock()
+        mock_store.Session = MagicMock()
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+
+        status = agent.get_process_status()
+        assert "processes" in status
+        assert len(status["processes"]) == 0
+
+    def test_stop_nonexistent_process(self):
+        """Test stopping a process that doesn't exist."""
+        from garuda_intel.services.agent_service import AgentService
+        mock_store = MagicMock()
+        mock_store.Session = MagicMock()
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+
+        result = agent.stop_process("nonexistent")
+        assert "error" in result
+
+    def test_process_created_on_reflect_relate(self):
+        """Test that running reflect_relate creates a process entry."""
+        from garuda_intel.services.agent_service import AgentService
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+        mock_store.Session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_store.Session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_session.execute.return_value.all.return_value = []
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value.scalar.return_value = 0
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+        report = agent.reflect_relate()
+
+        process_id = report["process_id"]
+        status = agent.get_process_status(process_id)
+        assert status["status"] == "completed"

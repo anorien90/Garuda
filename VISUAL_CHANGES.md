@@ -1,211 +1,249 @@
-# Chat UI Visual Changes
+# Visual Changes - Autonomous Mode Implementation
 
-## Before vs After
+## Web UI - Agent Control Panel
 
-### Chat Form - Before
-```html
-<form id="chat-form">
-  <textarea id="chat-q">Question</textarea>
-  <input id="chat-entity" type="text">Entity (optional)</input>
-  <input id="chat-topk" type="number" value="6">Top K</input>
-  <button type="submit">🧠 Ask</button>
-</form>
+### Before
+The Autonomous Mode tab had:
+- Single form with toggle for "Enable Autonomous Crawling"
+- Fixed parameters (max entities, priority threshold, depth, max pages)
+- Single "Run Autonomous Discovery" button
+- Results showed dead-ends, knowledge gaps, and crawl plans
+
+### After
+The Autonomous Mode tab now has:
+
+#### 1. Action Selection Cards (4 visual cards)
+```
+┌────────────────┬────────────────┬────────────────┬────────────────┐
+│   🔍 Reflect   │  🕸️ Investigate │   🔄 Combined  │  🤖 Classic    │
+│   & Relate     │     Crawl      │      Mode      │   Discovery    │
+│                │                │                │                │
+│ Find indirect  │ Execute crawls │ Run both in    │ Find dead-ends │
+│ connections &  │ based on tasks │ sequence       │ & gaps         │
+│ create tasks   │                │                │                │
+└────────────────┴────────────────┴────────────────┴────────────────┘
 ```
 
-### Chat Form - After
-```html
-<div class="4-phase-info-box">
-  🔄 4-Phase Intelligent Search Pipeline
-  Phase 1: Initial RAG Search
-  Phase 2: Retry with Paraphrasing
-  Phase 3: Web Crawling
-  Phase 4: Re-query RAG
-</div>
+#### 2. Dynamic Configuration Panel
+Shows/hides options based on selected action:
+- **Common**: Max Entities, Priority Threshold, Max Depth, Max Pages
+- **Reflect & Relate specific**: Target Entities, Top N Relations
+- **Classic Discovery specific**: Auto-crawl toggle
 
-<form id="chat-form">
-  <textarea id="chat-q">Question</textarea>
-  <input id="chat-entity">Entity (optional)</input>
-  <input id="chat-topk" value="6">Top K</input>
-  <input id="chat-max-cycles" value="3">Max Search Cycles (1-10)</input> ⬅️ NEW
-  <checkbox id="chat-autonomous-mode">🤖 Autonomous Mode</checkbox> ⬅️ NEW
-  <button type="submit">🧠 Ask</button>
-</form>
+#### 3. Process Monitor Panel
+```
+┌─ ⚙️ Running Processes ─────────────────────────── [Refresh] ┐
+│                                                              │
+│  reflect_relate                              🟢 Running     │
+│  ID: reflect_relate_1_20240101_120000                       │
+│  Current: Analyzing entity graph                            │
+│  Progress: 5/10                                  [Stop]     │
+│                                                              │
+│  investigate_crawl                           ✅ Completed   │
+│  ID: investigate_crawl_2_20240101_120530                    │
+│  Progress: 10/10                                            │
+└──────────────────────────────────────────────────────────────┘
+```
+- Auto-refreshes every 5 seconds
+- Shows status badges (🟢 Running, 🟡 Stopping, ✅ Completed, ❌ Failed)
+- Progress tracking for running processes
+- Stop button for active processes
+
+#### 4. Results Panel - Mode-Specific Rendering
+
+**Reflect & Relate Results:**
+```
+Statistics:
+┌─────────────────┬──────────────────────┬──────────────────────┐
+│ Entities        │ Potential Relations  │ Investigation Tasks  │
+│ Analyzed: 50    │ Found: 12           │ Created: 25          │
+└─────────────────┴──────────────────────┴──────────────────────┘
+
+🔗 Potential Relations:
+• Apple Inc. ↔ Microsoft Corp [Confidence: 0.85]
+  Reason: Share 3 common connection(s)
+• ...
+
+📋 Investigation Tasks:
+• [investigate_relation] Apple Inc. (Priority: 0.85)
+  Related to: Microsoft Corp
+  Reason: Share 3 common connection(s)
+• ...
 ```
 
-### Loading State - Before
+**Investigate Crawl Results:**
 ```
-[Spinning animation]
-Thinking (will search online if needed)...
-```
+Statistics:
+┌──────────┬───────────┬───────────┬──────────┬────────────┐
+│ Tasks    │ Tasks     │ Plans     │ Crawls   │ Pages      │
+│ Received │ Processed │ Generated │ Executed │ Discovered │
+│ 25       │ 10        │ 10        │ 8        │ 142        │
+└──────────┴───────────┴───────────┴──────────┴────────────┘
 
-### Loading State - After
-```
-[Spinning animation]
-Phase 1: RAG Search...
-Searching through embeddings, graph, and SQL data
+📋 Generated Crawl Plans:
+• Apple Inc. (Priority: 0.850)
+  Mode: investigate_relation | Strategy: broad_search
+  Queries: Apple Microsoft partnership, ...
+• ...
 
-[If retry triggered]
-Phase 2: Paraphrasing...
-Retrying with alternative queries
-
-[If crawling triggered]
-Phase 3: Web Crawling (2/3 cycles)...
-Discovering and indexing online sources
-```
-
-### Results Display - Before
-```
-[Answer text]
-
-Sources & Context (5 total)
-- Context 1
-- Context 2
-...
+✅ Crawl Results:
+• ✓ Apple Inc.: 18 pages crawled
+• ✓ Microsoft Corp: 15 pages crawled
+• ...
 ```
 
-### Results Display - After
+**Combined Mode Results:**
 ```
-🧠 RAG: 3 semantic hits  🕸️ Graph: 2 relation hits  📊 SQL: 1 keyword hits
-🔄 Search Cycles: 2/3  🔄 Retry with paraphrasing  🌐 Live Crawl: Insufficient high-quality RAG results
+Overall Statistics:
+┌─────────────────────┬────────────────┬───────────────────┐
+│ Total Entities      │ Total Crawls   │ Total Pages       │
+│ Analyzed: 50        │ Executed: 8    │ Discovered: 142   │
+└─────────────────────┴────────────────┴───────────────────┘
 
-[If paraphrased queries used] ⬅️ NEW
-🔄 Paraphrased Queries
-- "What is Flask used for?"
-- "Flask framework applications"
-- "Flask Python web development"
+Phase 1: Reflect & Relate
+  Entities analyzed: 50
+  Potential relations: 12
+  Investigation tasks: 25
 
-[Answer text]
-
-[If URLs crawled] ⬅️ NEW
-Live URLs Crawled
-- https://flask.palletsprojects.com
-- https://github.com/pallets/flask
-
-Sources & Context (5 total)
-- [🧠 RAG] Context 1
-- [🕸️ Graph] Context 2
-- [📊 SQL] Context 3
-...
-
-[If autonomous mode enabled] ⬅️ NEW
-🤖 Autonomous Discovery Results
-🔴 2 Dead Ends  ❓ 3 Knowledge Gaps  📋 2 Plans  ✅ 1 Crawls
-
-🔴 Dead Ends (2)
-- Flask (Organization) - Priority: 0.85
-- Pallets (Organization) - Priority: 0.72
-
-❓ Knowledge Gaps (3)
-- Flask - Missing field: revenue
-- Pallets - Missing relationship: parent_company
-- Flask - Missing field: headquarters
-
-📋 Crawl Plans (2)
-- Flask (3 URLs): https://flask.com/about, ...
-- Pallets (2 URLs): https://palletsprojects.com, ...
+Phase 2: Investigate Crawl
+  Tasks processed: 10
+  Crawls executed: 8
+  Pages discovered: 142
 ```
 
-### Error Display - Before
-```
-[If no answer generated]
-No answer generated.
-```
+## CLI - New Options
 
-### Error Display - After (Always-Answer Guarantee)
-```
-[Scenario 1: Answer from context snippets]
-Based on the available information:
-
-Flask is a lightweight WSGI web application framework...
-
-Pallets is the organization that maintains Flask...
-
-[Scenario 2: No context available]
-I searched through local data and online sources but couldn't find 
-a definitive answer. Try refining your question or providing more context.
-
-[Scenario 3: No data at all]
-No relevant information was found in local data or online sources. 
-Try a different question or crawl some relevant pages first.
+### Before
+```bash
+garuda-agent autonomous --max-entities 10 --priority-threshold 0.3 \
+  --depth 3 --auto-crawl --max-pages 25
 ```
 
-## UI Layout Changes
+### After
+```bash
+# New --action flag with 4 modes:
+garuda-agent autonomous --action reflect-relate \
+  --target-entities "Apple,Microsoft" --top-n 20 --max-depth 2
 
-### Input Grid Layout
-```
-Before:
-┌─────────────────────┬─────────────────────┐
-│ Entity (optional)   │ Top K               │
-└─────────────────────┴─────────────────────┘
+garuda-agent autonomous --action investigate-crawl \
+  --max-entities 10 --max-pages 25 --priority-threshold 0.3
 
-After:
-┌─────────────────────┬─────────────────────┐
-│ Entity (optional)   │ Top K               │
-├─────────────────────┼─────────────────────┤
-│ Max Search Cycles   │ [✓] Autonomous Mode │
-└─────────────────────┴─────────────────────┘
-```
+garuda-agent autonomous --action combined \
+  --target-entities "Apple" --max-entities 5 --max-pages 25
 
-### Color Coding
-- **Purple** 🟣 - RAG/Semantic results
-- **Teal** 🟢 - Graph results
-- **Blue** 🔵 - SQL results
-- **Amber** 🟠 - Retry/Paraphrasing
-- **Green** 🟢 - Live Crawl
-- **Indigo** 🟣 - Autonomous Mode
-
-## User Interaction Flow
-
-### Simple Query Flow
-```
-1. User types question
-2. Click "Ask"
-3. See "Phase 1: RAG Search..."
-4. [2 seconds]
-5. Answer appears with source badges
+garuda-agent autonomous --action discover \
+  --max-entities 10 --auto-crawl --max-pages 25  # Classic mode (default)
 ```
 
-### Complex Query Flow (with autonomous mode)
+### Output Format Examples
+
+**Reflect & Relate Output:**
 ```
-1. User types question
-2. Set Max Search Cycles to 5
-3. Enable Autonomous Mode checkbox
-4. Click "Ask"
-5. See "Phase 1: RAG Search..."
-6. [3 seconds] - Insufficient results
-7. See "Phase 2: Paraphrasing..."
-8. Shows paraphrased queries
-9. [4 seconds] - Still insufficient
-10. See "Phase 3: Web Crawling (1/5 cycles)..."
-11. [8 seconds per cycle]
-12. Answer appears with:
-    - Paraphrased queries section
-    - Live URLs crawled
-    - Search cycle progress (3/5)
-13. See "🤖 Autonomous Mode: Discovering knowledge gaps..."
-14. [5 seconds]
-15. Autonomous results appear:
-    - Dead ends discovered
-    - Knowledge gaps identified
-    - Crawl plans generated
+============================================================
+AUTONOMOUS MODE REPORT: REFLECT-RELATE
+============================================================
+
+Entities analyzed: 50
+Potential relations found: 12
+Investigation tasks created: 25
+
+--- Potential Relations (12) ---
+
+  Apple Inc. ↔ Microsoft Corp
+    Confidence: 0.85 | Share 3 common connection(s)
+
+  Tesla Inc. ↔ SpaceX
+    Confidence: 0.75 | Share 2 common connection(s)
+
+--- Investigation Tasks (25) ---
+
+  [investigate_relation] Apple Inc.
+    Related to: Microsoft Corp
+    Reason: Share 3 common connection(s)
+    Priority: 0.85
+
+  [fill_gap] Tesla Inc.
+    Reason: Missing kind
+    Priority: 0.60
 ```
 
-## Accessibility Features
+## API Endpoints - New Routes
 
-### Semantic HTML
-- Proper label/input associations
-- ARIA attributes for checkboxes
-- Meaningful button text
-- Descriptive placeholders
+### New Endpoints Added:
 
-### Visual Feedback
-- Loading states with animations
-- Color-coded result sources
-- Progress indicators (X/Y cycles)
-- Collapsible sections for details
+1. **POST /api/agent/autonomous/reflect-relate**
+   - Body: `{"target_entities": [...], "max_depth": 2, "top_n": 20}`
+   - Returns: Report with potential_relations, investigation_tasks, statistics
 
-### Error Handling
-- Always-present feedback
-- Clear error messages
-- Graceful degradation
-- No silent failures
+2. **POST /api/agent/autonomous/investigate-crawl**
+   - Body: `{"investigation_tasks": [...], "max_entities": 10, ...}`
+   - Returns: Report with crawl_plans, crawl_results, statistics
+
+3. **POST /api/agent/autonomous/combined**
+   - Body: `{"target_entities": [...], "max_entities": 10, ...}`
+   - Returns: Combined report with both phases
+
+4. **POST /api/agent/autonomous/stop**
+   - Body: `{"process_id": "reflect_relate_1_..."}`
+   - Returns: `{"success": true, "status": "stopping"}`
+
+5. **GET /api/agent/autonomous/processes**
+   - Returns: `{"processes": [{"process_id": "...", "status": "running", ...}]}`
+
+### Updated Endpoint:
+
+6. **GET /api/agent/status**
+   - Now includes new modes in the modes array:
+     `["deep_rag", "reflect_relate", "investigate_crawl", "combined_autonomous", "autonomous_discover"]`
+
+## Process Lifecycle
+
+```
+┌──────────────┐
+│ User Action  │
+└──────┬───────┘
+       │
+       ▼
+┌──────────────────────────┐
+│ Create Process Entry     │
+│ - Generate process_id    │
+│ - Set status: "running"  │
+│ - Record start time      │
+└──────┬───────────────────┘
+       │
+       ▼
+┌──────────────────────────┐
+│ Execute Action           │
+│ - Periodic stop checks   │
+│ - Update progress        │
+│ - Track current_task     │
+└──────┬───────────────────┘
+       │
+       ▼
+     ┌─┴─┐
+     │ ? │ Stop requested?
+     └─┬─┘
+       │
+   Yes │ No
+       │
+   ┌───▼───────────────┐  ┌────────────────────┐
+   │ Set status:       │  │ Set status:        │
+   │ "stopped"         │  │ "completed"        │
+   │ Add timestamp     │  │ Add results        │
+   └───────────────────┘  └────────────────────┘
+```
+
+## Color Themes
+
+Each action has a distinct color theme for visual clarity:
+
+- **Reflect & Relate**: Indigo (#6366F1)
+- **Investigate Crawl**: Blue (#3B82F6)
+- **Combined Mode**: Purple (#A855F7)
+- **Classic Discovery**: Slate (#64748B)
+
+These colors are used consistently across:
+- Action selection cards
+- Configuration labels
+- Statistics panels
+- Result sections
