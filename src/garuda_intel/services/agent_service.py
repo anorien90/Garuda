@@ -412,8 +412,13 @@ class AgentService:
             ).scalars().all():
                 intel.entity_id = primary_id
             
-            # Delete secondary entity
-            session.delete(secondary_entity)
+            # Soft-merge: mark secondary as merged instead of deleting
+            # This preserves all entity records while indicating the merge
+            if not secondary_entity.metadata_json:
+                secondary_entity.metadata_json = {}
+            secondary_entity.metadata_json["merged_into"] = primary_id
+            secondary_entity.metadata_json["merged_at"] = datetime.now().isoformat()
+            secondary_entity.metadata_json["merge_reason"] = "duplicate"
             merged_count += 1
         
         return {
@@ -1356,11 +1361,15 @@ class AgentService:
                 vector_store=self.vector_store,
             )
 
+            # Pass pre-generated queries from the plan to avoid regenerating from scratch
+            additional_queries = plan.get("queries", [])
+
             result = crawler.intelligent_crawl(
                 entity_name=entity_name,
                 entity_type=plan.get("entity_type"),
                 max_pages=max_pages,
                 max_depth=2,
+                additional_queries=additional_queries,
             )
 
             return {
@@ -1696,6 +1705,22 @@ class AgentService:
                         )
                         if plan:
                             plan["investigation_task"] = task
+                            
+                            # For investigate_relation tasks, add relationship-specific queries
+                            # combining both entity names for better seed URL discovery
+                            related_to = task.get("related_to")
+                            if task.get("task_type") == "investigate_relation" and related_to:
+                                relation_queries = [
+                                    f'"{entity_name}" "{related_to}"',
+                                    f'"{entity_name}" {related_to}',
+                                    f'{entity_name} {related_to} relationship',
+                                ]
+                                existing_queries = plan.get("queries", [])
+                                for rq in relation_queries:
+                                    if rq not in existing_queries:
+                                        existing_queries.append(rq)
+                                plan["queries"] = existing_queries
+                            
                             crawl_plans.append(plan)
             
             report["crawl_plans"] = crawl_plans

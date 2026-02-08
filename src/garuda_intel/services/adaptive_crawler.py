@@ -62,7 +62,8 @@ class AdaptiveCrawlerService:
         entity_name: str,
         entity_type: Optional[str] = None,
         max_pages: int = 50,
-        max_depth: int = 2
+        max_depth: int = 2,
+        additional_queries: Optional[list] = None,
     ) -> Dict[str, Any]:
         """
         Perform an intelligent crawl for an entity.
@@ -80,6 +81,7 @@ class AdaptiveCrawlerService:
             entity_type: Optional type hint
             max_pages: Maximum pages to crawl
             max_depth: Maximum crawl depth
+            additional_queries: Optional extra search queries to include (e.g. from investigation tasks)
             
         Returns:
             Crawl results with statistics
@@ -106,6 +108,13 @@ class AdaptiveCrawlerService:
         
         # Step 3: Prepare queries with learned patterns
         queries = plan.get('queries', [])
+        
+        # Merge additional queries from investigation tasks
+        if additional_queries:
+            for q in additional_queries:
+                if q and q not in queries:
+                    queries.append(q)
+            self.logger.info(f"Added {len(additional_queries)} additional queries from investigation tasks")
         
         # Enhance queries with successful patterns
         if entity_type:
