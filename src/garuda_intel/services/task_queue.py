@@ -10,12 +10,11 @@ Provides a database-backed task queue that:
 
 import logging
 import threading
-import time
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from sqlalchemy import select, update, desc, and_
+from sqlalchemy import select, desc, and_
 
 from ..database.models import Task
 
@@ -24,11 +23,11 @@ logger = logging.getLogger(__name__)
 
 class TaskQueueService:
     """
-    Persistent task queue with sequential LLM processing.
+    Persistent task queue with parallel IO and sequential LLM processing.
     
     Tasks are stored in the database so they survive server restarts.
-    A background worker thread processes tasks one at a time to avoid
-    overwhelming the single Ollama LLM instance.
+    A background worker thread pool processes IO-bound tasks in parallel
+    while protecting the single Ollama LLM instance with serialization.
     """
 
     # Task type constants
@@ -42,6 +41,10 @@ class TaskQueueService:
     TASK_CHAT = "chat"
     TASK_CRAWL = "crawl"
 
+    # Task category constants
+    CATEGORY_IO = "io"
+    CATEGORY_LLM = "llm"
+
     # Limits
     MAX_PROGRESS_MESSAGE_LENGTH = 500
     WORKER_STOP_TIMEOUT_SECONDS = 10
@@ -53,23 +56,43 @@ class TaskQueueService:
     STATUS_FAILED = "failed"
     STATUS_CANCELLED = "cancelled"
 
-    def __init__(self, store, poll_interval: float = 2.0):
+    def __init__(self, store, poll_interval: float = 2.0, 
+                 max_workers: int = 4):
         """
         Initialize the task queue service.
         
         Args:
-            store: SQLAlchemy store instance with Session() context manager
+            store: SQLAlchemy store instance with Session() context
             poll_interval: Seconds between polling for new tasks
+            max_workers: Maximum parallel workers for IO-bound tasks
         """
         self.store = store
         self.poll_interval = poll_interval
+        self.max_workers = max_workers
         self._handlers: Dict[str, Callable] = {}
         self._shutdown_event = threading.Event()
         self._worker_thread: Optional[threading.Thread] = None
         self._current_task_id: Optional[str] = None
+        self._running_task_ids: set = set()
         self._lock = threading.Lock()
+        self._llm_lock = threading.Lock()
+        self._active_tasks = 0
+        self._executor = None
         
-        # Mark any previously running tasks as failed (server restart recovery)
+        # Task category mapping - LLM tasks serialized, IO parallel
+        self._task_categories: Dict[str, str] = {
+            self.TASK_CRAWL: self.CATEGORY_IO,
+            self.TASK_AGENT_REFLECT: self.CATEGORY_LLM,
+            self.TASK_AGENT_EXPLORE: self.CATEGORY_LLM,
+            self.TASK_AGENT_AUTONOMOUS: self.CATEGORY_LLM,
+            self.TASK_AGENT_REFLECT_RELATE: self.CATEGORY_LLM,
+            self.TASK_AGENT_INVESTIGATE: self.CATEGORY_LLM,
+            self.TASK_AGENT_COMBINED: self.CATEGORY_LLM,
+            self.TASK_AGENT_CHAT: self.CATEGORY_LLM,
+            self.TASK_CHAT: self.CATEGORY_LLM,
+        }
+        
+        # Mark any previously running tasks as failed (restart recovery)
         self._recover_stale_tasks()
 
     def _recover_stale_tasks(self):
@@ -277,17 +300,28 @@ class TaskQueueService:
             from sqlalchemy import func
             counts = {}
             for status in [self.STATUS_PENDING, self.STATUS_RUNNING, 
-                          self.STATUS_COMPLETED, self.STATUS_FAILED, self.STATUS_CANCELLED]:
+                          self.STATUS_COMPLETED, self.STATUS_FAILED, 
+                          self.STATUS_CANCELLED]:
                 count = session.execute(
-                    select(func.count()).select_from(Task).where(Task.status == status)
+                    select(func.count()).select_from(Task).where(
+                        Task.status == status)
                 ).scalar()
                 counts[status] = count
+            
+            with self._lock:
+                running_ids = list(self._running_task_ids)
+                current_id = self._current_task_id
+                active = self._active_tasks
             
             return {
                 "counts": counts,
                 "total": sum(counts.values()),
-                "current_task_id": self._current_task_id,
-                "worker_running": self._worker_thread is not None and self._worker_thread.is_alive(),
+                "current_task_id": current_id,
+                "running_task_ids": running_ids,
+                "active_workers": active,
+                "max_workers": self.max_workers,
+                "worker_running": (self._worker_thread is not None 
+                                 and self._worker_thread.is_alive()),
             }
 
     def delete_task(self, task_id: str) -> Dict[str, Any]:
@@ -343,24 +377,56 @@ class TaskQueueService:
     def stop_worker(self):
         """Stop the background worker thread gracefully."""
         self._shutdown_event.set()
+        
+        # Shutdown executor if it exists
+        if self._executor:
+            try:
+                self._executor.shutdown(wait=True)
+            except Exception as e:
+                logger.warning(f"Error shutting down executor: {e}")
+        
         if self._worker_thread:
             self._worker_thread.join(timeout=self.WORKER_STOP_TIMEOUT_SECONDS)
             logger.info("Task queue worker stopped")
 
     def _worker_loop(self):
-        """Main worker loop - processes one task at a time."""
-        logger.info("Task queue worker loop started")
-        while not self._shutdown_event.is_set():
-            try:
-                task_dict = self._fetch_next_task()
-                if task_dict:
-                    self._execute_task(task_dict)
-                else:
-                    # No tasks available, wait before polling again
+        """Main worker loop - dispatches tasks to thread pool."""
+        from concurrent.futures import ThreadPoolExecutor
+        
+        logger.info(
+            f"Task queue worker loop started (max_workers={self.max_workers})"
+        )
+        self._executor = ThreadPoolExecutor(
+            max_workers=self.max_workers, 
+            thread_name_prefix="tq-worker"
+        )
+        
+        try:
+            while not self._shutdown_event.is_set():
+                try:
+                    # Check if we can accept more tasks
+                    with self._lock:
+                        active = self._active_tasks
+                    if active >= self.max_workers:
+                        self._shutdown_event.wait(self.poll_interval)
+                        continue
+                    
+                    task_dict = self._fetch_next_task()
+                    if task_dict:
+                        with self._lock:
+                            self._active_tasks += 1
+                        self._executor.submit(
+                            self._execute_task_wrapper, task_dict
+                        )
+                    else:
+                        # No tasks available, wait before polling again
+                        self._shutdown_event.wait(self.poll_interval)
+                except Exception as e:
+                    logger.error(f"Worker loop error: {e}", exc_info=True)
                     self._shutdown_event.wait(self.poll_interval)
-            except Exception as e:
-                logger.error(f"Worker loop error: {e}", exc_info=True)
-                self._shutdown_event.wait(self.poll_interval)
+        finally:
+            self._executor.shutdown(wait=True)
+            self._executor = None
         
         logger.info("Task queue worker loop exiting")
 
@@ -381,17 +447,44 @@ class TaskQueueService:
                 return task.to_dict()
         return None
 
+    def _execute_task_wrapper(self, task_dict: Dict[str, Any]):
+        """Wrapper that handles LLM serialization and active task tracking."""
+        task_type = task_dict["task_type"]
+        category = self._task_categories.get(task_type, self.CATEGORY_LLM)
+        
+        try:
+            if category == self.CATEGORY_LLM:
+                with self._llm_lock:
+                    self._execute_task(task_dict)
+            else:
+                self._execute_task(task_dict)
+        finally:
+            with self._lock:
+                self._active_tasks -= 1
+
     def _execute_task(self, task_dict: Dict[str, Any]):
         """Execute a single task using the registered handler."""
         task_id = task_dict["id"]
         task_type = task_dict["task_type"]
 
         with self._lock:
-            self._current_task_id = task_id
+            self._running_task_ids.add(task_id)
+            # Update current_task_id to one of the running tasks
+            if not self._current_task_id:
+                self._current_task_id = task_id
 
         handler = self._handlers.get(task_type)
         if not handler:
-            self._complete_task(task_id, error=f"No handler for task type: {task_type}")
+            self._complete_task(
+                task_id, error=f"No handler for task type: {task_type}"
+            )
+            with self._lock:
+                self._running_task_ids.discard(task_id)
+                if not self._running_task_ids:
+                    self._current_task_id = None
+                elif self._current_task_id == task_id:
+                    self._current_task_id = (next(iter(self._running_task_ids)) 
+                                            if self._running_task_ids else None)
             return
 
         self._emit("task_started", f"Processing {task_type} task", {
@@ -413,7 +506,13 @@ class TaskQueueService:
             self._complete_task(task_id, error=str(e))
         finally:
             with self._lock:
-                self._current_task_id = None
+                self._running_task_ids.discard(task_id)
+                if not self._running_task_ids:
+                    self._current_task_id = None
+                elif self._current_task_id == task_id:
+                    # Pick another running task as current
+                    self._current_task_id = (next(iter(self._running_task_ids))
+                                            if self._running_task_ids else None)
 
     def _complete_task(
         self,
@@ -438,7 +537,6 @@ class TaskQueueService:
                 task.completed_at = datetime.utcnow()
                 session.commit()
 
-        level = "error" if error else "info"
         msg = f"Task {task_id} {status}" + (f": {error}" if error else "")
         self._emit(f"task_{status}", msg, {
             "task_id": task_id, "status": status, "error": error,
