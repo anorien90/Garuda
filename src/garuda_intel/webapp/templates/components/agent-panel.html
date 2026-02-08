@@ -569,7 +569,13 @@ document.addEventListener('DOMContentLoaded', () => {
         b.classList.add('border-transparent');
       });
       btn.classList.remove('border-transparent');
-      btn.classList.add(`border-${color}-500`);
+      const colorMap = {
+        'indigo': 'border-indigo-500',
+        'blue': 'border-blue-500',
+        'purple': 'border-purple-500',
+        'slate': 'border-slate-500'
+      };
+      btn.classList.add(colorMap[color] || 'border-indigo-500');
       
       // Update label and button
       const labels = {
@@ -708,7 +714,7 @@ document.addEventListener('DOMContentLoaded', () => {
               ID: ${proc.process_id || 'N/A'}
             </div>
             ${proc.current_task ? `<div class="text-slate-600 dark:text-slate-400 text-xs">Current: ${proc.current_task}</div>` : ''}
-            ${proc.tasks_completed !== undefined && proc.tasks_total ? `
+            ${proc.tasks_completed !== undefined && proc.tasks_total !== undefined ? `
               <div class="text-slate-600 dark:text-slate-400 text-xs">Progress: ${proc.tasks_completed}/${proc.tasks_total}</div>
             ` : ''}
             ${proc.status === 'running' ? `

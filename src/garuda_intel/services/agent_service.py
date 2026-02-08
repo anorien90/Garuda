@@ -1491,7 +1491,7 @@ class AgentService:
                 if entities_missing_kind > 0 or entities_missing_data > 0:
                     # Get some entities with missing data
                     missing_data_query = select(Entity).where(
-                        or_(Entity.kind == None, Entity.data == None)
+                        or_(Entity.kind.is_(None), Entity.data.is_(None))
                     ).limit(5)
                     missing_entities = list(session.execute(missing_data_query).scalars().all())
                     
