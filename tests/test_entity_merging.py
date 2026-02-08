@@ -707,3 +707,294 @@ class TestRelationshipConfidenceManager:
         found = next((r for r in results if r["relation_type"] == "headquartered_in"), None)
         assert found is not None
         assert found["occurrence_count"] >= 3
+
+
+class TestDeduplicationPreservesHighestKind:
+    """Test that deduplication preserves the highest kind and richest data.
+    
+    Verifies the requirement: during reflect and deduplicate, entities
+    are never ALL lost but instead merge to the highest kind with
+    the richest data.
+    
+    Example: Bill Gates(entity), B. Gates(founder), William Bill Gates(person)
+    → William Bill Gates (founder) with all data merged.
+    """
+    
+    def test_merge_preserves_highest_kind(self, db_session):
+        """Test that _merge_entities upgrades target kind from source."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            # Target has generic kind, source has more specific kind
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Bill Gates",
+                kind="person",
+                data={"company": "Microsoft"},
+            )
+            source = Entity(
+                id=uuid.uuid4(),
+                name="B. Gates",
+                kind="founder",
+                data={"founded": "Microsoft Corporation"},
+            )
+            session.add(target)
+            session.add(source)
+            session.commit()
+            
+            target_id = str(target.id)
+            source_id = str(source.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Verify: the surviving entity should have the most specific kind
+        with db_session() as session:
+            surviving = session.execute(
+                select(Entity).where(Entity.id == target_id)
+            ).scalar_one()
+            
+            assert surviving.kind == "founder"  # upgraded from person
+            assert surviving.data.get("company") == "Microsoft"  # kept original data
+            assert surviving.data.get("founded") == "Microsoft Corporation"  # merged source data
+    
+    def test_merge_preserves_longest_name(self, db_session):
+        """Test that _merge_entities uses the longest (richest) name."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            target = Entity(
+                id=uuid.uuid4(),
+                name="B. Gates",
+                kind="entity",
+                data={},
+            )
+            source = Entity(
+                id=uuid.uuid4(),
+                name="William Bill Gates",
+                kind="person",
+                data={"full_name": "William Henry Gates III"},
+            )
+            session.add(target)
+            session.add(source)
+            session.commit()
+            
+            target_id = str(target.id)
+            source_id = str(source.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        with db_session() as session:
+            surviving = session.execute(
+                select(Entity).where(Entity.id == target_id)
+            ).scalar_one()
+            
+            # Should have the longer, more informative name
+            assert surviving.name == "William Bill Gates"
+            # Should also upgrade kind and merge data
+            assert surviving.kind == "person"
+            assert surviving.data.get("full_name") == "William Henry Gates III"
+    
+    def test_merge_records_source_kind_in_history(self, db_session):
+        """Test that merge records the source kind in merge history."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Bill Gates",
+                kind="person",
+                data={},
+            )
+            source = Entity(
+                id=uuid.uuid4(),
+                name="B. Gates",
+                kind="founder",
+                data={},
+            )
+            session.add(target)
+            session.add(source)
+            session.commit()
+            
+            target_id = str(target.id)
+            source_id = str(source.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        with db_session() as session:
+            surviving = session.execute(
+                select(Entity).where(Entity.id == target_id)
+            ).scalar_one()
+            
+            merge_history = surviving.metadata_json.get("merged_from", [])
+            assert len(merge_history) == 1
+            assert merge_history[0]["kind"] == "founder"
+    
+    def test_select_canonical_entity_picks_highest_kind(self, db_session):
+        """Test _select_canonical_entity picks entity with most specific kind."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        entity1 = Entity(
+            id=uuid.uuid4(),
+            name="Bill Gates",
+            kind="entity",
+            data={},
+        )
+        entity2 = Entity(
+            id=uuid.uuid4(),
+            name="B. Gates",
+            kind="founder",
+            data={"role": "founder"},
+        )
+        entity3 = Entity(
+            id=uuid.uuid4(),
+            name="William Bill Gates",
+            kind="person",
+            data={"occupation": "technologist", "net_worth": "130B"},
+        )
+        
+        canonical = deduplicator._select_canonical_entity([entity1, entity2, entity3])
+        
+        # founder is more specific (rank 2) than person (rank 1) and entity (rank 0)
+        # Among rank 2, entity2 has 1 data field so it wins
+        assert canonical.kind == "founder"
+        assert str(canonical.id) == str(entity2.id)
+    
+    def test_select_canonical_entity_tiebreak_by_data_richness(self, db_session):
+        """Test that when kind ranks are equal, richest data wins."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        entity1 = Entity(
+            id=uuid.uuid4(),
+            name="Elon Musk",
+            kind="ceo",
+            data={"company": "Tesla"},
+        )
+        entity2 = Entity(
+            id=uuid.uuid4(),
+            name="Elon Reeve Musk",
+            kind="founder",
+            data={"company": "SpaceX", "born": "1971", "nationality": "US"},
+        )
+        
+        canonical = deduplicator._select_canonical_entity([entity1, entity2])
+        
+        # Both ceo and founder are rank 2, but entity2 has more data fields
+        assert str(canonical.id) == str(entity2.id)
+    
+    def test_select_canonical_entity_tiebreak_by_name_length(self, db_session):
+        """Test that when kind and data are equal, longest name wins."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        entity1 = Entity(
+            id=uuid.uuid4(),
+            name="B. Gates",
+            kind="founder",
+            data={"role": "co-founder"},
+        )
+        entity2 = Entity(
+            id=uuid.uuid4(),
+            name="William Bill Gates",
+            kind="founder",
+            data={"role": "co-founder"},
+        )
+        
+        canonical = deduplicator._select_canonical_entity([entity1, entity2])
+        
+        # Same kind (founder) and data count, but entity2 has longer name
+        assert str(canonical.id) == str(entity2.id)
+        assert canonical.name == "William Bill Gates"
+    
+    def test_kind_specificity_rank(self, db_session):
+        """Test _get_kind_specificity_rank returns correct rankings."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        # Generic types → rank 0
+        assert deduplicator._get_kind_specificity_rank("entity") == 0
+        assert deduplicator._get_kind_specificity_rank("general") == 0
+        assert deduplicator._get_kind_specificity_rank("") == 0
+        
+        # Parent types → rank 1
+        assert deduplicator._get_kind_specificity_rank("person") == 1
+        assert deduplicator._get_kind_specificity_rank("company") == 1
+        assert deduplicator._get_kind_specificity_rank("address") == 1
+        
+        # Specialized types → rank 2
+        assert deduplicator._get_kind_specificity_rank("founder") == 2
+        assert deduplicator._get_kind_specificity_rank("ceo") == 2
+        assert deduplicator._get_kind_specificity_rank("headquarters") == 2
+    
+    def test_full_dedup_scenario_bill_gates(self, db_session):
+        """
+        Full integration test: 3 entities for Bill Gates with different kinds.
+        
+        Bill Gates(entity), B. Gates(founder), William Bill Gates(person)
+        → William Bill Gates (founder) with all data merged.
+        """
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            e1 = Entity(
+                id=uuid.uuid4(),
+                name="Bill Gates",
+                kind="entity",
+                data={"known_for": "Microsoft"},
+            )
+            e2 = Entity(
+                id=uuid.uuid4(),
+                name="B. Gates",
+                kind="founder",
+                data={"founded": "Microsoft Corporation"},
+            )
+            e3 = Entity(
+                id=uuid.uuid4(),
+                name="William Bill Gates",
+                kind="person",
+                data={"born": "1955", "nationality": "American"},
+            )
+            session.add_all([e1, e2, e3])
+            session.commit()
+            
+            e1_id = str(e1.id)
+            e2_id = str(e2.id)
+            e3_id = str(e3.id)
+        
+        # Run deduplication with a low threshold so all three match
+        report = deduplicator.deduplicate_entities(dry_run=False, threshold=0.3)
+        
+        # Verify only one entity remains
+        with db_session() as session:
+            remaining = session.execute(select(Entity)).scalars().all()
+            assert len(remaining) == 1
+            
+            survivor = remaining[0]
+            # Should have the most specific kind: founder (rank 2)
+            assert survivor.kind == "founder"
+            # Should have the longest name
+            assert survivor.name == "William Bill Gates"
+            # Should have all data merged
+            assert survivor.data.get("known_for") == "Microsoft"
+            assert survivor.data.get("founded") == "Microsoft Corporation"
+            assert survivor.data.get("born") == "1955"
+            assert survivor.data.get("nationality") == "American"

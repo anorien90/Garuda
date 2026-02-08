@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from ..database.store import PersistenceStore
 from ..database.models import Entity, Relationship, Intelligence, Page
 from ..extractor.llm import LLMIntelExtractor
-from ..extractor.entity_merger import EntityMerger, SemanticEntityDeduplicator, GraphSearchEngine
+from ..extractor.entity_merger import EntityMerger, SemanticEntityDeduplicator, GraphSearchEngine, ENTITY_TYPE_HIERARCHY, ENTITY_TYPE_CHILDREN
 from ..vector.base import VectorStore
 
 
@@ -319,17 +319,41 @@ class AgentService:
         session: Session,
         group: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        """Merge a group of duplicate entities into one."""
+        """Merge a group of duplicate entities into one.
+        
+        Ensures:
+        - The entity with the most specific kind is selected as primary
+        - The richest data (most fields) is preserved
+        - The longest name (most complete) is used
+        - All data from secondary entities is merged into the primary
+        - No entity information is lost during deduplication
+        """
         entities = group.get("entities", [])
         if len(entities) < 2:
             return None
         
-        # Select the primary entity (most relationships, or first in list)
-        sorted_entities = sorted(
-            entities,
-            key=lambda e: e.get("relation_count", 0),
-            reverse=True
-        )
+        # Select the primary entity using kind specificity, data richness, relation count, name length
+        def entity_priority(e):
+            kind = (e.get("kind") or "").lower()
+            kind_rank = self._get_kind_specificity_rank(kind)
+            data_count = e.get("data_count", 0)
+            rel_count = e.get("relation_count", 0)
+            name_len = len(e.get("name", "").strip())
+            return (kind_rank, data_count, rel_count, name_len)
+        
+        # Enrich entities with data_count using a single batch query
+        entity_ids = [e["id"] for e in entities]
+        entity_objs = {
+            str(obj.id): obj
+            for obj in session.execute(
+                select(Entity).where(Entity.id.in_(entity_ids))
+            ).scalars().all()
+        }
+        for e in entities:
+            obj = entity_objs.get(e["id"])
+            e["data_count"] = len(obj.data) if obj and obj.data else 0
+        
+        sorted_entities = sorted(entities, key=entity_priority, reverse=True)
         
         primary_id = sorted_entities[0]["id"]
         secondary_ids = [e["id"] for e in sorted_entities[1:]]
@@ -344,6 +368,24 @@ class AgentService:
             secondary_entity = session.get(Entity, secondary_id)
             if not secondary_entity:
                 continue
+            
+            # Upgrade kind if secondary has a more specific type
+            secondary_kind = (secondary_entity.kind or "").lower()
+            primary_kind = (primary_entity.kind or "").lower()
+            if self._get_kind_specificity_rank(secondary_kind) > self._get_kind_specificity_rank(primary_kind):
+                primary_entity.kind = secondary_kind
+            
+            # Pick the longest name (richest / most complete)
+            if secondary_entity.name and primary_entity.name and len(secondary_entity.name.strip()) > len(primary_entity.name.strip()):
+                primary_entity.name = secondary_entity.name.strip()
+            
+            # Merge data fields (secondary fills gaps in primary)
+            if secondary_entity.data:
+                if not primary_entity.data:
+                    primary_entity.data = {}
+                for key, value in secondary_entity.data.items():
+                    if value and (key not in primary_entity.data or not primary_entity.data.get(key)):
+                        primary_entity.data[key] = value
             
             # Merge metadata
             if secondary_entity.metadata_json:
@@ -378,6 +420,7 @@ class AgentService:
             "primary_entity": {
                 "id": primary_id,
                 "name": primary_entity.name,
+                "kind": primary_entity.kind,
             },
             "merged_count": merged_count,
             "merged_ids": secondary_ids,
@@ -426,6 +469,23 @@ class AgentService:
                 })
         
         return issues
+    
+    def _get_kind_specificity_rank(self, kind: str) -> int:
+        """Return a numeric rank for entity kind specificity.
+        
+        Higher rank means more specific:
+        - 0: generic types (entity, general, empty)
+        - 1: parent types (person, address, company, organization)
+        - 2: specialized child types (ceo, founder, headquarters, etc.)
+        """
+        kind = (kind or "").lower().strip()
+        if kind in ("", "entity", "general"):
+            return 0
+        if kind in ENTITY_TYPE_HIERARCHY:
+            return 2  # child/specialized types
+        if kind in ENTITY_TYPE_CHILDREN:
+            return 1  # parent types
+        return 1  # any other concrete type
     
     # =========================================================================
     # MODE 2: EXPLORE & PRIORITIZE
