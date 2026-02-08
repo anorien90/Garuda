@@ -33,6 +33,22 @@ class SemanticChunker:
     MIN_LENGTH_FOR_STRUCTURE_CHECK = 500
     TARGET_SECTION_SIZE = 800  # Target size for unstructured text sections
     
+    # Constants for heading detection
+    MAX_HEADING_LENGTH = 80
+    MAX_HEADING_WORDS = 8
+    MAX_ALLCAPS_WORDS = 10
+    
+    # Sentence patterns that indicate a line ending with colon is NOT a heading
+    COLON_SENTENCE_PATTERNS = (
+        'as follows:',
+        'are as follows:',
+        'is as follows:',
+        'are looking for',
+        'if you are',
+        'the official',
+        'you are looking',
+    )
+    
     def __init__(self):
         """Initialize semantic chunker."""
         self.logger = logging.getLogger(__name__)
@@ -283,20 +299,10 @@ class SemanticChunker:
         
         # Lines ending with colon (section labels)
         # Must be short, few words, and not contain sentence-ending punctuation
-        if line.endswith(':') and len(line) < 80 and len(line.split()) <= 8:
+        if line.endswith(':') and len(line) < self.MAX_HEADING_LENGTH and len(line.split()) <= self.MAX_HEADING_WORDS:
             if '.' not in line and '!' not in line and '?' not in line:
-                # Exclude common sentence patterns
                 line_lower = line.lower()
-                sentence_patterns = [
-                    'as follows:',
-                    'are as follows:',
-                    'is as follows:',
-                    'are looking for',
-                    'if you are',
-                    'the official',
-                    'you are looking'
-                ]
-                if not any(pattern in line_lower for pattern in sentence_patterns):
+                if not any(pattern in line_lower for pattern in self.COLON_SENTENCE_PATTERNS):
                     return True
         
         # Numbered headings (1. Introduction, etc.)
@@ -304,7 +310,7 @@ class SemanticChunker:
             return True
         
         # All caps short lines
-        if line.isupper() and len(line) < 80 and len(line.split()) <= 10:
+        if line.isupper() and len(line) < self.MAX_HEADING_LENGTH and len(line.split()) <= self.MAX_ALLCAPS_WORDS:
             return True
         
         return False
