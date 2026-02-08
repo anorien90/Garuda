@@ -34,7 +34,6 @@ export const els = {
   chatForm: document.getElementById('chat-form'),
   chatAnswer: document.getElementById('chat-answer'),
   chatToggle: document.getElementById('chat-toggle'),
-  chatContainer: document.getElementById('chat-container'),
   popupChatContainer: document.getElementById('popup-chat-container'),
   popupChatForm: document.getElementById('popup-chat-form'),
   popupChatAnswer: document.getElementById('popup-chat-answer'),

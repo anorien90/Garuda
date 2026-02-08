@@ -30,16 +30,16 @@ export async function chatAsk(e) {
     maxCyclesEl = document.getElementById('search-tab-chat-max-cycles');
     autonomousModeEl = document.getElementById('search-tab-chat-autonomous-mode');
   } else {
-    // Fallback to old behavior for backward compatibility
-    const chatContainer = submittedForm ? submittedForm.closest('#chat-container, #popup-chat-container') : null;
+    // Fallback to old behavior for backward compatibility (should not be needed with new structure)
+    const chatContainer = submittedForm ? submittedForm.closest('#popup-chat-container') : null;
     answerEl = chatContainer
-      ? chatContainer.querySelector('#chat-answer, #popup-chat-answer, #search-tab-chat-answer')
+      ? chatContainer.querySelector('#popup-chat-answer, #search-tab-chat-answer')
       : els.chatAnswer;
-    qEl = submittedForm ? submittedForm.querySelector('#chat-q, #popup-chat-q, #search-tab-chat-q') : getEl('chat-q');
-    entityEl = submittedForm ? submittedForm.querySelector('#chat-entity, #popup-chat-entity, #search-tab-chat-entity') : getEl('chat-entity');
-    topkEl = submittedForm ? submittedForm.querySelector('#chat-topk, #popup-chat-topk, #search-tab-chat-topk') : getEl('chat-topk');
-    maxCyclesEl = submittedForm ? submittedForm.querySelector('#chat-max-cycles, #popup-chat-max-cycles, #search-tab-chat-max-cycles') : getEl('chat-max-cycles');
-    autonomousModeEl = submittedForm ? submittedForm.querySelector('#chat-autonomous-mode, #popup-chat-autonomous-mode, #search-tab-chat-autonomous-mode') : getEl('chat-autonomous-mode');
+    qEl = submittedForm ? submittedForm.querySelector('#popup-chat-q, #search-tab-chat-q') : getEl('chat-q');
+    entityEl = submittedForm ? submittedForm.querySelector('#popup-chat-entity, #search-tab-chat-entity') : getEl('chat-entity');
+    topkEl = submittedForm ? submittedForm.querySelector('#popup-chat-topk, #search-tab-chat-topk') : getEl('chat-topk');
+    maxCyclesEl = submittedForm ? submittedForm.querySelector('#popup-chat-max-cycles, #search-tab-chat-max-cycles') : getEl('chat-max-cycles');
+    autonomousModeEl = submittedForm ? submittedForm.querySelector('#popup-chat-autonomous-mode, #search-tab-chat-autonomous-mode') : getEl('chat-autonomous-mode');
   }
   
   if (!answerEl) return;
