@@ -381,8 +381,7 @@ class TaskQueueService:
         # Shutdown executor if it exists
         if self._executor:
             try:
-                # Give executor time to complete current tasks
-                self._executor.shutdown(wait=False)
+                self._executor.shutdown(wait=True)
             except Exception as e:
                 logger.warning(f"Error shutting down executor: {e}")
         

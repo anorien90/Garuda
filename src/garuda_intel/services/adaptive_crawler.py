@@ -179,7 +179,7 @@ class AdaptiveCrawlerService:
                 # Parallel seed collection
                 with ThreadPoolExecutor(
                     max_workers=min(
-                        len(queries[:MAX_CONCURRENT_SEARCHES]), 
+                        len(queries), 
                         MAX_CONCURRENT_SEARCHES
                     )
                 ) as pool:

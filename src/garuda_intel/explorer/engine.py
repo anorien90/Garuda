@@ -167,9 +167,9 @@ class IntelligentExplorer:
                 batch = []
                 # Selenium uses sequential fetching (batch of 1)
                 # Requests library uses parallel fetching
-                target_urls = (1 if self.use_selenium else fetch_workers)
+                batch_size = (1 if self.use_selenium else fetch_workers)
                 
-                while (len(frontier) and len(batch) < target_urls 
+                while (len(frontier) and len(batch) < batch_size 
                        and pages_explored + len(batch) < self.max_total_pages):
                     current = frontier.pop()
                     if not current:
