@@ -8,28 +8,49 @@ export async function chatAsk(e) {
   
   // Find the correct answer container relative to the submitted form
   const submittedForm = e && e.target;
-  const chatContainer = submittedForm ? submittedForm.closest('#chat-container') : null;
-  const answerEl = chatContainer
-    ? chatContainer.querySelector('#chat-answer')
-    : els.chatAnswer;
+  const formId = submittedForm?.id;
+  
+  let answerEl, qEl, entityEl, topkEl, maxCyclesEl, autonomousModeEl;
+  
+  // Determine which form was submitted and get the corresponding elements
+  if (formId === 'popup-chat-form') {
+    // Popup chat form
+    answerEl = document.getElementById('popup-chat-answer');
+    qEl = document.getElementById('popup-chat-q');
+    entityEl = document.getElementById('popup-chat-entity');
+    topkEl = document.getElementById('popup-chat-topk');
+    maxCyclesEl = document.getElementById('popup-chat-max-cycles');
+    autonomousModeEl = document.getElementById('popup-chat-autonomous-mode');
+  } else if (formId === 'search-tab-chat-form') {
+    // Search tab chat form
+    answerEl = document.getElementById('search-tab-chat-answer');
+    qEl = document.getElementById('search-tab-chat-q');
+    entityEl = document.getElementById('search-tab-chat-entity');
+    topkEl = document.getElementById('search-tab-chat-topk');
+    maxCyclesEl = document.getElementById('search-tab-chat-max-cycles');
+    autonomousModeEl = document.getElementById('search-tab-chat-autonomous-mode');
+  } else {
+    // Fallback to old behavior for backward compatibility
+    const chatContainer = submittedForm ? submittedForm.closest('#chat-container, #popup-chat-container') : null;
+    answerEl = chatContainer
+      ? chatContainer.querySelector('#chat-answer, #popup-chat-answer, #search-tab-chat-answer')
+      : els.chatAnswer;
+    qEl = submittedForm ? submittedForm.querySelector('#chat-q, #popup-chat-q, #search-tab-chat-q') : getEl('chat-q');
+    entityEl = submittedForm ? submittedForm.querySelector('#chat-entity, #popup-chat-entity, #search-tab-chat-entity') : getEl('chat-entity');
+    topkEl = submittedForm ? submittedForm.querySelector('#chat-topk, #popup-chat-topk, #search-tab-chat-topk') : getEl('chat-topk');
+    maxCyclesEl = submittedForm ? submittedForm.querySelector('#chat-max-cycles, #popup-chat-max-cycles, #search-tab-chat-max-cycles') : getEl('chat-max-cycles');
+    autonomousModeEl = submittedForm ? submittedForm.querySelector('#chat-autonomous-mode, #popup-chat-autonomous-mode, #search-tab-chat-autonomous-mode') : getEl('chat-autonomous-mode');
+  }
   
   if (!answerEl) return;
-  // Resolve input elements relative to the submitted form so that
-  // the correct values are read when chat.html is included more than
-  // once on the page (e.g. search-tab AND floating chat widget).
-  const qEl = submittedForm ? submittedForm.querySelector('#chat-q') : getEl('chat-q');
-  const entityEl = submittedForm ? submittedForm.querySelector('#chat-entity') : getEl('chat-entity');
-  const topkEl = submittedForm ? submittedForm.querySelector('#chat-topk') : getEl('chat-topk');
-  const maxCyclesEl = submittedForm ? submittedForm.querySelector('#chat-max-cycles') : getEl('chat-max-cycles');
-  const autonomousModeEl = submittedForm ? submittedForm.querySelector('#chat-autonomous-mode') : getEl('chat-autonomous-mode');
   
-  if (!qEl || !entityEl || !topkEl) {
-    answerEl.innerHTML = '<div class="p-4 text-rose-500">Chat form is missing from the page.</div>';
+  if (!qEl || !topkEl) {
+    answerEl.innerHTML = '<div class="p-4 text-rose-500">Chat form is missing required fields.</div>';
     return;
   }
 
   const question = qEl.value;
-  const entity = entityEl.value;
+  const entity = entityEl?.value || '';
   const autonomousModeEnabled = autonomousModeEl ? autonomousModeEl.checked : false;
 
   try {

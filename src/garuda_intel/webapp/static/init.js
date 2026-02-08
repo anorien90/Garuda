@@ -33,13 +33,18 @@ export function init() {
       import('./theme.js').then(({ applyTheme }) => applyTheme(next));
     };
   }
-  if (els.chatToggle && els.chatContainer) {
-    els.chatToggle.onclick = () => els.chatContainer.classList.toggle('hidden');
+  if (els.chatToggle) {
+    els.chatToggle.onclick = () => {
+      const popupContainer = document.getElementById('popup-chat-container');
+      if (popupContainer) popupContainer.classList.toggle('hidden');
+    };
   }
 
   if (els.searchForm) els.searchForm.onsubmit = searchIntel;
   if (els.semanticForm) els.semanticForm.onsubmit = semanticSearch;
-  document.querySelectorAll('[id="chat-form"]').forEach(form => {
+  
+  // Bind all chat forms (popup and search tab)
+  document.querySelectorAll('#popup-chat-form, #search-tab-chat-form').forEach(form => {
     form.addEventListener('submit', chatAsk);
   });
   if (els.pagesLoad) els.pagesLoad.onclick = loadPages;

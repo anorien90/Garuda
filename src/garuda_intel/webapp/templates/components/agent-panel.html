@@ -20,9 +20,6 @@
         <button id="agent-tab-explore" class="agent-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
           🗺️ Explore Graph
         </button>
-        <button id="agent-tab-search" class="agent-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
-          🔍 Multidimensional Search
-        </button>
         <button id="agent-tab-autonomous" class="agent-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
           🤖 Autonomous Mode
         </button>
@@ -88,44 +85,6 @@
       </form>
       
       <div id="explore-results" class="space-y-3"></div>
-    </div>
-    
-    <!-- Multidimensional Search Panel -->
-    <div id="agent-panel-search" class="agent-panel hidden space-y-4">
-      <div class="p-3 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800">
-        <p class="text-xs text-purple-800 dark:text-purple-200">
-          <strong>Multidimensional Search</strong> combines embedding-based semantic search with entity graph traversal for comprehensive results across all data dimensions.
-        </p>
-      </div>
-      
-      <form id="agent-search-form" class="space-y-3">
-        <div>
-          <label class="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-100">Search Query</label>
-          <input id="agent-search-q" type="text" placeholder="Natural language search query" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-purple-500 focus:ring-purple-500"/>
-        </div>
-        <div class="grid gap-3 sm:grid-cols-3">
-          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
-            Top K
-            <input id="agent-search-topk" type="number" min="1" max="50" value="10" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
-          </label>
-          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
-            Graph Depth
-            <input id="agent-search-depth" type="number" min="1" max="5" value="2" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
-          </label>
-          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100 flex flex-col">
-            Include Graph
-            <select id="agent-search-graph" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500">
-              <option value="true">Yes - Full Multidimensional</option>
-              <option value="false">No - Embedding Only</option>
-            </select>
-          </label>
-        </div>
-        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-purple-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-purple-500">
-          🔍 Search Multidimensional
-        </button>
-      </form>
-      
-      <div id="agent-search-results" class="space-y-3"></div>
     </div>
     
     <!-- Autonomous Mode Panel -->
