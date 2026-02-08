@@ -32,12 +32,12 @@ export async function chatAsk(e) {
   } else {
     // Minimal fallback - should rarely be needed with new structure
     console.warn('Chat form submitted without recognized ID, using fallback detection');
-    answerEl = els.chatAnswer;
-    qEl = getEl('chat-q');
-    entityEl = getEl('chat-entity');
-    topkEl = getEl('chat-topk');
-    maxCyclesEl = getEl('chat-max-cycles');
-    autonomousModeEl = getEl('chat-autonomous-mode');
+    answerEl = els.searchTabChatAnswer || els.popupChatAnswer;
+    qEl = getEl('search-tab-chat-q') || getEl('popup-chat-q');
+    entityEl = getEl('search-tab-chat-entity') || getEl('popup-chat-entity');
+    topkEl = getEl('search-tab-chat-topk') || getEl('popup-chat-topk');
+    maxCyclesEl = getEl('search-tab-chat-max-cycles') || getEl('popup-chat-max-cycles');
+    autonomousModeEl = getEl('search-tab-chat-autonomous-mode') || getEl('popup-chat-autonomous-mode');
   }
   
   if (!answerEl) {
@@ -116,7 +116,7 @@ export async function resumeActiveChatTasks() {
   
   if (chatTasks.length === 0) return;
   
-  const answerEl = els.chatAnswer;
+  const answerEl = els.searchTabChatAnswer || els.popupChatAnswer;
   if (!answerEl) return;
   
   // Resume only the most recent task; clear older ones to prevent storage buildup

@@ -31,8 +31,6 @@ export const els = {
   semanticForm: document.getElementById('semantic-form'),
   semanticResults: document.getElementById('semantic-results'),
 
-  chatForm: document.getElementById('chat-form'),
-  chatAnswer: document.getElementById('chat-answer'),
   chatToggle: document.getElementById('chat-toggle'),
   popupChatContainer: document.getElementById('popup-chat-container'),
   popupChatForm: document.getElementById('popup-chat-form'),
