@@ -1,5 +1,6 @@
 import { els, getEl } from '../config.js';
 import { fetchWithAuth } from '../api.js';
+import { submitAndPoll, cancelTask, getActiveTasks, pollTaskResult } from '../task-poller.js';
 import { renderChat, renderAutonomousInChat } from '../render-chat.js';
 
 export async function chatAsk(e) {
@@ -27,86 +28,45 @@ export async function chatAsk(e) {
     return;
   }
 
+  const question = qEl.value;
+  const entity = entityEl.value;
   const autonomousModeEnabled = autonomousModeEl ? autonomousModeEl.checked : false;
-  
-  // Phase indicator with animation
-  const updatePhase = (phase, message) => {
-    answerEl.innerHTML = `
-      <div class="p-4 space-y-2">
-        <div class="animate-pulse text-brand-600 font-semibold">${phase}</div>
-        <div class="text-sm text-slate-600 dark:text-slate-400">${message}</div>
-      </div>
-    `;
-  };
-
-  updatePhase('Phase 1: RAG Search...', 'Searching through embeddings, graph, and SQL data');
 
   try {
-    const body = {
-      question: qEl.value,
-      entity: entityEl.value,
-      top_k: Number(topkEl.value || 6),
-      max_search_cycles: Number((maxCyclesEl && maxCyclesEl.value) || 3),
-    };
-    
-    const res = await fetchWithAuth('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+    // Use task queue for chat - persistent across page reloads
+    const chatData = await submitAndPoll('/api/agent/chat', {
+      question: question,
+      entity: entity,
+    }, {
+      statusElement: answerEl,
+      onProgress: (progress, message) => {
+        // Progress updates are shown via statusElement
+      },
     });
-    
-    const chatData = await res.json();
-    
-    // Show appropriate phase messages based on what happened
-    if (chatData.retry_attempted) {
-      updatePhase('Phase 2: Paraphrasing...', 'Retrying with alternative queries');
-      await new Promise(resolve => setTimeout(resolve, 500)); // Brief visual feedback
-    }
-    
-    if (chatData.online_search_triggered) {
-      const cycles = chatData.search_cycles_completed || 0;
-      const maxCycles = chatData.max_search_cycles || 0;
-      updatePhase(`Phase 3: Web Crawling (${cycles}/${maxCycles} cycles)...`, 'Discovering and indexing online sources');
-      await new Promise(resolve => setTimeout(resolve, 500)); // Brief visual feedback
-    }
     
     // Render the main chat result
     renderChat(chatData, answerEl);
     
-    // If autonomous mode is enabled, trigger autonomous discovery
+    // If autonomous mode is enabled, trigger autonomous discovery via task queue
     if (autonomousModeEnabled) {
       try {
-        // Add autonomous loading indicator to the chat answer area
         const autonomousDiv = document.createElement('div');
         autonomousDiv.id = 'autonomous-results';
         autonomousDiv.className = 'mt-4 p-4 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg';
-        autonomousDiv.innerHTML = `
-          <div class="animate-pulse text-indigo-600 dark:text-indigo-400 font-semibold">
-            🤖 Autonomous Mode: Discovering knowledge gaps...
-          </div>
-        `;
         answerEl.appendChild(autonomousDiv);
         
-        // Call autonomous endpoint
-        const autonomousRes = await fetchWithAuth('/api/agent/autonomous', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            auto_crawl: true,
-            max_entities: 10,
-            priority_threshold: 0.3,
-            max_depth: 3,
-            max_pages: 25,
-          }),
+        const autonomousData = await submitAndPoll('/api/agent/autonomous', {
+          auto_crawl: true,
+          max_entities: 10,
+          priority_threshold: 0.3,
+          max_depth: 3,
+          max_pages: 25,
+        }, {
+          statusElement: autonomousDiv,
         });
         
-        const autonomousData = await autonomousRes.json();
-        
-        // Render autonomous results
         renderAutonomousInChat(autonomousData);
-        
       } catch (autonomousErr) {
-        // Show error but don't break the main chat experience
         const autonomousDiv = document.getElementById('autonomous-results');
         if (autonomousDiv) {
           autonomousDiv.innerHTML = `
@@ -120,5 +80,33 @@ export async function chatAsk(e) {
     
   } catch (err) {
     answerEl.innerHTML = `<div class="p-4 text-rose-500">❌ Error: ${err.message || 'Unknown error occurred'}</div>`;
+  }
+}
+
+/**
+ * Resume polling for any active chat tasks after page reload.
+ * Note: Multiple tasks render to the same element, so only the last completed
+ * task's result will be visible. Consider UI enhancement to show all tasks.
+ */
+export async function resumeActiveChatTasks() {
+  const activeTasks = getActiveTasks();
+  const chatTasks = activeTasks.filter(task => task.endpoint === '/api/agent/chat');
+  
+  if (chatTasks.length === 0) return;
+  
+  const answerEl = els.chatAnswer;
+  if (!answerEl) return;
+  
+  // If multiple tasks exist, process the most recent one
+  // (In future, could create separate containers for each task)
+  const mostRecentTask = chatTasks[chatTasks.length - 1];
+  
+  try {
+    const result = await pollTaskResult(mostRecentTask.taskId, {
+      statusElement: answerEl,
+    });
+    renderChat(result, answerEl);
+  } catch (err) {
+    answerEl.innerHTML = `<div class="p-4 text-rose-500">❌ Previous task failed: ${err.message}</div>`;
   }
 }

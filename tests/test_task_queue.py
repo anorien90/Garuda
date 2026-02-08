@@ -316,3 +316,73 @@ class TestStaleRecovery:
         task = tq.get_task(task_id)
         assert task["status"] == "failed"
         assert "Server restarted" in task["error"]
+
+
+class TestNewTaskHandlers:
+    """Test TASK_CHAT and TASK_CRAWL handler registration."""
+    
+    def test_task_chat_constant_exists(self):
+        """Test that TASK_CHAT constant is defined."""
+        assert hasattr(TaskQueueService, 'TASK_CHAT')
+        assert TaskQueueService.TASK_CHAT == "chat"
+    
+    def test_task_crawl_constant_exists(self):
+        """Test that TASK_CRAWL constant is defined."""
+        assert hasattr(TaskQueueService, 'TASK_CRAWL')
+        assert TaskQueueService.TASK_CRAWL == "crawl"
+    
+    def test_can_submit_chat_task(self, task_queue):
+        """Test that TASK_CHAT tasks can be submitted."""
+        task_id = task_queue.submit(TaskQueueService.TASK_CHAT, {
+            "question": "What is AI?",
+            "entity": "artificial intelligence"
+        })
+        assert task_id is not None
+        task = task_queue.get_task(task_id)
+        assert task["task_type"] == "chat"
+        assert task["params"]["question"] == "What is AI?"
+    
+    def test_can_submit_crawl_task(self, task_queue):
+        """Test that TASK_CRAWL tasks can be submitted."""
+        task_id = task_queue.submit(TaskQueueService.TASK_CRAWL, {
+            "mode": "standard",
+            "url": "https://example.com"
+        })
+        assert task_id is not None
+        task = task_queue.get_task(task_id)
+        assert task["task_type"] == "crawl"
+        assert task["params"]["mode"] == "standard"
+    
+    def test_can_register_chat_handler(self, task_queue):
+        """Test that a handler for TASK_CHAT can be registered."""
+        def chat_handler(task_id, params):
+            return {"answer": "Test answer", "question": params.get("question")}
+        
+        task_queue.register_handler(TaskQueueService.TASK_CHAT, chat_handler)
+        task_id = task_queue.submit(TaskQueueService.TASK_CHAT, {"question": "test?"})
+        
+        task_queue.start_worker()
+        time.sleep(1)
+        task_queue.stop_worker()
+        
+        task = task_queue.get_task(task_id)
+        assert task["status"] == "completed"
+        assert task["result"]["answer"] == "Test answer"
+    
+    def test_can_register_crawl_handler(self, task_queue):
+        """Test that a handler for TASK_CRAWL can be registered."""
+        def crawl_handler(task_id, params):
+            mode = params.get("mode", "standard")
+            return {"crawled": True, "mode": mode, "pages": 10}
+        
+        task_queue.register_handler(TaskQueueService.TASK_CRAWL, crawl_handler)
+        task_id = task_queue.submit(TaskQueueService.TASK_CRAWL, {"mode": "intelligent"})
+        
+        task_queue.start_worker()
+        time.sleep(1)
+        task_queue.stop_worker()
+        
+        task = task_queue.get_task(task_id)
+        assert task["status"] == "completed"
+        assert task["result"]["mode"] == "intelligent"
+        assert task["result"]["crawled"] is True

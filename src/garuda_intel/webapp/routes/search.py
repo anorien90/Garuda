@@ -246,6 +246,21 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         )
         if not question:
             return jsonify({"error": "question required"}), 400
+        
+        # Support queued execution via persistent task queue
+        if body.get("queued"):
+            try:
+                from ..app import task_queue
+                from ...services.task_queue import TaskQueueService
+                task_id = task_queue.submit(TaskQueueService.TASK_CHAT, {
+                    "question": question,
+                    "entity": entity,
+                    "top_k": top_k,
+                    "max_search_cycles": max_search_cycles,
+                }, priority=5)  # Higher priority for chat
+                return jsonify({"task_id": task_id, "status": "pending", "message": "Chat task queued"}), 202
+            except Exception as e:
+                logger.warning(f"Task queue unavailable, running synchronously: {e}")
     
         emit_event("chat", "chat request received", payload={
             "session_id": session_id, 

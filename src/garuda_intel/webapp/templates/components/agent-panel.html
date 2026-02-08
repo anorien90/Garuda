@@ -284,6 +284,25 @@
 
 <script type="module">
 import { getApiKey } from '/static/storage.js';
+import { submitAndPoll, cancelTask, renderTaskStatus, getActiveTasks, pollTaskResult } from '/static/task-poller.js';
+
+/**
+ * Helper: Submit an agent operation via the task queue and render results.
+ * All operations go through the persistent queue for:
+ * - Surviving page reloads
+ * - Sequential LLM processing (protecting Ollama)
+ * - Task cancellation support
+ */
+async function runQueuedOperation(endpoint, body, resultsContainer, renderFn) {
+  try {
+    const result = await submitAndPoll(endpoint, body, {
+      statusElement: resultsContainer,
+    });
+    renderFn(result);
+  } catch (err) {
+    resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
+  }
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   // Tab switching
@@ -315,7 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
   
-  // Reflect Form
+  // Reflect Form - uses task queue for persistent execution
   const reflectForm = document.getElementById('agent-reflect-form');
   reflectForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -326,29 +345,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const targetEntities = entitiesInput ? entitiesInput.split(',').map(e => e.trim()).filter(e => e) : null;
     
     const resultsContainer = document.getElementById('reflect-results');
-    resultsContainer.innerHTML = '<div class="text-sm text-orange-600 p-4">🔄 Analyzing entities...</div>';
     
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      const apiKey = getApiKey();
-      if (apiKey) headers['X-API-Key'] = apiKey;
-      
-      const response = await fetch('/api/agent/reflect', {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify({
-          target_entities: targetEntities,
-          dry_run: dryRun
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.error) {
-        resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${data.error}</div>`;
-        return;
-      }
-      
+    await runQueuedOperation('/api/agent/reflect', {
+      target_entities: targetEntities,
+      dry_run: dryRun,
+    }, resultsContainer, (data) => {
       const stats = data.statistics || {};
       const duplicates = data.duplicates_found || [];
       const issues = data.data_quality_issues || [];
@@ -410,12 +411,10 @@ document.addEventListener('DOMContentLoaded', () => {
           ` : ''}
         </div>
       `;
-    } catch (err) {
-      resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
-    }
+    });
   });
   
-  // Explore Form
+  // Explore Form - uses task queue for persistent execution
   const exploreForm = document.getElementById('agent-explore-form');
   exploreForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -432,30 +431,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const rootEntities = entitiesInput.split(',').map(e => e.trim()).filter(e => e);
     
     const resultsContainer = document.getElementById('explore-results');
-    resultsContainer.innerHTML = '<div class="text-sm text-teal-600 p-4">🗺️ Exploring entity graph...</div>';
     
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      const apiKey = getApiKey();
-      if (apiKey) headers['X-API-Key'] = apiKey;
-      
-      const response = await fetch('/api/agent/explore', {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify({
-          root_entities: rootEntities,
-          max_depth: maxDepth,
-          top_n: topN
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.error) {
-        resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${data.error}</div>`;
-        return;
-      }
-      
+    await runQueuedOperation('/api/agent/explore', {
+      root_entities: rootEntities,
+      max_depth: maxDepth,
+      top_n: topN,
+    }, resultsContainer, (data) => {
       const stats = data.statistics || {};
       const prioritized = data.prioritized_entities || [];
       
@@ -515,9 +496,7 @@ document.addEventListener('DOMContentLoaded', () => {
           ` : '<div class="text-sm text-slate-500 p-4">No entities found to explore</div>'}
         </div>
       `;
-    } catch (err) {
-      resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
-    }
+    });
   });
   
   // Search Form
@@ -689,44 +668,32 @@ document.addEventListener('DOMContentLoaded', () => {
     resultsContainer.innerHTML = '<div class="text-sm text-indigo-600 p-4">⚙️ Running autonomous mode...</div>';
     processMonitor.classList.remove('hidden');
     
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      const apiKey = getApiKey();
-      if (apiKey) headers['X-API-Key'] = apiKey;
-      
-      let endpoint = '/api/agent/autonomous';
-      let body = {};
-      
-      if (selectedAction === 'reflect-relate') {
-        endpoint = '/api/agent/autonomous/reflect-relate';
-        body = { target_entities: targetEntities, max_depth: maxDepth, top_n: topN };
-      } else if (selectedAction === 'investigate-crawl') {
-        endpoint = '/api/agent/autonomous/investigate-crawl';
-        body = { max_entities: maxEntities, max_pages: maxPages, max_depth: maxDepth, priority_threshold: priorityThreshold };
-      } else if (selectedAction === 'combined') {
-        endpoint = '/api/agent/autonomous/combined';
-        body = { target_entities: targetEntities, max_entities: maxEntities, max_pages: maxPages, max_depth: maxDepth, priority_threshold: priorityThreshold };
-      } else {
-        body = { max_entities: maxEntities, priority_threshold: priorityThreshold, max_depth: maxDepth, auto_crawl: autoCrawl, max_pages: maxPages };
-      }
-      
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(body)
-      });
-      
-      const data = await response.json();
-      
+    let endpoint = '/api/agent/autonomous';
+    let body = {};
+    
+    if (selectedAction === 'reflect-relate') {
+      endpoint = '/api/agent/autonomous/reflect-relate';
+      body = { target_entities: targetEntities, max_depth: maxDepth, top_n: topN };
+    } else if (selectedAction === 'investigate-crawl') {
+      endpoint = '/api/agent/autonomous/investigate-crawl';
+      body = { max_entities: maxEntities, max_pages: maxPages, max_depth: maxDepth, priority_threshold: priorityThreshold };
+    } else if (selectedAction === 'combined') {
+      endpoint = '/api/agent/autonomous/combined';
+      body = { target_entities: targetEntities, max_entities: maxEntities, max_pages: maxPages, max_depth: maxDepth, priority_threshold: priorityThreshold };
+    } else {
+      body = { max_entities: maxEntities, priority_threshold: priorityThreshold, max_depth: maxDepth, auto_crawl: autoCrawl, max_pages: maxPages };
+    }
+    
+    // Always use task queue for autonomous operations
+    processMonitor.classList.remove('hidden');
+    
+    await runQueuedOperation(endpoint, body, resultsContainer, (data) => {
       // Start polling for process status if process_id is present
       if (data.process_id) {
         startProcessPolling();
       }
-      
       renderAutonomousResults(data, selectedAction);
-    } catch (err) {
-      resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
-    }
+    });
   });
   
   // Process monitoring
@@ -1325,7 +1292,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const tqFilter = document.getElementById('tq-filter-status');
   if (tqFilter) tqFilter.addEventListener('change', loadTaskList);
 
-  // Auto-refresh every 5 seconds when tab is active and checkbox is checked
+  // Auto-refresh: 3 seconds when active tasks exist, 5 seconds otherwise
   let tqInterval = null;
   function startTqAutoRefresh() {
     if (tqInterval) return;
@@ -1335,7 +1302,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (panel && !panel.classList.contains('hidden') && autoCheck && autoCheck.checked) {
         refreshTaskQueue();
       }
-    }, 5000);
+    }, 3000);
   }
   startTqAutoRefresh();
 

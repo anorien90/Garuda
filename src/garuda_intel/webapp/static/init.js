@@ -5,7 +5,7 @@ import { initTabs } from './tabs.js';
 import { refreshStatus } from './status.js';
 import { searchIntel } from './actions/search.js';
 import { semanticSearch } from './actions/semantic.js';
-import { chatAsk } from './actions/chat.js';
+import { chatAsk, resumeActiveChatTasks } from './actions/chat.js';
 import { loadPages } from './actions/pages.js';
 import { recorderSearch, recorderRefreshHealth, recorderMark } from './actions/recorder.js';
 import { runCrawl, runIntelligentCrawl, runUnifiedCrawl } from './actions/crawl.js';
@@ -20,6 +20,9 @@ export function init() {
   initTheme();
   loadSettings();
   initTabs();
+  
+  // Resume any active chat tasks that may have been interrupted by page reload
+  resumeActiveChatTasks();
 
   if (els.saveBtn) els.saveBtn.onclick = saveSettings;
   if (els.statusBtn) els.statusBtn.onclick = refreshStatus;
