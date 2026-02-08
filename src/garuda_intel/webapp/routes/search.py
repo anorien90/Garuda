@@ -576,8 +576,8 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             
             online_triggered = True
     
-            # Generate initial search queries (use paraphrased queries if available)
-            search_queries = paraphrased_queries if paraphrased_queries else llm.generate_seed_queries(question, entity or "")
+            # Generate initial search queries (always generate for web search)
+            search_queries = llm.generate_seed_queries(question, entity or "")
             emit_event("chat", f"Generated {len(search_queries)} search queries", 
                      payload={"queries": search_queries})
             
@@ -619,17 +619,60 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 else:
                     # Cycle failed, still count it
                     search_cycles_completed = cycle_num
+                    # Generate new search queries with different angle for next cycle
+                    if cycle_num < max_search_cycles:
+                        new_angle_prompt = f"different search terms for: {question}"
+                        search_queries = llm.generate_seed_queries(new_angle_prompt, entity or "")
+                        emit_event("chat", f"Cycle {cycle_num} failed - generated new queries for next cycle",
+                                  payload={"queries": search_queries})
             
             emit_event("chat", f"Search cycles completed: {search_cycles_completed}/{max_search_cycles}",
                      payload={"cycles": search_cycles_completed, "total_urls": len(live_urls)})
 
+            # Phase 4: Final re-query RAG after all crawl cycles
+            if live_urls:
+                emit_event("chat", "Phase 4: Final RAG re-query after crawling",
+                         payload={"total_urls_crawled": len(live_urls)})
+                merged_hits = gather_hits(question, top_k, prioritize_rag=True)
+                answer = llm.synthesize_answer(question=question, context_hits=merged_hits)
+                is_sufficient = llm.evaluate_sufficiency(answer) and not _looks_like_refusal(answer)
+                
+                rag_hits = [h for h in merged_hits if h.get("source") == "rag"]
+                high_quality_rag = [h for h in rag_hits if h.get("score", 0) >= rag_quality_threshold]
+                emit_event("chat", f"Phase 4 results: {len(high_quality_rag)} high-quality RAG hits, sufficient={is_sufficient}",
+                         payload={"high_quality": len(high_quality_rag), "is_sufficient": is_sufficient})
+
+            # Build a summary with references if we have context
+            if not is_sufficient and merged_hits:
+                # Try to build a structured summary from available context
+                summary_parts = []
+                references = []
+                for hit in merged_hits[:10]:
+                    snippet = hit.get("snippet", "").strip()
+                    url = hit.get("url", "")
+                    if snippet:
+                        summary_parts.append(snippet)
+                    if url and url not in references:
+                        references.append(url)
+                
+                if summary_parts:
+                    context_summary = "\n\n".join(summary_parts[:5])
+                    ref_text = "\n".join(f"- {url}" for url in references[:10]) if references else ""
+                    constructed_answer = f"Based on available information:\n\n{context_summary}"
+                    if ref_text:
+                        constructed_answer += f"\n\n**References:**\n{ref_text}"
+                    # Evaluate if this constructed answer is actually sufficient
+                    answer = constructed_answer
+                    is_sufficient = llm.evaluate_sufficiency(constructed_answer) and len(summary_parts) >= 2
+
             # Improve error messages
-            answer = answer.replace(
-                "INSUFFICIENT_DATA",
-                "I searched online but still couldn't find a definitive answer.",
-            )
-            if _looks_like_refusal(answer):
-                answer = "I searched online but still couldn't find a definitive answer."
+            if not is_sufficient:
+                answer = answer.replace(
+                    "INSUFFICIENT_DATA",
+                    "I searched online but still couldn't find a definitive answer.",
+                )
+                if _looks_like_refusal(answer):
+                    answer = "I searched online but still couldn't find a definitive answer."
     
         # Final fallback - ensure there's always an answer
         if not answer or _looks_like_refusal(answer):
