@@ -1017,6 +1017,11 @@ class SemanticEntityDeduplicator:
         """
         Find and optionally merge duplicate entities across the database.
         
+        Ensures that during deduplication:
+        - No entities are lost: all data is merged into the canonical entity
+        - The entity with the most specific kind wins (e.g., founder > person > entity)
+        - The richest data and longest name are preserved
+        
         Args:
             dry_run: If True, only report duplicates without merging
             threshold: Minimum similarity threshold for merging
@@ -1058,25 +1063,45 @@ class SemanticEntityDeduplicator:
                 ]
                 
                 if duplicates:
+                    # Collect all entities in this duplicate group (current + duplicates)
+                    all_group_ids = [str(entity.id)] + [d["entity"]["id"] for d in duplicates]
+                    all_group_entities = [
+                        e for e in entities if str(e.id) in all_group_ids
+                    ]
+                    
+                    # Select the best canonical entity (highest kind, richest data, longest name)
+                    canonical = self._select_canonical_entity(all_group_entities) if all_group_entities else entity
+                    canonical_id = str(canonical.id)
+                    
                     group = {
-                        "canonical": self._entity_to_dict(entity),
-                        "duplicates": duplicates,
+                        "canonical": self._entity_to_dict(canonical),
+                        "duplicates": [
+                            d for d in duplicates if d["entity"]["id"] != canonical_id
+                        ],
                     }
+                    # Include the original entity as a duplicate if it's not the canonical
+                    if canonical_id != str(entity.id):
+                        group["duplicates"].append({
+                            "entity": self._entity_to_dict(entity),
+                            "similarity": 1.0,
+                            "match_type": "group_member",
+                        })
                     report["duplicates_found"].append(group)
                     
                     # Mark all as processed
                     processed_ids.add(str(entity.id))
+                    processed_ids.add(canonical_id)
                     for dup in duplicates:
                         processed_ids.add(dup["entity"]["id"])
                     
                     # Merge if not dry run
                     if not dry_run:
-                        for dup in duplicates:
+                        for dup in group["duplicates"]:
                             try:
-                                self._merge_entities(session, dup["entity"]["id"], str(entity.id))
+                                self._merge_entities(session, dup["entity"]["id"], canonical_id)
                                 report["merged"].append({
                                     "source": dup["entity"]["name"],
-                                    "target": entity.name,
+                                    "target": canonical.name,
                                     "similarity": dup["similarity"],
                                 })
                             except Exception as e:
@@ -1174,7 +1199,11 @@ class SemanticEntityDeduplicator:
         return name
     
     def _get_compatible_kinds(self, kind: str) -> List[str]:
-        """Get compatible entity kinds including type hierarchy."""
+        """Get compatible entity kinds including type hierarchy.
+        
+        Ensures that generic types (entity, general) can match any kind,
+        and all types can match the generic fallbacks.
+        """
         kind = kind.lower()
         compatible = [kind]
         
@@ -1190,6 +1219,15 @@ class SemanticEntityDeduplicator:
         if kind in EQUIVALENT_TYPES:
             compatible.extend(EQUIVALENT_TYPES[kind])
         
+        # Generic fallbacks: "entity"/"general" should match any kind, 
+        # and non-generic types should also match "entity"/"general"
+        if kind not in ("entity", "general"):
+            compatible.extend(["entity", "general"])
+        else:
+            # Generic types match all parent and child types
+            compatible.extend(ENTITY_TYPE_HIERARCHY.keys())
+            compatible.extend(ENTITY_TYPE_CHILDREN.keys())
+        
         return list(set(compatible))
     
     def _entity_to_dict(self, entity: Entity) -> Dict[str, Any]:
@@ -1203,8 +1241,50 @@ class SemanticEntityDeduplicator:
             "last_seen": entity.last_seen.isoformat() if entity.last_seen else None,
         }
     
+    def _get_kind_specificity_rank(self, kind: str) -> int:
+        """Return a numeric rank for entity kind specificity.
+        
+        Higher rank means more specific:
+        - 0: generic types (entity, general, empty)
+        - 1: parent types (person, address, company, organization)
+        - 2: specialized child types (ceo, founder, headquarters, etc.)
+        """
+        kind = (kind or "").lower().strip()
+        if kind in ("", "entity", "general"):
+            return 0
+        if kind in ENTITY_TYPE_HIERARCHY:
+            return 2  # child/specialized types
+        if kind in ENTITY_TYPE_CHILDREN:
+            return 1  # parent types
+        return 1  # any other concrete type
+    
+    def _select_canonical_entity(self, entities: List[Entity]) -> Entity:
+        """Select the best canonical entity from a group of duplicates.
+        
+        Selection criteria (in priority order):
+        1. Highest kind specificity (e.g., founder > person > entity)
+        2. Richest data (most non-empty data fields)
+        3. Longest name (more complete name likely contains more info)
+        
+        This ensures that no entity data is lost during deduplication:
+        the entity with the most specific type and richest data wins.
+        """
+        def entity_score(e: Entity):
+            kind_rank = self._get_kind_specificity_rank((e.kind or "").lower())
+            data_count = len(e.data) if e.data else 0
+            name_len = len(e.name.strip()) if e.name else 0
+            return (kind_rank, data_count, name_len)
+        
+        return max(entities, key=entity_score)
+    
     def _merge_entities(self, session: Session, source_id: str, target_id: str) -> bool:
-        """Merge source entity into target entity."""
+        """Merge source entity into target entity.
+        
+        Ensures:
+        - The most specific kind (highest in hierarchy) is preserved
+        - The richest name (longest) is preserved
+        - All data fields are merged (source fills gaps in target)
+        """
         source = session.execute(
             select(Entity).where(Entity.id == source_id)
         ).scalar_one_or_none()
@@ -1216,6 +1296,16 @@ class SemanticEntityDeduplicator:
         if not source or not target:
             return False
         
+        # Upgrade kind: keep the most specific type
+        source_kind = (source.kind or "entity").lower()
+        target_kind = (target.kind or "entity").lower()
+        if self._get_kind_specificity_rank(source_kind) > self._get_kind_specificity_rank(target_kind):
+            target.kind = source_kind
+        
+        # Pick the richest name (longest, as it likely contains the most info)
+        if source.name and target.name and len(source.name.strip()) > len(target.name.strip()):
+            target.name = source.name.strip()
+        
         # Merge data
         source_data = source.data or {}
         target_data = target.data or {}
@@ -1223,6 +1313,7 @@ class SemanticEntityDeduplicator:
             if value and (key not in target_data or not target_data.get(key)):
                 target_data[key] = value
         target.data = target_data
+        flag_modified(target, 'data')
         
         # Redirect relationships
         for rel in session.execute(
@@ -1240,6 +1331,7 @@ class SemanticEntityDeduplicator:
         merge_history.append({
             "id": source_id,
             "name": source.name,
+            "kind": source_kind,
             "merged_at": datetime.now(timezone.utc).isoformat(),
         })
         if target.metadata_json is None:
@@ -1250,7 +1342,7 @@ class SemanticEntityDeduplicator:
         # Delete source
         session.delete(source)
         
-        self.logger.info(f"Merged entity '{source.name}' into '{target.name}'")
+        self.logger.info(f"Merged entity '{source.name}' ({source_kind}) into '{target.name}' ({target.kind})")
         return True
 
 
