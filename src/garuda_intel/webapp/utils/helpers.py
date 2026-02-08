@@ -30,6 +30,7 @@ def _canonical(name) -> str:
     for suffix in _COMPANY_SUFFIXES:
         if result.endswith(" " + suffix):
             result = result[: -(len(suffix) + 1)].strip()
+            break
     return result
 
 

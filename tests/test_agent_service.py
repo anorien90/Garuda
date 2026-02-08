@@ -778,30 +778,37 @@ class TestCanonicalSuffixStripping:
         assert _canonical("Microsoft Corporation") == _canonical("Microsoft")
 
     def test_canonical_strips_corp(self):
+        """Corp suffix should be stripped."""
         from garuda_intel.webapp.utils.helpers import _canonical
         assert _canonical("Microsoft Corp") == _canonical("Microsoft")
 
     def test_canonical_strips_inc(self):
+        """Inc suffix should be stripped."""
         from garuda_intel.webapp.utils.helpers import _canonical
         assert _canonical("Apple Inc") == _canonical("Apple")
 
     def test_canonical_strips_llc(self):
+        """LLC suffix should be stripped."""
         from garuda_intel.webapp.utils.helpers import _canonical
         assert _canonical("Google LLC") == _canonical("Google")
 
     def test_canonical_strips_ltd(self):
+        """Ltd suffix should be stripped."""
         from garuda_intel.webapp.utils.helpers import _canonical
         assert _canonical("Barclays Ltd") == _canonical("Barclays")
 
     def test_canonical_strips_company(self):
+        """Company suffix should be stripped."""
         from garuda_intel.webapp.utils.helpers import _canonical
         assert _canonical("Ford Motor Company") == _canonical("Ford Motor")
 
     def test_canonical_preserves_distinct_names(self):
+        """Distinct company names should remain distinct after canonicalization."""
         from garuda_intel.webapp.utils.helpers import _canonical
         assert _canonical("Microsoft") != _canonical("Apple")
 
     def test_canonical_none_returns_empty(self):
+        """None input should return empty string."""
         from garuda_intel.webapp.utils.helpers import _canonical
         assert _canonical(None) == ""
 
