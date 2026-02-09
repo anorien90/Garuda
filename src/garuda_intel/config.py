@@ -177,11 +177,11 @@ class Settings:
             # Exoscale remote Ollama settings
             exoscale_api_key=os.environ.get("EXOSCALE_API_KEY"),
             exoscale_api_secret=os.environ.get("EXOSCALE_API_SECRET"),
-            exoscale_zone=os.environ.get("EXOSCALE_ZONE", "ch-gva-2"),
-            exoscale_instance_type=os.environ.get("EXOSCALE_INSTANCE_TYPE", "standard.medium"),
+            exoscale_zone=os.environ.get("EXOSCALE_ZONE", "at-vie-2"),
+            exoscale_instance_type=os.environ.get("EXOSCALE_INSTANCE_TYPE", "a5000.small"),
             exoscale_template=os.environ.get("EXOSCALE_TEMPLATE", "Linux Ubuntu 22.04 LTS 64-bit"),
             exoscale_disk_size=int(os.environ.get("EXOSCALE_DISK_SIZE", "50")),
-            exoscale_ollama_key=os.environ.get("EXOSCALE_OLLAMA_KEY"),
+            exoscale_ollama_key=os.environ.get("EXOSCALE_OLLAMA_KEY", f"garuda-remote-ollama-{os.urandom(4).hex()}"),
             exoscale_idle_timeout=int(os.environ.get("EXOSCALE_IDLE_TIMEOUT", "1800")),
         )
 
