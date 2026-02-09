@@ -1124,6 +1124,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // =========================================================================
   let autoModeRunning = false;
   let autoModeCycleCount = 0;
+  const AUTO_MODE_CYCLE_DELAY_MS = 5000;
   
   const autoModeToggle = document.getElementById('auto-mode-toggle');
   const autoModeStatus = document.getElementById('auto-mode-status');
@@ -1210,8 +1211,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Continue loop if still running (with a brief pause)
     if (autoModeRunning) {
-      addAutoModeLogEntry(`Waiting 5 seconds before next cycle...`, 'info');
-      setTimeout(runAutoModeCycle, 5000);
+      addAutoModeLogEntry(`Waiting ${AUTO_MODE_CYCLE_DELAY_MS / 1000} seconds before next cycle...`, 'info');
+      setTimeout(runAutoModeCycle, AUTO_MODE_CYCLE_DELAY_MS);
     }
   }
   

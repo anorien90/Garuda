@@ -1147,7 +1147,9 @@ class AgentService:
                 response["metadata"]["auto_crawl_triggered"] = True
                 try:
                     entities_for_crawl = self._extract_entity_mentions(question)
-                    crawl_query = entity if entity else (entities_for_crawl[0] if entities_for_crawl else question[:80])
+                    crawl_query = entity if entity else question[:80]
+                    if not crawl_query and entities_for_crawl:
+                        crawl_query = entities_for_crawl[0]
                     
                     crawl_plan = {
                         "entity_name": crawl_query,
@@ -1155,9 +1157,10 @@ class AgentService:
                         "mode": "auto_chat_crawl",
                         "queries": [question],
                     }
+                    auto_crawl_max_pages = 10
                     crawl_result = await asyncio.get_event_loop().run_in_executor(
                         None,
-                        lambda: self._execute_autonomous_crawl(crawl_plan, max_pages=10)
+                        lambda: self._execute_autonomous_crawl(crawl_plan, max_pages=auto_crawl_max_pages)
                     )
                     response["metadata"]["auto_crawl_result"] = crawl_result
                     
@@ -1184,9 +1187,12 @@ class AgentService:
                 )
                 response["answer"] = answer
             elif not response["context"]:
-                response["answer"] = "No relevant information found in local data or via web crawl."
+                if response["metadata"].get("auto_crawl_triggered"):
+                    response["answer"] = "No relevant information found in local data or via web crawl."
+                else:
+                    response["answer"] = "No relevant information found."
             else:
-                response["answer"] = "No relevant information found."
+                response["answer"] = "LLM is not available to synthesize an answer, but context data was found."
             
             # Automatically add reflect insights if entities are found
             entities_in_question = self._extract_entity_mentions(question)
