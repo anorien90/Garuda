@@ -189,12 +189,12 @@ class TestExoscaleAdapter(unittest.TestCase):
         'EXOSCALE_API_SECRET': 'test_secret'
     })
     @patch('exoscale_adapter.Client')
-    def test_destroy_instance_no_instance(self, mock_client_cls):
-        """Test destroy when no instance exists."""
+    def test_stop_instance_no_instance(self, mock_client_cls):
+        """Test stop when no instance exists."""
         from exoscale_adapter import ExoscaleOllamaAdapter
         
         adapter = ExoscaleOllamaAdapter()
-        self.assertFalse(adapter.destroy_instance())
+        self.assertFalse(adapter.stop_instance())
     
     @patch.dict(os.environ, {
         'EXOSCALE_API_KEY': 'test_key',

@@ -1,10 +1,10 @@
 """Exoscale Ollama Adapter - Remote Ollama instance management using python-exoscale SDK.
 
 This module manages the lifecycle of Ollama instances on Exoscale cloud:
-- Create/start/stop/destroy compute instances
+- Create/start/stop compute instances
 - Configure security groups for secure access
 - Set up Docker container with Ollama on instance via cloud-init
-- Monitor idle time and auto-shutdown to save costs
+- Monitor idle time and auto-stop to save costs
 - Provide remote URL for proxying requests
 
 Uses the official python-exoscale v2 API client:
@@ -33,7 +33,7 @@ class ExoscaleOllamaAdapter:
     - Automatic instance lifecycle management
     - Security group and firewall configuration
     - Ollama Docker container setup via cloud-init
-    - Idle monitoring with auto-shutdown
+    - Idle monitoring with auto-stop
     - Remote URL provider for proxy
     """
     
@@ -65,7 +65,7 @@ class ExoscaleOllamaAdapter:
             template_name: OS template name (defaults to EXOSCALE_TEMPLATE env var)
             disk_size: Root disk size in GB (defaults to EXOSCALE_DISK_SIZE env var or 50)
             ollama_model: Ollama model to pull on startup (defaults to OLLAMA_MODEL env var)
-            idle_timeout: Seconds of inactivity before auto-shutdown (defaults to EXOSCALE_IDLE_TIMEOUT or 1800)
+            idle_timeout: Seconds of inactivity before auto-stop (defaults to EXOSCALE_IDLE_TIMEOUT or 1800)
         """
         self.api_key = api_key or os.getenv("EXOSCALE_API_KEY", "")
         self.api_secret = api_secret or os.getenv("EXOSCALE_API_SECRET", "")
@@ -445,7 +445,7 @@ class ExoscaleOllamaAdapter:
     def ensure_instance(self) -> Optional[str]:
         """Ensure an Ollama instance is running.
         
-        Checks for existing instance, starts if stopped, creates if missing.
+        Checks for existing instance, starts if stopped/halted, creates if missing.
         
         Returns:
             Remote Ollama base URL (http://ip:port) or None on error
@@ -463,8 +463,8 @@ class ExoscaleOllamaAdapter:
                     f"Found running instance: {self.instance_id} at {self.instance_ip}"
                 )
                 return self.get_remote_url()
-            elif state == "stopped":
-                self.logger.info(f"Found stopped instance {self.instance_id}, starting...")
+            elif state in ("stopped", "halted"):
+                self.logger.info(f"Found {state} instance {self.instance_id}, starting...")
                 try:
                     op = self.client.start_instance(id=self.instance_id)
                     self.client.wait(op["id"])
@@ -482,26 +482,27 @@ class ExoscaleOllamaAdapter:
         self.logger.info("No existing instance found, creating new one")
         return self.create_instance()
     
-    def destroy_instance(self) -> bool:
-        """Destroy the Ollama instance.
+    def stop_instance(self) -> bool:
+        """Stop (halt) the Ollama instance instead of destroying it.
+        
+        This preserves the instance to avoid quota issues on restart.
         
         Returns:
             True if successful, False otherwise
         """
         if not self.instance_id:
-            self.logger.warning("No instance to destroy")
+            self.logger.warning("No instance to stop")
             return False
         
         try:
-            self.logger.info(f"Destroying instance {self.instance_id}")
-            op = self.client.delete_instance(id=self.instance_id)
+            self.logger.info(f"Stopping instance {self.instance_id}")
+            op = self.client.stop_instance(id=self.instance_id)
             self.client.wait(op["id"])
-            self.instance_id = None
-            self.instance_ip = None
-            self.logger.info("Instance destroyed successfully")
+            self.logger.info("Instance stopped successfully")
+            # Keep instance_id and instance_ip for restart
             return True
         except Exception as e:
-            self.logger.error(f"Failed to destroy instance: {e}")
+            self.logger.error(f"Failed to stop instance: {e}")
             return False
     
     def get_instance_status(self) -> Optional[str]:
@@ -546,8 +547,8 @@ class ExoscaleOllamaAdapter:
                 idle_time = time.time() - self.last_activity
             
             if idle_time > self.idle_timeout:
-                self.logger.info(f"Instance idle for {idle_time:.0f}s, shutting down")
-                self.destroy_instance()
+                self.logger.info(f"Instance idle for {idle_time:.0f}s, stopping")
+                self.stop_instance()
                 break
     
     def start_idle_monitor(self):
@@ -575,7 +576,7 @@ class ExoscaleOllamaAdapter:
     def shutdown(self):
         """Shutdown the adapter and cleanup resources.
         
-        Stops idle monitor and destroys instance.
+        Stops idle monitor and halts instance.
         Protected against duplicate calls.
         """
         with self._shutdown_lock:
@@ -587,4 +588,4 @@ class ExoscaleOllamaAdapter:
         self.logger.info("Shutting down Exoscale adapter")
         self.stop_idle_monitor()
         if self.instance_id:
-            self.destroy_instance()
+            self.stop_instance()

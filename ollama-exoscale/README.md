@@ -62,7 +62,7 @@ All configuration is done via environment variables:
 | `EXOSCALE_INSTANCE_TYPE` | Instance type (e.g., `a5000.small`, `standard.medium`) | `a5000.small` |
 | `EXOSCALE_TEMPLATE` | OS template name | `Linux Ubuntu 22.04 LTS 64-bit` |
 | `EXOSCALE_DISK_SIZE` | Root disk size in GB | `50` |
-| `EXOSCALE_IDLE_TIMEOUT` | Seconds of inactivity before auto-shutdown | `1800` (30 min) |
+| `EXOSCALE_IDLE_TIMEOUT` | Seconds of inactivity before auto-stop | `1800` (30 min) |
 | `OLLAMA_MODEL` | Ollama model to pull on startup | `granite3.1-dense:8b` |
 
 ## API Endpoints
@@ -98,12 +98,12 @@ The proxy implements all Ollama API endpoints:
 1. **Startup**: The container starts and initializes the Exoscale adapter
 2. **First Request**: When the first API request arrives:
    - The adapter checks for an existing Exoscale instance
-   - If found and stopped, it starts the instance
+   - If found and stopped/halted, it starts the instance
    - If not found, it creates a new instance with cloud-init script
    - The cloud-init script installs Docker and runs the Ollama container
 3. **Request Proxying**: All requests are transparently forwarded to the remote Ollama instance
 4. **Activity Tracking**: Each request records activity for idle monitoring
-5. **Idle Shutdown**: After `EXOSCALE_IDLE_TIMEOUT` seconds of inactivity, the remote instance is destroyed
+5. **Idle Shutdown**: After `EXOSCALE_IDLE_TIMEOUT` seconds of inactivity, the remote instance is stopped (not destroyed) to preserve quota
 
 ## Monitoring
 
@@ -130,9 +130,10 @@ Response example:
 
 The proxy is designed to minimize cloud costs:
 
-- **Idle Shutdown**: Automatically destroys the instance after inactivity
+- **Idle Shutdown**: Automatically stops (halts) the instance after inactivity, preserving it for quick restart
 - **On-Demand Creation**: Only creates instances when needed
-- **Instance Reuse**: Finds and reuses existing stopped instances before creating new ones
+- **Instance Reuse**: Finds and reuses existing stopped/halted instances before creating new ones
+- **Quota Preservation**: Instances are stopped instead of destroyed to avoid quota limitations on instance creation
 
 With default settings (30 minute idle timeout), you only pay for the time the instance is actually processing requests plus the idle period.
 
@@ -158,7 +159,7 @@ The first startup takes 1-2 minutes for cloud-init to complete:
 - Pulling the Ollama container
 - Pulling the configured model
 
-Subsequent starts are faster (30-60 seconds) if the instance was stopped, not destroyed.
+Subsequent starts are faster (30-60 seconds) as the instance is stopped (not destroyed) when idle.
 
 ### Requests timeout
 
