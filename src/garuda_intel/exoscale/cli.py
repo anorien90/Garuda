@@ -29,8 +29,8 @@ def get_adapter_from_env() -> Optional[ExoscaleOllamaAdapter]:
         print("Error: EXOSCALE_API_KEY and EXOSCALE_API_SECRET must be set")
         return None
     
-    zone = os.environ.get("EXOSCALE_ZONE", "ch-gva-2")
-    instance_type = os.environ.get("EXOSCALE_INSTANCE_TYPE", "standard.medium")
+    zone = os.environ.get("EXOSCALE_ZONE", "at-vie-2")
+    instance_type = os.environ.get("EXOSCALE_INSTANCE_TYPE", "a5000.small")
     template = os.environ.get("EXOSCALE_TEMPLATE", "Linux Ubuntu 22.04 LTS 64-bit")
     disk_size = int(os.environ.get("EXOSCALE_DISK_SIZE", "50"))
     ollama_model = os.environ.get("EXOSCALE_OLLAMA_MODEL") or os.environ.get("GARUDA_OLLAMA_MODEL", "granite3.1-dense:8b")

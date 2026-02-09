@@ -101,8 +101,8 @@ class Settings:
     # Exoscale remote Ollama settings
     exoscale_api_key: Optional[str] = None
     exoscale_api_secret: Optional[str] = None
-    exoscale_zone: str = "ch-gva-2"
-    exoscale_instance_type: str = "standard.medium"  # CPU type, user can change to GPU
+    exoscale_zone: str = "at-vie-2"
+    exoscale_instance_type: str = "a5000.small"  # CPU type, user can change to GPU
     exoscale_template: str = "Linux Ubuntu 22.04 LTS 64-bit"
     exoscale_disk_size: int = 50  # GB
     exoscale_ollama_key: Optional[str] = None  # Auto-generated if not set
