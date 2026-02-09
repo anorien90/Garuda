@@ -519,7 +519,9 @@ class AgentService:
         
         entities = session.execute(stmt).scalars().all()
         
-        # Exclude entities that were soft-merged into another entity
+        # Exclude entities that were previously soft-merged into another entity.
+        # This is a backward-compatibility safety net for data merged before
+        # _merge_entity_group was updated to hard-delete secondary entities.
         entities = [
             e for e in entities
             if not (e.metadata_json and e.metadata_json.get("merged_into"))
