@@ -97,6 +97,16 @@ class Settings:
     agent_autonomous_max_depth: int = 3  # Max exploration depth for autonomous discovery
     agent_autonomous_auto_crawl: bool = False  # Whether to automatically trigger crawls
     agent_autonomous_max_pages: int = 25  # Max pages per autonomous crawl
+    
+    # Exoscale remote Ollama settings
+    exoscale_api_key: Optional[str] = None
+    exoscale_api_secret: Optional[str] = None
+    exoscale_zone: str = "ch-gva-2"
+    exoscale_instance_type: str = "standard.medium"  # CPU type, user can change to GPU
+    exoscale_template: str = "Linux Ubuntu 22.04 LTS 64-bit"
+    exoscale_disk_size: int = 50  # GB
+    exoscale_ollama_key: Optional[str] = None  # Auto-generated if not set
+    exoscale_idle_timeout: int = 1800  # 30 minutes in seconds
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -164,8 +174,21 @@ class Settings:
             agent_autonomous_max_depth=int(os.environ.get("GARUDA_AGENT_AUTONOMOUS_MAX_DEPTH", "3")),
             agent_autonomous_auto_crawl=_as_bool(os.environ.get("GARUDA_AGENT_AUTONOMOUS_AUTO_CRAWL"), False),
             agent_autonomous_max_pages=int(os.environ.get("GARUDA_AGENT_AUTONOMOUS_MAX_PAGES", "25")),
+            # Exoscale remote Ollama settings
+            exoscale_api_key=os.environ.get("EXOSCALE_API_KEY"),
+            exoscale_api_secret=os.environ.get("EXOSCALE_API_SECRET"),
+            exoscale_zone=os.environ.get("EXOSCALE_ZONE", "ch-gva-2"),
+            exoscale_instance_type=os.environ.get("EXOSCALE_INSTANCE_TYPE", "standard.medium"),
+            exoscale_template=os.environ.get("EXOSCALE_TEMPLATE", "Linux Ubuntu 22.04 LTS 64-bit"),
+            exoscale_disk_size=int(os.environ.get("EXOSCALE_DISK_SIZE", "50")),
+            exoscale_ollama_key=os.environ.get("EXOSCALE_OLLAMA_KEY"),
+            exoscale_idle_timeout=int(os.environ.get("EXOSCALE_IDLE_TIMEOUT", "1800")),
         )
 
     @property
     def vector_enabled(self) -> bool:
         return bool(self.qdrant_url)
+    
+    @property
+    def exoscale_enabled(self) -> bool:
+        return bool(self.exoscale_api_key and self.exoscale_api_secret)
