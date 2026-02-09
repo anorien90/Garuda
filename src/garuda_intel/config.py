@@ -107,6 +107,13 @@ class Settings:
     exoscale_disk_size: int = 50  # GB
     exoscale_ollama_key: Optional[str] = None  # Auto-generated if not set
     exoscale_idle_timeout: int = 1800  # 30 minutes in seconds
+    
+    # Local data settings
+    local_data_watch_dir: Optional[str] = None  # Directory to watch for files
+    local_data_watch_enabled: bool = False  # Enable directory watching
+    local_data_watch_interval: int = 10  # Poll interval in seconds
+    local_data_watch_recursive: bool = True  # Recursively watch subdirectories
+    local_data_max_file_size_mb: int = 100  # Maximum file size for local ingestion
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -183,6 +190,12 @@ class Settings:
             exoscale_disk_size=int(os.environ.get("EXOSCALE_DISK_SIZE", "50")),
             exoscale_ollama_key=os.environ.get("EXOSCALE_OLLAMA_KEY", f"garuda-remote-ollama-{os.urandom(4).hex()}"),
             exoscale_idle_timeout=int(os.environ.get("EXOSCALE_IDLE_TIMEOUT", "1800")),
+            # Local data settings
+            local_data_watch_dir=os.environ.get("GARUDA_LOCAL_DATA_WATCH_DIR"),
+            local_data_watch_enabled=_as_bool(os.environ.get("GARUDA_LOCAL_DATA_WATCH_ENABLED"), False),
+            local_data_watch_interval=int(os.environ.get("GARUDA_LOCAL_DATA_WATCH_INTERVAL", "10")),
+            local_data_watch_recursive=_as_bool(os.environ.get("GARUDA_LOCAL_DATA_WATCH_RECURSIVE"), True),
+            local_data_max_file_size_mb=int(os.environ.get("GARUDA_LOCAL_DATA_MAX_FILE_SIZE_MB", "100")),
         )
 
     @property

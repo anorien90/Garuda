@@ -1,5 +1,6 @@
 """Garuda Intel Webapp - Main Application Entry Point."""
 
+import os
 import signal
 import sys
 import threading
@@ -35,6 +36,7 @@ from .routes import static, recorder, search, crawling, entities, relationships
 from .routes import entity_gaps, entity_deduplication, entity_relations, media
 from .routes import graph_search, relationship_confidence, schema, agent
 from .routes import tasks as tasks_routes
+from .routes import local_data as local_data_routes
 
 settings = Settings.from_env()
 
@@ -257,6 +259,76 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
             tq.update_progress(task_id, 1.0, "Crawl complete")
             return result
 
+    def _handle_local_ingest(task_id, params):
+        """Handle local file ingestion tasks."""
+        from ..sources.local_file_adapter import LocalFileAdapter
+        
+        file_path = params.get("file_path", "")
+        event = params.get("event", "unknown")
+        
+        tq.update_progress(task_id, 0.1, f"Processing local file: {os.path.basename(file_path)}")
+        
+        adapter = LocalFileAdapter({"max_file_size_mb": getattr(settings, 'local_data_max_file_size_mb', 100)})
+        document = adapter.process_file(file_path)
+        
+        if not document:
+            return {"error": "Failed to extract content from file", "file_path": file_path}
+        
+        tq.update_progress(task_id, 0.5, "Content extracted, storing results")
+        
+        # Store the extracted content as a page + page_content in the database
+        import uuid as _uuid
+        from datetime import datetime as _dt
+        from ..database.models import Page, PageContent
+        
+        page_id = _uuid.uuid4()
+        content_id = _uuid.uuid4()
+        with store.Session() as session:
+            page = Page(
+                id=page_id,
+                entry_type="page",
+                url=document.url,
+                title=document.title,
+                page_type="local_file",
+                last_status="processed",
+                last_fetch_at=_dt.utcnow(),
+                text_length=len(document.content) if document.content else 0,
+                score=document.confidence,
+            )
+            session.add(page)
+            session.flush()
+            
+            page_content = PageContent(
+                id=content_id,
+                entry_type="page_content",
+                page_id=page_id,
+                page_url=document.url,
+                text=document.content[:50000] if document.content else "",
+                metadata_json={
+                    "source": "local_file",
+                    "event": event,
+                    "file_type": document.metadata.get("file_type", ""),
+                    "file_size_mb": document.metadata.get("file_size_mb", 0),
+                    "confidence": document.confidence,
+                    "original_filename": params.get("original_filename", document.title),
+                },
+                fetch_ts=_dt.utcnow(),
+            )
+            session.add(page_content)
+            session.commit()
+        
+        tq.update_progress(task_id, 1.0, "Local file ingestion complete")
+        
+        return {
+            "page_id": str(page_id),
+            "file_path": file_path,
+            "title": document.title,
+            "content_length": len(document.content),
+            "confidence": document.confidence,
+            "source_type": document.source_type.value,
+            "event": event,
+        }
+
     tq.register_handler(TaskQueueService.TASK_AGENT_REFLECT, _handle_agent_reflect)
     tq.register_handler(TaskQueueService.TASK_AGENT_EXPLORE, _handle_agent_explore)
     tq.register_handler(TaskQueueService.TASK_AGENT_AUTONOMOUS, _handle_agent_autonomous)
@@ -266,6 +338,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
     tq.register_handler(TaskQueueService.TASK_AGENT_CHAT, _handle_agent_chat)
     tq.register_handler(TaskQueueService.TASK_CHAT, _handle_chat)
     tq.register_handler(TaskQueueService.TASK_CRAWL, _handle_crawl)
+    tq.register_handler(TaskQueueService.TASK_LOCAL_INGEST, _handle_local_ingest)
 
 
 # Auth helper
@@ -353,6 +426,28 @@ app.register_blueprint(
     tasks_routes.init_task_routes(api_key_required, task_queue)
 )
 
+# Initialize directory watcher if configured
+_directory_watcher = None
+if settings.local_data_watch_enabled and settings.local_data_watch_dir:
+    try:
+        from ..services.directory_watcher import DirectoryWatcherService
+        _directory_watcher = DirectoryWatcherService(
+            watch_dir=settings.local_data_watch_dir,
+            task_queue=task_queue,
+            poll_interval=settings.local_data_watch_interval,
+            recursive=settings.local_data_watch_recursive,
+        )
+        logger.info(f"Directory watcher configured for: {settings.local_data_watch_dir}")
+    except Exception as e:
+        logger.error(f"Failed to initialize directory watcher: {e}")
+
+# Register local data routes
+app.register_blueprint(
+    local_data_routes.init_local_data_routes(
+        api_key_required, settings, task_queue, _directory_watcher
+    )
+)
+
 # Lazy-register task handlers: we need the same AgentService instance used by agent routes.
 # Import it fresh and create one to register handlers.
 from ..services.agent_service import AgentService as _AgentService
@@ -370,6 +465,11 @@ _register_task_handlers(task_queue, _agent_for_queue, store, gap_analyzer, adapt
 # Start the task queue worker
 task_queue.start_worker()
 
+# Start directory watcher if configured
+if _directory_watcher:
+    _directory_watcher.start()
+    logger.info("Directory watcher started")
+
 
 def main():
     """Run the Flask application."""
@@ -385,6 +485,8 @@ def main():
         """
         shutdown_manager.request_shutdown()
         task_queue.stop_worker()
+        if _directory_watcher:
+            _directory_watcher.stop()
     
     # Only register signal handlers in production mode
     # In debug mode, Flask's reloader interferes with signal handling

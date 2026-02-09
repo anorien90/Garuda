@@ -19,6 +19,7 @@ class SourceType(Enum):
     DATABASE = "database"
     SOCIAL_MEDIA = "social_media"
     STRUCTURED_DATA = "structured_data"
+    LOCAL_FILE = "local_file"
 
 
 @dataclass

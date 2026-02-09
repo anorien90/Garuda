@@ -40,6 +40,7 @@ class TaskQueueService:
     TASK_AGENT_CHAT = "agent_chat"
     TASK_CHAT = "chat"
     TASK_CRAWL = "crawl"
+    TASK_LOCAL_INGEST = "local_ingest"
 
     # Task category constants
     CATEGORY_IO = "io"
@@ -90,6 +91,7 @@ class TaskQueueService:
             self.TASK_AGENT_COMBINED: self.CATEGORY_LLM,
             self.TASK_AGENT_CHAT: self.CATEGORY_LLM,
             self.TASK_CHAT: self.CATEGORY_LLM,
+            self.TASK_LOCAL_INGEST: self.CATEGORY_IO,
         }
         
         # Mark any previously running tasks as failed (restart recovery)
