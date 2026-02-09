@@ -611,11 +611,11 @@ class TestProcessManagement:
         assert status["status"] == "completed"
 
 
-class TestSoftMergeEntities:
-    """Test that entity merging uses soft-merge (no deletion)."""
+class TestHardDeleteEntities:
+    """Test that entity merging uses hard delete to clean up secondary entities."""
 
-    def test_merge_entity_group_soft_merge(self):
-        """Test that _merge_entity_group marks secondary as merged instead of deleting."""
+    def test_merge_entity_group_hard_delete(self):
+        """Test that _merge_entity_group deletes secondary entities after merging."""
         from garuda_intel.services.agent_service import AgentService
 
         mock_store = MagicMock()
@@ -646,8 +646,13 @@ class TestSoftMergeEntities:
 
         mock_session.get = mock_get
 
-        # Mock empty query results for relationships and intelligence
-        mock_session.execute.return_value.scalars.return_value.all.return_value = []
+        # Mock execute to return empty lists for all queries
+        def mock_execute(_):
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = []
+            return mock_result
+        
+        mock_session.execute = mock_execute
 
         agent = AgentService(store=mock_store, llm=None, vector_store=None)
 
@@ -664,14 +669,72 @@ class TestSoftMergeEntities:
         assert result["merged_count"] == 1
         assert result["primary_entity"]["id"] == "primary-uuid"
 
-        # Verify secondary entity was NOT deleted
-        mock_session.delete.assert_not_called()
+        # Verify secondary entity WAS deleted
+        mock_session.delete.assert_called()
+        
+        # Check that session.delete was called with secondary_entity
+        delete_calls = mock_session.delete.call_args_list
+        deleted_secondary = any(
+            hasattr(call[0][0], 'id') and call[0][0].id == "secondary-uuid"
+            for call in delete_calls
+        )
+        assert deleted_secondary, "Secondary entity should have been deleted"
 
-        # Verify secondary entity was soft-merged with metadata
-        assert secondary_entity.metadata_json is not None
-        assert secondary_entity.metadata_json.get("merged_into") == "primary-uuid"
-        assert "merged_at" in secondary_entity.metadata_json
-        assert secondary_entity.metadata_json.get("merge_reason") == "duplicate"
+        # Verify flush was called
+        mock_session.flush.assert_called()
+
+        # Verify primary entity has merge history in metadata
+        assert primary_entity.metadata_json is not None
+        assert "merged_from" in primary_entity.metadata_json
+        merge_history = primary_entity.metadata_json["merged_from"]
+        assert len(merge_history) == 1
+        assert merge_history[0]["id"] == "secondary-uuid"
+        assert merge_history[0]["name"] == "Microsoft Corp"
+        assert merge_history[0]["kind"] == "company"
+        assert "merged_at" in merge_history[0]
+
+
+class TestValidateDataQualityFiltering:
+    """Test that data quality validation excludes soft-merged entities."""
+
+    def test_validate_data_quality_excludes_merged_entities(self):
+        """Test that _validate_data_quality excludes entities with merged_into metadata."""
+        from garuda_intel.services.agent_service import AgentService
+
+        mock_store = MagicMock()
+        mock_session = MagicMock()
+
+        # Create normal entity (should be validated)
+        normal_entity = MagicMock()
+        normal_entity.id = "normal-uuid"
+        normal_entity.name = "Normal Company"
+        normal_entity.kind = "company"
+        normal_entity.metadata_json = {}
+
+        # Create soft-merged entity (should be excluded)
+        merged_entity = MagicMock()
+        merged_entity.id = "merged-uuid"
+        merged_entity.name = "Merged Company"
+        merged_entity.kind = "company"
+        merged_entity.metadata_json = {"merged_into": "primary-uuid"}
+
+        # Mock session.execute to return both entities
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [normal_entity, merged_entity]
+        mock_session.execute.return_value = mock_result
+
+        agent = AgentService(store=mock_store, llm=None, vector_store=None)
+
+        # Mock _count_relations to return 0 for both (they're orphans)
+        agent._count_relations = MagicMock(return_value=0)
+
+        issues = agent._validate_data_quality(mock_session, target_entities=None)
+
+        # Only the normal entity should be reported (merged entity excluded)
+        assert len(issues) == 1
+        assert issues[0]["entity_id"] == "normal-uuid"
+        assert issues[0]["entity_name"] == "Normal Company"
+        assert "Orphan entity (no relationships)" in issues[0]["issues"]
 
 
 class TestInvestigateRelationQueries:

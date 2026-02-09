@@ -20,7 +20,7 @@ from sqlalchemy import select, func, desc, and_, or_
 from sqlalchemy.orm import Session
 
 from ..database.store import PersistenceStore
-from ..database.models import Entity, Relationship, Intelligence, Page
+from ..database.models import Entity, Relationship, Intelligence, Page, EntityFieldValue, MediaItem, FieldDiscoveryLog
 from ..extractor.llm import LLMIntelExtractor
 from ..extractor.entity_merger import EntityMerger, SemanticEntityDeduplicator, GraphSearchEngine, ENTITY_TYPE_HIERARCHY, ENTITY_TYPE_CHILDREN
 from ..vector.base import VectorStore
@@ -418,13 +418,76 @@ class AgentService:
             ).scalars().all():
                 intel.entity_id = primary_id
             
-            # Soft-merge: mark secondary as merged instead of deleting
-            # This preserves all entity records while indicating the merge
-            if not secondary_entity.metadata_json:
-                secondary_entity.metadata_json = {}
-            secondary_entity.metadata_json["merged_into"] = primary_id
-            secondary_entity.metadata_json["merged_at"] = datetime.now().isoformat()
-            secondary_entity.metadata_json["merge_reason"] = "duplicate"
+            # Transfer EntityFieldValue records
+            for fv in session.execute(
+                select(EntityFieldValue).where(EntityFieldValue.entity_id == secondary_id)
+            ).scalars().all():
+                fv.entity_id = primary_id
+
+            # Transfer Page references
+            for page in session.execute(
+                select(Page).where(Page.entity_id == secondary_id)
+            ).scalars().all():
+                page.entity_id = primary_id
+
+            # Transfer MediaItem references
+            for media in session.execute(
+                select(MediaItem).where(MediaItem.entity_id == secondary_id)
+            ).scalars().all():
+                media.entity_id = primary_id
+
+            # Transfer FieldDiscoveryLog references
+            for log in session.execute(
+                select(FieldDiscoveryLog).where(FieldDiscoveryLog.entity_id == secondary_id)
+            ).scalars().all():
+                log.entity_id = primary_id
+            
+            # Flush to persist relationship/record redirects before deletion
+            session.flush()
+            
+            # Remove self-referential relationships created by the merge
+            self_refs = session.execute(
+                select(Relationship).where(
+                    Relationship.source_id == primary_id,
+                    Relationship.target_id == primary_id,
+                )
+            ).scalars().all()
+            for rel in self_refs:
+                session.delete(rel)
+            
+            # Deduplicate relationships for the primary entity
+            all_rels = session.execute(
+                select(Relationship).where(
+                    or_(Relationship.source_id == primary_id, Relationship.target_id == primary_id)
+                )
+            ).scalars().all()
+            rel_groups = {}
+            for rel in all_rels:
+                key = (str(rel.source_id), str(rel.target_id), rel.relation_type or "")
+                if key not in rel_groups:
+                    rel_groups[key] = []
+                rel_groups[key].append(rel)
+            for key, rels in rel_groups.items():
+                if len(rels) > 1:
+                    # Sort by ID (converted to string for consistent ordering of UUID types)
+                    rels_sorted = sorted(rels, key=lambda r: str(r.id))
+                    for rel in rels_sorted[1:]:
+                        session.delete(rel)
+            
+            # Record merge in primary entity's metadata
+            if not primary_entity.metadata_json:
+                primary_entity.metadata_json = {}
+            merge_history = primary_entity.metadata_json.get("merged_from", [])
+            merge_history.append({
+                "id": str(secondary_entity.id),
+                "name": secondary_entity.name,
+                "kind": secondary_entity.kind,
+                "merged_at": datetime.now().isoformat(),
+            })
+            primary_entity.metadata_json["merged_from"] = merge_history
+            
+            # Hard delete the secondary entity
+            session.delete(secondary_entity)
             merged_count += 1
         
         return {
@@ -455,6 +518,14 @@ class AgentService:
             stmt = stmt.where(or_(*conditions))
         
         entities = session.execute(stmt).scalars().all()
+        
+        # Exclude entities that were previously soft-merged into another entity.
+        # This is a backward-compatibility safety net for data merged before
+        # _merge_entity_group was updated to hard-delete secondary entities.
+        entities = [
+            e for e in entities
+            if not (e.metadata_json and e.metadata_json.get("merged_into"))
+        ]
         
         for entity in entities:
             entity_issues = []
