@@ -407,8 +407,8 @@ class DirectoryWatcherService:
             # Get initial size
             initial_size = os.path.getsize(filepath)
             
-            # Wait debounce period
-            time.sleep(self.DEBOUNCE_WAIT_SECONDS)
+            # Wait debounce period (interruptible by shutdown)
+            self._shutdown_event.wait(self.DEBOUNCE_WAIT_SECONDS)
             
             # Check if shutdown was requested during wait
             if self._shutdown_event.is_set():

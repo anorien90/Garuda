@@ -65,11 +65,14 @@ def init_local_data_routes(api_key_required, settings, task_queue, directory_wat
                          f"(max: {settings.local_data_max_file_size_mb}MB)",
             }), 400
         
-        # Save to upload directory
-        upload_dir = os.path.join(
-            os.path.dirname(settings.db_url.replace("sqlite:///", "")),
-            "uploads"
-        )
+        # Save to upload directory (use watch dir if configured, else fallback to data dir)
+        if settings.local_data_watch_dir:
+            upload_dir = os.path.join(settings.local_data_watch_dir, "uploads")
+        else:
+            # Derive from DB URL for SQLite, or use /app/data/uploads as fallback
+            db_path = settings.db_url.replace("sqlite:///", "")
+            base_dir = os.path.dirname(db_path) if "sqlite" in settings.db_url else "/app/data"
+            upload_dir = os.path.join(base_dir, "uploads")
         os.makedirs(upload_dir, exist_ok=True)
         
         # Use secure filename
@@ -181,9 +184,9 @@ def init_local_data_routes(api_key_required, settings, task_queue, directory_wat
         if not file_path:
             return jsonify({"error": "file_path is required"}), 400
         
-        # Validate file exists
+        # Validate file exists and is accessible
         real_path = os.path.realpath(file_path)
-        if '..' in file_path or not os.path.isfile(real_path):
+        if not os.path.isfile(real_path):
             return jsonify({"error": "Invalid file path"}), 400
         
         # Validate extension
