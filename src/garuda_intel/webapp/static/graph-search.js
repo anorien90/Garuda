@@ -582,7 +582,7 @@ function escapeAttr(text) {
 
 window.searchEntitiesSemantic = async function(query, options) {
   const results = await searchEntitiesSemantic(query, options);
-  const container = document.getElementById('graph-search-results');
+  const container = document.getElementById('entity-search-results') || document.getElementById('graph-search-results');
   if (container) {
     displaySearchResults(results, container);
   }

@@ -4,13 +4,14 @@
     <div class="flex items-center justify-between flex-wrap gap-3">
       <div>
         <h3 class="text-xl font-bold text-slate-900 dark:text-white">🔍 Unified Search</h3>
-        <p class="text-sm text-slate-600 dark:text-slate-400">Search across structured data (SQL), semantic vectors, and entity graph</p>
+        <p class="text-sm text-slate-600 dark:text-slate-400">All search modes in one place - SQL, Semantic, RAG, AI Chat, Entity Search</p>
       </div>
       <div class="flex gap-2 flex-wrap">
         <button id="search-mode-toggle-sql" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-brand-600 text-white">SQL</button>
         <button id="search-mode-toggle-semantic" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Semantic</button>
-        <button id="search-mode-toggle-both" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">Both</button>
-        <button id="search-mode-toggle-advanced" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700">🧠 Advanced RAG</button>
+        <button id="search-mode-toggle-rag" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700">🧠 RAG</button>
+        <button id="search-mode-toggle-chat" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700">💬 AI Chat</button>
+        <button id="search-mode-toggle-entity" class="px-3 py-1 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700">🏷️ Entity</button>
       </div>
     </div>
     
@@ -59,29 +60,29 @@
     </div>
     
     <!-- Advanced RAG Search Form (Multidimensional: Embedding + Graph) -->
-    <div id="advanced-search-form-container" class="hidden">
+    <div id="rag-search-form-container" class="hidden">
       <div class="p-3 mb-3 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800">
         <p class="text-xs text-purple-800 dark:text-purple-200">
           <strong>🧠 Advanced RAG</strong> combines embedding-based semantic search with entity graph traversal for multidimensional results.
         </p>
       </div>
-      <form id="advanced-form" class="space-y-3">
+      <form id="rag-form" class="space-y-3">
         <div>
           <label class="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-100">Query</label>
-          <input id="advanced-q" type="search" placeholder="Natural language query for multidimensional search" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-purple-500 focus:ring-purple-500"/>
+          <input id="rag-q" type="search" placeholder="Natural language query for multidimensional search" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-purple-500 focus:ring-purple-500"/>
         </div>
         <div class="grid gap-3 sm:grid-cols-3">
           <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
             Top K Results
-            <input id="advanced-topk" type="number" min="1" max="50" value="10" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+            <input id="rag-topk" type="number" min="1" max="50" value="10" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
           </label>
           <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
             Graph Depth
-            <input id="advanced-graph-depth" type="number" min="1" max="5" value="2" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+            <input id="rag-graph-depth" type="number" min="1" max="5" value="2" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
           </label>
           <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100 flex flex-col">
             Include Graph
-            <select id="advanced-include-graph" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500">
+            <select id="rag-include-graph" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500">
               <option value="true">Yes - Full Multidimensional</option>
               <option value="false">No - Embedding Only</option>
             </select>
@@ -89,6 +90,85 @@
         </div>
         <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-purple-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500">
           🧠 Search Advanced RAG
+        </button>
+      </form>
+    </div>
+    
+    <!-- AI Chat Mode Form -->
+    <div id="chat-search-form-container" class="hidden">
+      <div class="p-3 mb-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+        <p class="text-xs text-green-800 dark:text-green-200">
+          <strong>💬 AI Chat Mode</strong> - Deep RAG Chat combines embedding similarity, entity graph traversal, and SQL keyword search with autonomous web crawling if needed.
+        </p>
+      </div>
+      <form id="search-tab-chat-form" class="space-y-3">
+        <label class="space-y-2 text-sm font-medium text-slate-800 dark:text-slate-100">
+          Question
+          <textarea id="search-tab-chat-q" rows="3" placeholder="Ask a question about collected intel" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"></textarea>
+        </label>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Entity (optional)
+            <input id="search-tab-chat-entity" type="text" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+          </label>
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Top K
+            <input id="search-tab-chat-topk" type="number" min="1" max="20" value="6" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+          </label>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            Max Search Cycles
+            <input id="search-tab-chat-max-cycles" type="number" min="1" max="10" value="3" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
+          </label>
+          <label class="flex items-center space-x-2 pt-6">
+            <input id="search-tab-chat-autonomous-mode" type="checkbox" class="rounded border-slate-300 dark:border-slate-700 text-brand-600 focus:ring-brand-500"/>
+            <span class="text-sm font-medium text-slate-800 dark:text-slate-100">🤖 Autonomous Mode</span>
+          </label>
+        </div>
+        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-green-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-green-500 focus:outline-none focus:ring-2 focus:ring-green-500">
+          💬 Ask AI
+        </button>
+      </form>
+    </div>
+    
+    <!-- Entity Search Form -->
+    <div id="entity-search-form-container" class="hidden">
+      <div class="p-3 mb-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
+        <p class="text-xs text-indigo-800 dark:text-indigo-200">
+          <strong>🏷️ Entity Search</strong> - Search entities using hybrid SQL + semantic similarity. Find "Microsoft" even when searching "Microsoft Corp".
+        </p>
+      </div>
+      <form id="entity-form" class="space-y-3">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-100">Search Query</label>
+            <input type="text" id="entity-search-query" 
+                   class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm"
+                   placeholder="e.g., Microsoft Corporation">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-100">Entity Type</label>
+            <select id="entity-search-kind" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm">
+              <option value="">Any Type</option>
+              <option value="company">Company</option>
+              <option value="person">Person</option>
+              <option value="location">Location</option>
+              <option value="product">Product</option>
+              <option value="organization">Organization</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-100">Similarity Threshold</label>
+            <div class="flex items-center gap-2">
+              <input type="range" id="entity-search-threshold" min="0.5" max="1.0" step="0.05" value="0.7" 
+                     class="flex-1" onchange="document.getElementById('entity-threshold-val').textContent = this.value">
+              <span id="entity-threshold-val" class="text-sm font-mono w-10">0.7</span>
+            </div>
+          </div>
+        </div>
+        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          🏷️ Search Entities
         </button>
       </form>
     </div>
@@ -105,12 +185,22 @@
         <div id="semantic-results" class="grid gap-3"></div>
       </div>
       
-      <div id="advanced-results-container" class="hidden">
+      <div id="rag-results-container" class="hidden">
         <div class="flex items-center justify-between mb-2">
           <h4 class="text-sm font-bold text-purple-700 dark:text-purple-300">🧠 Advanced RAG Results</h4>
-          <div id="advanced-stats" class="text-xs text-slate-500 dark:text-slate-400"></div>
+          <div id="rag-stats" class="text-xs text-slate-500 dark:text-slate-400"></div>
         </div>
-        <div id="advanced-results" class="grid gap-3"></div>
+        <div id="rag-results" class="grid gap-3"></div>
+      </div>
+      
+      <div id="chat-results-container" class="hidden">
+        <h4 class="text-sm font-bold text-green-700 dark:text-green-300 mb-2">💬 AI Chat Answer</h4>
+        <div id="search-tab-chat-answer" class="space-y-3"></div>
+      </div>
+      
+      <div id="entity-results-container" class="hidden">
+        <h4 class="text-sm font-bold text-indigo-700 dark:text-indigo-300 mb-2">🏷️ Entity Search Results</h4>
+        <div id="entity-search-results" class="grid gap-3"></div>
       </div>
     </div>
   </article>
@@ -121,87 +211,100 @@
 document.addEventListener('DOMContentLoaded', () => {
   const sqlBtn = document.getElementById('search-mode-toggle-sql');
   const semanticBtn = document.getElementById('search-mode-toggle-semantic');
-  const bothBtn = document.getElementById('search-mode-toggle-both');
-  const advancedBtn = document.getElementById('search-mode-toggle-advanced');
+  const ragBtn = document.getElementById('search-mode-toggle-rag');
+  const chatBtn = document.getElementById('search-mode-toggle-chat');
+  const entityBtn = document.getElementById('search-mode-toggle-entity');
   
   const sqlForm = document.getElementById('sql-search-form-container');
   const semanticForm = document.getElementById('semantic-search-form-container');
-  const advancedForm = document.getElementById('advanced-search-form-container');
+  const ragForm = document.getElementById('rag-search-form-container');
+  const chatForm = document.getElementById('chat-search-form-container');
+  const entityForm = document.getElementById('entity-search-form-container');
+  
   const sqlResults = document.getElementById('sql-results-container');
   const semanticResults = document.getElementById('semantic-results-container');
-  const advancedResults = document.getElementById('advanced-results-container');
+  const ragResults = document.getElementById('rag-results-container');
+  const chatResults = document.getElementById('chat-results-container');
+  const entityResults = document.getElementById('entity-results-container');
   
   function setMode(mode) {
     // Reset all button styles
-    [sqlBtn, semanticBtn, bothBtn].forEach(btn => {
-      btn.classList.remove('bg-brand-600', 'text-white');
-      btn.classList.add('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border', 'border-slate-200', 'dark:border-slate-700');
+    const allButtons = [sqlBtn, semanticBtn, ragBtn, chatBtn, entityBtn];
+    allButtons.forEach(btn => {
+      btn.classList.remove('bg-brand-600', 'bg-purple-600', 'bg-green-600', 'bg-indigo-600', 'text-white');
+      btn.classList.add('bg-white', 'dark:bg-slate-900', 'border');
     });
-    advancedBtn.classList.remove('bg-purple-600', 'text-white');
-    advancedBtn.classList.add('bg-white', 'dark:bg-slate-900', 'text-purple-700', 'dark:text-purple-300', 'border', 'border-purple-300', 'dark:border-purple-700');
+    
+    // Reset specific colors
+    ragBtn.classList.add('text-purple-700', 'dark:text-purple-300', 'border-purple-300', 'dark:border-purple-700');
+    chatBtn.classList.add('text-green-700', 'dark:text-green-300', 'border-green-300', 'dark:border-green-700');
+    entityBtn.classList.add('text-indigo-700', 'dark:text-indigo-300', 'border-indigo-300', 'dark:border-indigo-700');
+    sqlBtn.classList.add('text-slate-800', 'dark:text-slate-100', 'border-slate-200', 'dark:border-slate-700');
+    semanticBtn.classList.add('text-slate-800', 'dark:text-slate-100', 'border-slate-200', 'dark:border-slate-700');
     
     // Hide all forms and results
-    sqlForm.classList.add('hidden');
-    semanticForm.classList.add('hidden');
-    advancedForm.classList.add('hidden');
-    sqlResults.classList.add('hidden');
-    semanticResults.classList.add('hidden');
-    advancedResults.classList.add('hidden');
+    [sqlForm, semanticForm, ragForm, chatForm, entityForm].forEach(f => f?.classList.add('hidden'));
+    [sqlResults, semanticResults, ragResults, chatResults, entityResults].forEach(r => r?.classList.add('hidden'));
     
+    // Show selected mode
     if (mode === 'sql') {
       sqlBtn.classList.add('bg-brand-600', 'text-white');
       sqlBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border');
-      sqlForm.classList.remove('hidden');
-      sqlResults.classList.remove('hidden');
+      sqlForm?.classList.remove('hidden');
+      sqlResults?.classList.remove('hidden');
     } else if (mode === 'semantic') {
       semanticBtn.classList.add('bg-brand-600', 'text-white');
       semanticBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border');
-      semanticForm.classList.remove('hidden');
-      semanticResults.classList.remove('hidden');
-    } else if (mode === 'both') {
-      bothBtn.classList.add('bg-brand-600', 'text-white');
-      bothBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-slate-800', 'dark:text-slate-100', 'border');
-      sqlForm.classList.remove('hidden');
-      semanticForm.classList.remove('hidden');
-      sqlResults.classList.remove('hidden');
-      semanticResults.classList.remove('hidden');
-    } else if (mode === 'advanced') {
-      advancedBtn.classList.add('bg-purple-600', 'text-white');
-      advancedBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-purple-700', 'dark:text-purple-300', 'border');
-      advancedForm.classList.remove('hidden');
-      advancedResults.classList.remove('hidden');
+      semanticForm?.classList.remove('hidden');
+      semanticResults?.classList.remove('hidden');
+    } else if (mode === 'rag') {
+      ragBtn.classList.add('bg-purple-600', 'text-white');
+      ragBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-purple-700', 'dark:text-purple-300', 'border');
+      ragForm?.classList.remove('hidden');
+      ragResults?.classList.remove('hidden');
+    } else if (mode === 'chat') {
+      chatBtn.classList.add('bg-green-600', 'text-white');
+      chatBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-green-700', 'dark:text-green-300', 'border');
+      chatForm?.classList.remove('hidden');
+      chatResults?.classList.remove('hidden');
+    } else if (mode === 'entity') {
+      entityBtn.classList.add('bg-indigo-600', 'text-white');
+      entityBtn.classList.remove('bg-white', 'dark:bg-slate-900', 'text-indigo-700', 'dark:text-indigo-300', 'border');
+      entityForm?.classList.remove('hidden');
+      entityResults?.classList.remove('hidden');
     }
     
     localStorage.setItem('garuda_search_mode', mode);
   }
   
-  sqlBtn.addEventListener('click', () => setMode('sql'));
-  semanticBtn.addEventListener('click', () => setMode('semantic'));
-  bothBtn.addEventListener('click', () => setMode('both'));
-  advancedBtn.addEventListener('click', () => setMode('advanced'));
+  sqlBtn?.addEventListener('click', () => setMode('sql'));
+  semanticBtn?.addEventListener('click', () => setMode('semantic'));
+  ragBtn?.addEventListener('click', () => setMode('rag'));
+  chatBtn?.addEventListener('click', () => setMode('chat'));
+  entityBtn?.addEventListener('click', () => setMode('entity'));
   
   // Load saved mode
   const savedMode = localStorage.getItem('garuda_search_mode') || 'sql';
   setMode(savedMode);
   
   // Advanced RAG form submission
-  const advancedSearchForm = document.getElementById('advanced-form');
-  if (advancedSearchForm) {
-    advancedSearchForm.addEventListener('submit', async (e) => {
+  const ragSearchForm = document.getElementById('rag-form');
+  if (ragSearchForm) {
+    ragSearchForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       
-      const query = document.getElementById('advanced-q').value.trim();
-      const topK = parseInt(document.getElementById('advanced-topk').value) || 10;
-      const graphDepth = parseInt(document.getElementById('advanced-graph-depth').value) || 2;
-      const includeGraph = document.getElementById('advanced-include-graph').value === 'true';
+      const query = document.getElementById('rag-q').value.trim();
+      const topK = parseInt(document.getElementById('rag-topk').value) || 10;
+      const graphDepth = parseInt(document.getElementById('rag-graph-depth').value) || 2;
+      const includeGraph = document.getElementById('rag-include-graph').value === 'true';
       
       if (!query) {
         alert('Please enter a query');
         return;
       }
       
-      const resultsContainer = document.getElementById('advanced-results');
-      const statsContainer = document.getElementById('advanced-stats');
+      const resultsContainer = document.getElementById('rag-results');
+      const statsContainer = document.getElementById('rag-stats');
       resultsContainer.innerHTML = '<div class="text-sm text-slate-500 p-4">🔄 Searching with Advanced RAG...</div>';
       statsContainer.innerHTML = '';
       
@@ -262,6 +365,29 @@ document.addEventListener('DOMContentLoaded', () => {
         
       } catch (err) {
         resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
+      }
+    });
+  }
+  
+  // Entity Search form submission
+  const entitySearchForm = document.getElementById('entity-form');
+  if (entitySearchForm) {
+    entitySearchForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const query = document.getElementById('entity-search-query').value;
+      const kind = document.getElementById('entity-search-kind').value;
+      const threshold = parseFloat(document.getElementById('entity-search-threshold').value);
+      
+      if (!query) {
+        alert('Please enter a search query');
+        return;
+      }
+      
+      if (window.searchEntitiesSemantic) {
+        window.searchEntitiesSemantic(query, { kind, threshold });
+      } else {
+        alert('Entity search functionality not loaded. Please refresh the page.');
       }
     });
   }

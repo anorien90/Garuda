@@ -31,10 +31,12 @@ export const els = {
   semanticForm: document.getElementById('semantic-form'),
   semanticResults: document.getElementById('semantic-results'),
 
-  chatForm: document.getElementById('chat-form'),
-  chatAnswer: document.getElementById('chat-answer'),
   chatToggle: document.getElementById('chat-toggle'),
-  chatContainer: document.getElementById('chat-container'),
+  popupChatContainer: document.getElementById('popup-chat-container'),
+  popupChatForm: document.getElementById('popup-chat-form'),
+  popupChatAnswer: document.getElementById('popup-chat-answer'),
+  searchTabChatForm: document.getElementById('search-tab-chat-form'),
+  searchTabChatAnswer: document.getElementById('search-tab-chat-answer'),
   
   pagesList: document.getElementById('pages'),
   pageDetail: document.getElementById('page-detail'),

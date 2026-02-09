@@ -8,28 +8,50 @@ export async function chatAsk(e) {
   
   // Find the correct answer container relative to the submitted form
   const submittedForm = e && e.target;
-  const chatContainer = submittedForm ? submittedForm.closest('#chat-container') : null;
-  const answerEl = chatContainer
-    ? chatContainer.querySelector('#chat-answer')
-    : els.chatAnswer;
+  const formId = submittedForm?.id;
   
-  if (!answerEl) return;
-  // Resolve input elements relative to the submitted form so that
-  // the correct values are read when chat.html is included more than
-  // once on the page (e.g. search-tab AND floating chat widget).
-  const qEl = submittedForm ? submittedForm.querySelector('#chat-q') : getEl('chat-q');
-  const entityEl = submittedForm ? submittedForm.querySelector('#chat-entity') : getEl('chat-entity');
-  const topkEl = submittedForm ? submittedForm.querySelector('#chat-topk') : getEl('chat-topk');
-  const maxCyclesEl = submittedForm ? submittedForm.querySelector('#chat-max-cycles') : getEl('chat-max-cycles');
-  const autonomousModeEl = submittedForm ? submittedForm.querySelector('#chat-autonomous-mode') : getEl('chat-autonomous-mode');
+  let answerEl, qEl, entityEl, topkEl, maxCyclesEl, autonomousModeEl;
   
-  if (!qEl || !entityEl || !topkEl) {
-    answerEl.innerHTML = '<div class="p-4 text-rose-500">Chat form is missing from the page.</div>';
+  // Determine which form was submitted and get the corresponding elements
+  if (formId === 'popup-chat-form') {
+    // Popup chat form
+    answerEl = document.getElementById('popup-chat-answer');
+    qEl = document.getElementById('popup-chat-q');
+    entityEl = document.getElementById('popup-chat-entity');
+    topkEl = document.getElementById('popup-chat-topk');
+    maxCyclesEl = document.getElementById('popup-chat-max-cycles');
+    autonomousModeEl = document.getElementById('popup-chat-autonomous-mode');
+  } else if (formId === 'search-tab-chat-form') {
+    // Search tab chat form
+    answerEl = document.getElementById('search-tab-chat-answer');
+    qEl = document.getElementById('search-tab-chat-q');
+    entityEl = document.getElementById('search-tab-chat-entity');
+    topkEl = document.getElementById('search-tab-chat-topk');
+    maxCyclesEl = document.getElementById('search-tab-chat-max-cycles');
+    autonomousModeEl = document.getElementById('search-tab-chat-autonomous-mode');
+  } else {
+    // Minimal fallback - should rarely be needed with new structure
+    console.warn('Chat form submitted without recognized ID, using fallback detection');
+    answerEl = els.searchTabChatAnswer || els.popupChatAnswer;
+    qEl = getEl('search-tab-chat-q') || getEl('popup-chat-q');
+    entityEl = getEl('search-tab-chat-entity') || getEl('popup-chat-entity');
+    topkEl = getEl('search-tab-chat-topk') || getEl('popup-chat-topk');
+    maxCyclesEl = getEl('search-tab-chat-max-cycles') || getEl('popup-chat-max-cycles');
+    autonomousModeEl = getEl('search-tab-chat-autonomous-mode') || getEl('popup-chat-autonomous-mode');
+  }
+  
+  if (!answerEl) {
+    console.error('No answer container found');
+    return;
+  }
+  
+  if (!qEl || !topkEl) {
+    answerEl.innerHTML = '<div class="p-4 text-rose-500">Chat form is missing required fields.</div>';
     return;
   }
 
   const question = qEl.value;
-  const entity = entityEl.value;
+  const entity = entityEl?.value || '';
   const autonomousModeEnabled = autonomousModeEl ? autonomousModeEl.checked : false;
 
   try {
@@ -94,7 +116,7 @@ export async function resumeActiveChatTasks() {
   
   if (chatTasks.length === 0) return;
   
-  const answerEl = els.chatAnswer;
+  const answerEl = els.searchTabChatAnswer || els.popupChatAnswer;
   if (!answerEl) return;
   
   // Resume only the most recent task; clear older ones to prevent storage buildup

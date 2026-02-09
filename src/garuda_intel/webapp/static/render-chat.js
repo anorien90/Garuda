@@ -2,7 +2,7 @@ import { els } from './config.js';
 import { pill, collapsible } from './ui.js';
 
 export function renderChat(payload, targetEl) {
-  const el = targetEl || els.chatAnswer;
+  const el = targetEl || els.searchTabChatAnswer || els.popupChatAnswer;
   if (!el) return;
   el.innerHTML = '';
   
