@@ -94,7 +94,7 @@ import pytest
 # Add src directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from garuda_intel.exoscale.adapter import ExoscaleOllamaAdapter
+from garuda_intel.exoscale.adapter import ExoscaleOllamaAdapter, ExoscaleAuthError
 
 
 @pytest.fixture
@@ -358,6 +358,48 @@ class TestAPIRequest:
         
         assert result is None
     
+    @patch('garuda_intel.exoscale.adapter.requests.get')
+    def test_api_request_403_raises_auth_error(self, mock_get, adapter):
+        """Test API request with 403 Forbidden raises ExoscaleAuthError."""
+        import requests as req_lib
+        mock_response = Mock()
+        mock_response.status_code = 403
+        mock_response.raise_for_status.side_effect = req_lib.exceptions.HTTPError(
+            "403 Client Error: Forbidden", response=mock_response
+        )
+        mock_get.return_value = mock_response
+
+        with pytest.raises(ExoscaleAuthError, match="authentication/authorization failed"):
+            adapter._api_request("GET", "/instance")
+
+    @patch('garuda_intel.exoscale.adapter.requests.get')
+    def test_api_request_401_raises_auth_error(self, mock_get, adapter):
+        """Test API request with 401 Unauthorized raises ExoscaleAuthError."""
+        import requests as req_lib
+        mock_response = Mock()
+        mock_response.status_code = 401
+        mock_response.raise_for_status.side_effect = req_lib.exceptions.HTTPError(
+            "401 Client Error: Unauthorized", response=mock_response
+        )
+        mock_get.return_value = mock_response
+
+        with pytest.raises(ExoscaleAuthError, match="authentication/authorization failed"):
+            adapter._api_request("GET", "/instance")
+
+    @patch('garuda_intel.exoscale.adapter.requests.get')
+    def test_api_request_500_returns_none(self, mock_get, adapter):
+        """Test API request with 500 Server Error returns None (not ExoscaleAuthError)."""
+        import requests as req_lib
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.raise_for_status.side_effect = req_lib.exceptions.HTTPError(
+            "500 Server Error", response=mock_response
+        )
+        mock_get.return_value = mock_response
+
+        result = adapter._api_request("GET", "/instance")
+        assert result is None
+    
     def test_api_request_unsupported_method(self, adapter):
         """Test API request with unsupported HTTP method."""
         result = adapter._api_request("PATCH", "/instance")
@@ -595,6 +637,14 @@ class TestEnsureInstance:
         
         assert url == "http://1.2.3.6:11435/api/generate"
         mock_create.assert_called_once()
+    
+    @patch.object(ExoscaleOllamaAdapter, '_find_existing_instance')
+    def test_ensure_instance_auth_error_propagates(self, mock_find, adapter):
+        """Test that ExoscaleAuthError from _find_existing_instance propagates up."""
+        mock_find.side_effect = ExoscaleAuthError("Auth failed")
+
+        with pytest.raises(ExoscaleAuthError, match="Auth failed"):
+            adapter.ensure_instance()
 
 
 class TestCreateInstance:
