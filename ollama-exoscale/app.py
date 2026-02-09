@@ -53,13 +53,25 @@ def ensure_remote_instance() -> Optional[str]:
     """Ensure remote Ollama instance is running and return base URL.
     
     Returns:
-        Base URL (http://ip:port) or None on error
+        Base URL (http://ip:port) if ready, None if still provisioning
     """
     if not adapter:
         logger.error("Adapter not initialized")
         return None
     
     return adapter.ensure_instance()
+
+
+def get_provisioning_status() -> dict:
+    """Get current provisioning status.
+    
+    Returns:
+        Dict with status, error, and remote_url
+    """
+    if not adapter:
+        return {"status": "error", "error": "Adapter not initialized"}
+    
+    return adapter.get_provisioning_status()
 
 
 def proxy_request(
@@ -86,7 +98,26 @@ def proxy_request(
     # Ensure instance is running
     base_url = ensure_remote_instance()
     if not base_url:
-        return jsonify({"error": "Failed to start remote Ollama instance"}), 503
+        # Instance not ready, check status
+        status = get_provisioning_status()
+        if status["status"] == "provisioning":
+            return jsonify({
+                "error": "Remote Ollama instance is being provisioned. Please retry in a few moments.",
+                "provisioning": True,
+                "status": status["status"]
+            }), 503
+        elif status["status"] == "error":
+            return jsonify({
+                "error": f"Failed to provision remote Ollama instance: {status.get('error', 'Unknown error')}",
+                "provisioning": False,
+                "status": status["status"]
+            }), 503
+        else:
+            return jsonify({
+                "error": "Failed to start remote Ollama instance",
+                "provisioning": False,
+                "status": status["status"]
+            }), 503
     
     # Build full URL
     url = f"{base_url}{endpoint}"
@@ -152,15 +183,21 @@ def status():
     if not adapter:
         return jsonify({"error": "Adapter not initialized"}), 503
     
+    prov_status = get_provisioning_status()
+    
     status_info = {
         "service": "ollama-exoscale",
+        "provisioning_status": prov_status["status"],
         "instance_status": adapter.get_instance_status(),
-        "remote_url": adapter.get_remote_url(),
+        "remote_url": prov_status.get("remote_url"),
         "zone": adapter.zone_name,
         "instance_type": adapter.instance_type,
         "ollama_model": adapter.ollama_model,
         "idle_timeout": adapter.idle_timeout,
     }
+    
+    if prov_status.get("error"):
+        status_info["error"] = prov_status["error"]
     
     return jsonify(status_info)
 

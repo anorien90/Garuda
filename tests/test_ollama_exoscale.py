@@ -239,6 +239,71 @@ class TestExoscaleAdapter(unittest.TestCase):
         self.assertIn("ollama pull llama2", decoded)
         self.assertIn("docker run", decoded)
         self.assertIn("11434", decoded)
+    
+    @patch.dict(os.environ, {
+        'EXOSCALE_API_KEY': 'test_key',
+        'EXOSCALE_API_SECRET': 'test_secret'
+    })
+    @patch('exoscale_adapter.Client')
+    def test_async_create_instance(self, mock_client_cls):
+        """Test async instance creation returns immediately."""
+        from exoscale_adapter import ExoscaleOllamaAdapter
+        
+        adapter = ExoscaleOllamaAdapter()
+        
+        # Mock methods to simulate slow creation
+        adapter.client.list_instances.return_value = {"instances": []}
+        adapter._find_template_id = Mock(return_value="template-123")
+        adapter._find_instance_type_id = Mock(return_value="type-123")
+        adapter._ensure_security_group = Mock(return_value="sg-123")
+        
+        # Mock instance creation to be slow (simulate real scenario)
+        def slow_create(*args, **kwargs):
+            import time
+            time.sleep(1)  # Simulate slow operation
+            return {"id": "op-123", "reference": {"id": "inst-123"}}
+        
+        adapter.client.create_instance.side_effect = slow_create
+        adapter.client.wait = Mock()
+        
+        # Call create_instance (should start background thread and return immediately)
+        result = adapter.create_instance()
+        
+        # Should return True (provisioning started)
+        self.assertTrue(result)
+        
+        # Status should be provisioning (not blocking)
+        status = adapter.get_provisioning_status()
+        self.assertIn(status["status"], ["provisioning", "ready"])
+        
+        # Clean up - wait for thread to finish
+        if adapter.provisioning_thread:
+            adapter.provisioning_thread.join(timeout=5)
+    
+    @patch.dict(os.environ, {
+        'EXOSCALE_API_KEY': 'test_key',
+        'EXOSCALE_API_SECRET': 'test_secret'
+    })
+    @patch('exoscale_adapter.Client')
+    def test_ensure_instance_with_running(self, mock_client_cls):
+        """Test ensure_instance with a running instance."""
+        from exoscale_adapter import ExoscaleOllamaAdapter
+        
+        adapter = ExoscaleOllamaAdapter()
+        
+        # Mock a running instance
+        adapter.client.list_instances.return_value = {
+            "instances": [
+                {"name": "garuda-ollama", "id": "inst-123", "state": "running",
+                 "public_ip": "1.2.3.4"}
+            ]
+        }
+        
+        url = adapter.ensure_instance()
+        
+        # Should return URL immediately
+        self.assertEqual(url, "http://1.2.3.4:11434")
+        self.assertEqual(adapter.get_provisioning_status()["status"], "ready")
 
 
 class TestOllamaExoscaleApp(unittest.TestCase):
@@ -399,15 +464,33 @@ class TestProxyRequest(unittest.TestCase):
     
     def test_proxy_request_no_instance(self):
         """Test proxy request when instance can't be started."""
-        # Patch ensure_remote_instance on the module
+        # Patch ensure_remote_instance and get_provisioning_status on the module
         with patch.object(self.flask_app, 'ensure_remote_instance', return_value=None):
-            with self.flask_app.app.app_context():
-                result = self.flask_app.proxy_request(
-                    '/api/generate', method='POST', json_data={'prompt': 'test'}
-                )
+            with patch.object(self.flask_app, 'get_provisioning_status',
+                              return_value={"status": "error", "error": "Test error"}):
+                with self.flask_app.app.app_context():
+                    result = self.flask_app.proxy_request(
+                        '/api/generate', method='POST', json_data={'prompt': 'test'}
+                    )
         
         # Should return error response
         self.assertEqual(result[1], 503)
+    
+    def test_proxy_request_provisioning(self):
+        """Test proxy request when instance is being provisioned."""
+        # Patch ensure_remote_instance to return None (provisioning)
+        with patch.object(self.flask_app, 'ensure_remote_instance', return_value=None):
+            with patch.object(self.flask_app, 'get_provisioning_status',
+                              return_value={"status": "provisioning"}):
+                with self.flask_app.app.app_context():
+                    result = self.flask_app.proxy_request(
+                        '/api/generate', method='POST', json_data={'prompt': 'test'}
+                    )
+        
+        # Should return 503 with provisioning flag
+        self.assertEqual(result[1], 503)
+        data = json.loads(result[0].data)
+        self.assertTrue(data.get('provisioning'))
     
     def test_proxy_request_success(self):
         """Test successful proxy request."""
