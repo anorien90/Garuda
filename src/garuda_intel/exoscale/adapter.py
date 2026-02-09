@@ -20,6 +20,11 @@ from typing import Dict, Any, Optional
 import requests
 
 
+class ExoscaleAuthError(Exception):
+    """Raised when Exoscale API returns authentication/authorization errors (401/403)."""
+    pass
+
+
 class ExoscaleOllamaAdapter:
     """Adapter for managing remote Ollama instances on Exoscale cloud.
     
@@ -156,6 +161,15 @@ class ExoscaleOllamaAdapter:
                 return {}
             
             return resp.json()
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code in (401, 403):
+                self.logger.error(f"Exoscale API authentication failed: {e}")
+                raise ExoscaleAuthError(
+                    f"Exoscale API authentication/authorization failed (HTTP {e.response.status_code}). "
+                    "Check your EXOSCALE_API_KEY and EXOSCALE_API_SECRET."
+                ) from e
+            self.logger.error(f"Exoscale API request failed: {e}")
+            return None
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Exoscale API request failed: {e}")
             return None
