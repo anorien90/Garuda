@@ -245,26 +245,29 @@ class TestExoscaleAdapter(unittest.TestCase):
         'EXOSCALE_API_SECRET': 'test_secret'
     })
     @patch('exoscale_adapter.Client')
-    def test_async_create_instance(self, mock_client_cls):
+    @patch('exoscale_adapter.time.sleep')  # Mock sleep to speed up test
+    def test_async_create_instance(self, mock_sleep, mock_client_cls):
         """Test async instance creation returns immediately."""
         from exoscale_adapter import ExoscaleOllamaAdapter
         
         adapter = ExoscaleOllamaAdapter()
         
-        # Mock methods to simulate slow creation
+        # Mock methods for instance creation
         adapter.client.list_instances.return_value = {"instances": []}
         adapter._find_template_id = Mock(return_value="template-123")
         adapter._find_instance_type_id = Mock(return_value="type-123")
         adapter._ensure_security_group = Mock(return_value="sg-123")
         
-        # Mock instance creation to be slow (simulate real scenario)
-        def slow_create(*args, **kwargs):
-            import time
-            time.sleep(1)  # Simulate slow operation
-            return {"id": "op-123", "reference": {"id": "inst-123"}}
-        
-        adapter.client.create_instance.side_effect = slow_create
+        adapter.client.create_instance.return_value = {
+            "id": "op-123", 
+            "reference": {"id": "inst-123"}
+        }
         adapter.client.wait = Mock()
+        adapter.client.get_instance.return_value = {
+            "id": "inst-123",
+            "state": "running",
+            "public_ip": "1.2.3.4"
+        }
         
         # Call create_instance (should start background thread and return immediately)
         result = adapter.create_instance()
@@ -272,13 +275,20 @@ class TestExoscaleAdapter(unittest.TestCase):
         # Should return True (provisioning started)
         self.assertTrue(result)
         
-        # Status should be provisioning (not blocking)
+        # Status should be provisioning initially
         status = adapter.get_provisioning_status()
-        self.assertIn(status["status"], ["provisioning", "ready"])
+        self.assertEqual(status["status"], "provisioning")
         
-        # Clean up - wait for thread to finish
+        # Wait for thread to complete and verify
         if adapter.provisioning_thread:
             adapter.provisioning_thread.join(timeout=5)
+            # Thread should have completed
+            self.assertFalse(adapter.provisioning_thread.is_alive(),
+                           "Provisioning thread should complete within timeout")
+            
+            # After completion, should be ready
+            status = adapter.get_provisioning_status()
+            self.assertEqual(status["status"], "ready")
     
     @patch.dict(os.environ, {
         'EXOSCALE_API_KEY': 'test_key',

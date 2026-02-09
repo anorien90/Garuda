@@ -491,13 +491,13 @@ class ExoscaleOllamaAdapter:
             self.provisioning_status = "provisioning"
             self.provisioning_error = None
         
-        # Start background thread
-        self.provisioning_thread = threading.Thread(
-            target=self._create_instance_blocking,
-            daemon=True,
-            name="ExoscaleProvisioning"
-        )
-        self.provisioning_thread.start()
+            # Start background thread (non-daemon for proper cleanup)
+            self.provisioning_thread = threading.Thread(
+                target=self._create_instance_blocking,
+                daemon=False,  # Non-daemon to prevent orphaned instances
+                name="ExoscaleProvisioning"
+            )
+            self.provisioning_thread.start()
         
         self.logger.info("Instance provisioning started in background")
         return True
@@ -543,7 +543,7 @@ class ExoscaleOllamaAdapter:
                 except Exception as e:
                     self.logger.error(f"Failed to start instance: {e}")
         
-        # Check if already provisioning
+        # Check/start provisioning - hold lock to prevent race condition
         with self.provisioning_lock:
             if self.provisioning_status == "provisioning":
                 self.logger.info("Instance provisioning in progress")
@@ -554,11 +554,23 @@ class ExoscaleOllamaAdapter:
                 self.logger.error(f"Previous provisioning failed: {self.provisioning_error}")
                 # Reset status to allow retry
                 self.provisioning_status = "idle"
-                return None
+            
+            # No existing instance and not provisioning, start background provisioning
+            # Keep lock held to prevent TOCTOU race
+            if self.provisioning_status == "idle":
+                self.logger.info("No existing instance found, starting background provisioning")
+                self.provisioning_status = "provisioning"
+                self.provisioning_error = None
+                
+                # Start background thread (non-daemon for proper cleanup)
+                self.provisioning_thread = threading.Thread(
+                    target=self._create_instance_blocking,
+                    daemon=False,
+                    name="ExoscaleProvisioning"
+                )
+                self.provisioning_thread.start()
+                self.logger.info("Instance provisioning started in background")
         
-        # No existing instance, start background provisioning
-        self.logger.info("No existing instance found, starting background provisioning")
-        self.create_instance()
         return None
     
     def get_provisioning_status(self) -> Dict[str, Any]:
@@ -667,7 +679,7 @@ class ExoscaleOllamaAdapter:
     def shutdown(self):
         """Shutdown the adapter and cleanup resources.
         
-        Stops idle monitor and destroys instance.
+        Stops idle monitor, waits for provisioning thread, and destroys instance.
         Protected against duplicate calls.
         """
         with self._shutdown_lock:
@@ -678,5 +690,13 @@ class ExoscaleOllamaAdapter:
         
         self.logger.info("Shutting down Exoscale adapter")
         self.stop_idle_monitor()
+        
+        # Wait for provisioning thread to complete if running
+        if self.provisioning_thread and self.provisioning_thread.is_alive():
+            self.logger.info("Waiting for provisioning thread to complete...")
+            self.provisioning_thread.join(timeout=10)
+            if self.provisioning_thread.is_alive():
+                self.logger.warning("Provisioning thread did not complete within timeout")
+        
         if self.instance_id:
             self.destroy_instance()
