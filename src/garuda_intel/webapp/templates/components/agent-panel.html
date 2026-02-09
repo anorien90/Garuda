@@ -169,6 +169,26 @@
         </button>
       </form>
       
+      <!-- Automatic Mode Toggle -->
+      <div class="p-4 rounded-lg bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border border-purple-200 dark:border-purple-800">
+        <div class="flex items-center justify-between">
+          <div>
+            <h5 class="text-sm font-bold text-purple-800 dark:text-purple-200">🔁 Automatic Mode</h5>
+            <p class="text-xs text-slate-600 dark:text-slate-400 mt-1">
+              Continuously runs Combined Mode (Reflect &amp; Relate → Investigate Crawl) in a loop until stopped. Automatically searches for dead ends, potential relations, and webcrawls.
+            </p>
+          </div>
+          <div class="flex items-center gap-3">
+            <span id="auto-mode-status" class="text-xs font-medium text-slate-500 dark:text-slate-400">Stopped</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input id="auto-mode-toggle" type="checkbox" class="sr-only peer">
+              <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 dark:peer-focus:ring-purple-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-slate-600 peer-checked:bg-purple-600"></div>
+            </label>
+          </div>
+        </div>
+        <div id="auto-mode-log" class="hidden mt-3 space-y-2 max-h-60 overflow-y-auto"></div>
+      </div>
+      
       <!-- Process Monitor Panel -->
       <div id="process-monitor" class="hidden p-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
         <div class="flex items-center justify-between mb-3">
@@ -238,6 +258,39 @@
         <div class="text-sm text-slate-500 dark:text-slate-400 text-center py-4">Loading tasks...</div>
       </div>
     </div>
+  </article>
+
+  <!-- Agent Multidimensional Search -->
+  <article class="card-surface rounded-xl border border-purple-200 dark:border-purple-800 bg-white/80 dark:bg-slate-900/70 p-5 space-y-4">
+    <h3 class="text-lg font-bold text-purple-800 dark:text-purple-200">🔍 Agent Multidimensional Search</h3>
+    <p class="text-xs text-slate-600 dark:text-slate-400">Combines embedding-based semantic search with entity graph traversal for multidimensional results.</p>
+    <form id="agent-search-form" class="space-y-3">
+      <div>
+        <label class="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-100">Search Query</label>
+        <input id="agent-search-q" type="search" placeholder="Natural language query for multidimensional search" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-purple-500 focus:ring-purple-500"/>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-3">
+        <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+          Top K Results
+          <input id="agent-search-topk" type="number" min="1" max="50" value="10" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+        </label>
+        <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+          Graph Depth
+          <input id="agent-search-depth" type="number" min="1" max="5" value="2" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500"/>
+        </label>
+        <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100 flex flex-col">
+          Include Graph
+          <select id="agent-search-graph" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-purple-500 focus:ring-purple-500">
+            <option value="true">Yes - Full Multidimensional</option>
+            <option value="false">No - Embedding Only</option>
+          </select>
+        </label>
+      </div>
+      <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-purple-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-purple-500">
+        🔍 Search
+      </button>
+    </form>
+    <div id="agent-search-results" class="space-y-3"></div>
   </article>
 </div>
 
@@ -1066,6 +1119,129 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
   }
   
+  // =========================================================================
+  // AUTOMATIC MODE - Continuous Combined Mode Loop
+  // =========================================================================
+  let autoModeRunning = false;
+  let autoModeCycleCount = 0;
+  
+  const autoModeToggle = document.getElementById('auto-mode-toggle');
+  const autoModeStatus = document.getElementById('auto-mode-status');
+  const autoModeLog = document.getElementById('auto-mode-log');
+  
+  function addAutoModeLogEntry(message, type = 'info') {
+    if (!autoModeLog) return;
+    autoModeLog.classList.remove('hidden');
+    const colors = {
+      info: 'text-indigo-700 dark:text-indigo-300',
+      success: 'text-green-700 dark:text-green-300',
+      error: 'text-red-700 dark:text-red-300',
+      warn: 'text-amber-700 dark:text-amber-300',
+    };
+    const entry = document.createElement('div');
+    entry.className = `text-xs ${colors[type] || colors.info} py-1 border-b border-slate-100 dark:border-slate-800`;
+    entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+    autoModeLog.prepend(entry);
+    // Keep last 50 entries
+    while (autoModeLog.children.length > 50) {
+      autoModeLog.removeChild(autoModeLog.lastChild);
+    }
+  }
+  
+  async function runAutoModeCycle() {
+    if (!autoModeRunning) return;
+    
+    autoModeCycleCount++;
+    addAutoModeLogEntry(`Cycle #${autoModeCycleCount} starting...`, 'info');
+    
+    const maxEntities = parseInt(document.getElementById('autonomous-max-entities').value) || 10;
+    const priorityThreshold = parseFloat(document.getElementById('autonomous-priority-threshold').value) || 0.3;
+    const maxDepth = parseInt(document.getElementById('autonomous-max-depth').value) || 3;
+    const maxPages = parseInt(document.getElementById('autonomous-max-pages').value) || 25;
+    const targetEntitiesInput = document.getElementById('autonomous-target-entities').value.trim();
+    const targetEntities = targetEntitiesInput ? targetEntitiesInput.split(',').map(e => e.trim()).filter(e => e) : null;
+    
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      const apiKey = getApiKey();
+      if (apiKey) headers['X-API-Key'] = apiKey;
+      
+      const response = await fetch('/api/agent/autonomous/combined', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+          target_entities: targetEntities,
+          max_entities: maxEntities,
+          max_pages: maxPages,
+          max_depth: maxDepth,
+          priority_threshold: priorityThreshold,
+          queued: true
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.task_id) {
+        addAutoModeLogEntry(`Cycle #${autoModeCycleCount} queued (task: ${data.task_id.substring(0, 8)}...)`, 'info');
+        
+        // Poll task until completion
+        try {
+          const result = await pollTaskResult(data.task_id, {});
+          const stats = result.statistics || {};
+          addAutoModeLogEntry(
+            `Cycle #${autoModeCycleCount} completed: ${stats.total_entities_analyzed || 0} entities, ${stats.total_crawls_executed || 0} crawls, ${stats.total_pages_discovered || 0} pages`,
+            'success'
+          );
+          
+          // Update results panel
+          const resultsContainer = document.getElementById('autonomous-results');
+          if (resultsContainer) {
+            renderCombinedResults(result, resultsContainer, stats);
+          }
+        } catch (pollErr) {
+          addAutoModeLogEntry(`Cycle #${autoModeCycleCount} task failed: ${pollErr.message}`, 'error');
+        }
+      } else if (data.error) {
+        addAutoModeLogEntry(`Cycle #${autoModeCycleCount} error: ${data.error}`, 'error');
+      }
+    } catch (err) {
+      addAutoModeLogEntry(`Cycle #${autoModeCycleCount} failed: ${err.message}`, 'error');
+    }
+    
+    // Continue loop if still running (with a brief pause)
+    if (autoModeRunning) {
+      addAutoModeLogEntry(`Waiting 5 seconds before next cycle...`, 'info');
+      setTimeout(runAutoModeCycle, 5000);
+    }
+  }
+  
+  if (autoModeToggle) {
+    autoModeToggle.addEventListener('change', () => {
+      if (autoModeToggle.checked) {
+        autoModeRunning = true;
+        autoModeCycleCount = 0;
+        if (autoModeStatus) {
+          autoModeStatus.textContent = 'Running';
+          autoModeStatus.classList.remove('text-slate-500');
+          autoModeStatus.classList.add('text-green-600', 'dark:text-green-400');
+        }
+        addAutoModeLogEntry('Automatic mode started', 'success');
+        const processMonitor = document.getElementById('process-monitor');
+        if (processMonitor) processMonitor.classList.remove('hidden');
+        startProcessPolling();
+        runAutoModeCycle();
+      } else {
+        autoModeRunning = false;
+        if (autoModeStatus) {
+          autoModeStatus.textContent = 'Stopped';
+          autoModeStatus.classList.remove('text-green-600', 'dark:text-green-400');
+          autoModeStatus.classList.add('text-slate-500');
+        }
+        addAutoModeLogEntry('Automatic mode stopped by user', 'warn');
+      }
+    });
+  }
+
   // Load agent status on page load
   async function loadAgentStatus() {
     try {

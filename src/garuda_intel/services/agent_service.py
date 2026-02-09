@@ -1141,6 +1141,41 @@ class AgentService:
             response["context"] = search_result.get("combined_results", [])
             response["metadata"]["search_stats"] = search_result.get("statistics", {})
             
+            # If local data is insufficient, auto-trigger webcrawl and retry
+            if not response["context"]:
+                self.logger.info("No local results found, attempting auto-webcrawl...")
+                response["metadata"]["auto_crawl_triggered"] = True
+                try:
+                    entities_for_crawl = self._extract_entity_mentions(question)
+                    crawl_query = entity if entity else (entities_for_crawl[0] if entities_for_crawl else question[:80])
+                    
+                    crawl_plan = {
+                        "entity_name": crawl_query,
+                        "entity_type": None,
+                        "mode": "auto_chat_crawl",
+                        "queries": [question],
+                    }
+                    crawl_result = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self._execute_autonomous_crawl(crawl_plan, max_pages=10)
+                    )
+                    response["metadata"]["auto_crawl_result"] = crawl_result
+                    
+                    # Retry search after crawl
+                    retry_result = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.multidimensional_search(
+                            query=question,
+                            top_k=10,
+                            include_graph=True
+                        )
+                    )
+                    response["context"] = retry_result.get("combined_results", [])
+                    response["metadata"]["search_stats_after_crawl"] = retry_result.get("statistics", {})
+                except Exception as crawl_err:
+                    self.logger.warning(f"Auto-crawl during chat failed: {crawl_err}")
+                    response["metadata"]["auto_crawl_error"] = str(crawl_err)
+            
             # Synthesize answer from context
             if self.llm and response["context"]:
                 answer = await asyncio.get_event_loop().run_in_executor(
@@ -1148,6 +1183,8 @@ class AgentService:
                     lambda: self.llm.synthesize_answer(question, response["context"])
                 )
                 response["answer"] = answer
+            elif not response["context"]:
+                response["answer"] = "No relevant information found in local data or via web crawl."
             else:
                 response["answer"] = "No relevant information found."
             
