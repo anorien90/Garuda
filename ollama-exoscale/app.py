@@ -67,7 +67,7 @@ def proxy_request(
     method: str = "GET",
     json_data: Optional[dict] = None,
     stream: bool = False
-) -> Response | tuple:
+):
     """Proxy a request to the remote Ollama instance.
     
     Args:
