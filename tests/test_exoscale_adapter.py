@@ -114,7 +114,7 @@ def adapter(api_credentials):
         api_secret=api_credentials["api_secret"],
         zone="ch-gva-2",
         instance_type="standard.medium",
-        template_name="Linux Ubuntu 22.04 LTS 64-bit",
+        template_name="Linux Ubuntu 24.04 LTS 64-bit",
         disk_size=50,
         ollama_model="granite3.1-dense:8b",
         ollama_key="test-ollama-key-123",
@@ -146,7 +146,7 @@ class TestInitialization:
         assert adapter.api_secret == api_credentials["api_secret"]
         assert adapter.zone == "ch-gva-2"
         assert adapter.instance_type == "standard.medium"
-        assert adapter.template_name == "Linux Ubuntu 22.04 LTS 64-bit"
+        assert adapter.template_name == "Linux Ubuntu 24.04 LTS 64-bit"
         assert adapter.disk_size == 50
         assert adapter.ollama_model == "granite3.1-dense:8b"
         assert adapter.ollama_key == "test-ollama-key-123"
@@ -416,7 +416,7 @@ class TestFindTemplate:
         mock_api_request.return_value = {
             "templates": [
                 {"id": "tpl-001", "name": "Linux Ubuntu 20.04 LTS 64-bit"},
-                {"id": "tpl-002", "name": "Linux Ubuntu 22.04 LTS 64-bit"},
+                {"id": "tpl-002", "name": "Linux Ubuntu 24.04 LTS 64-bit"},
                 {"id": "tpl-003", "name": "Linux Debian 11"},
             ]
         }
@@ -454,12 +454,12 @@ class TestFindInstanceType:
     
     @patch.object(ExoscaleOllamaAdapter, '_api_request')
     def test_find_instance_type_success(self, mock_api_request, adapter):
-        """Test finding instance type by name."""
+        """Test finding instance type by family and size."""
         mock_api_request.return_value = {
             "instance-types": [
-                {"id": "type-001", "name": "standard.small"},
-                {"id": "type-002", "name": "standard.medium"},
-                {"id": "type-003", "name": "standard.large"},
+                {"id": "type-001", "family": "standard", "size": "small", "zones": ["ch-gva-2"]},
+                {"id": "type-002", "family": "standard", "size": "medium", "zones": ["ch-gva-2"]},
+                {"id": "type-003", "family": "standard", "size": "large", "zones": ["ch-gva-2"]},
             ]
         }
         
@@ -473,7 +473,7 @@ class TestFindInstanceType:
         """Test instance type not found."""
         mock_api_request.return_value = {
             "instance-types": [
-                {"id": "type-001", "name": "standard.small"},
+                {"id": "type-001", "family": "standard", "size": "small", "zones": ["ch-gva-2"]},
             ]
         }
         
@@ -1029,9 +1029,9 @@ class TestIntegrationScenarios:
             {"id": "sg-123"},
             {"id": "rule-123"},
             # _find_template
-            {"templates": [{"id": "tpl-456", "name": "Linux Ubuntu 22.04 LTS 64-bit"}]},
+            {"templates": [{"id": "tpl-456", "name": "Linux Ubuntu 24.04 LTS 64-bit"}]},
             # _find_instance_type
-            {"instance-types": [{"id": "type-789", "name": "standard.medium"}]},
+            {"instance-types": [{"id": "type-789", "family": "standard", "size": "medium", "zones": ["ch-gva-2"]}]},
             # create_instance POST
             {"id": "inst-new"},
             # create_instance GET status

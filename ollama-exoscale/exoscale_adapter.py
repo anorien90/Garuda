@@ -72,7 +72,7 @@ class ExoscaleOllamaAdapter:
         self.zone_name = zone or os.getenv("EXOSCALE_ZONE", "at-vie-2")
         self.instance_type = instance_type or os.getenv("EXOSCALE_INSTANCE_TYPE", "a5000.small")
         self.template_name = template_name or os.getenv(
-            "EXOSCALE_TEMPLATE", "Linux Ubuntu 22.04 LTS 64-bit"
+            "EXOSCALE_TEMPLATE", "Linux Ubuntu 24.04 LTS 64-bit"
         )
         
         if disk_size is not None:
@@ -152,22 +152,68 @@ class ExoscaleOllamaAdapter:
         self.logger.warning(f"Template '{self.template_name}' not found")
         return None
     
+    def _is_gpu_instance(self) -> bool:
+        """Check if the configured instance type is a GPU instance."""
+        family = self.instance_type.split(".", 1)[0] if "." in self.instance_type else self.instance_type
+        return family.startswith("gpu")
+    
     def _find_instance_type_id(self) -> Optional[str]:
-        """Find the instance type ID by name.
+        """Find the instance type ID by family and size.
+        
+        Parses instance_type string (e.g., 'gpua5000.small') into family and size,
+        then matches against the Exoscale API response fields.
         
         Returns:
             Instance type ID or None if not found
         """
+        # Parse family.size format
+        parts = self.instance_type.split(".", 1)
+        if len(parts) != 2:
+            self.logger.error(
+                f"Invalid instance type format '{self.instance_type}', expected 'family.size'"
+            )
+            return None
+        
+        target_family, target_size = parts
+        
         try:
             result = self.client.list_instance_types()
             instance_types = result.get("instance-types", [])
+            
+            # Try exact family match first
             for itype in instance_types:
-                if itype.get("name") == self.instance_type:
+                if (itype.get("family") == target_family 
+                        and itype.get("size") == target_size
+                        and self.zone_name in itype.get("zones", [])):
                     return itype.get("id")
+            
+            # Fallback: try with "gpu" prefix if not already present
+            if not target_family.startswith("gpu"):
+                gpu_family = f"gpu{target_family}"
+                for itype in instance_types:
+                    if (itype.get("family") == gpu_family 
+                            and itype.get("size") == target_size
+                            and self.zone_name in itype.get("zones", [])):
+                        self.logger.info(
+                            f"Instance type '{self.instance_type}' resolved to "
+                            f"'{gpu_family}.{target_size}'"
+                        )
+                        return itype.get("id")
+            
+            # Log available GPU types for debugging
+            gpu_types = [
+                f"{t.get('family')}.{t.get('size')}"
+                for t in instance_types
+                if t.get("gpus") and t.get("gpus") > 0
+                and self.zone_name in t.get("zones", [])
+            ]
+            if gpu_types:
+                self.logger.info(f"Available GPU instance types in {self.zone_name}: {gpu_types}")
+            
         except Exception as e:
             self.logger.error(f"Failed to list instance types: {e}")
         
-        self.logger.warning(f"Instance type '{self.instance_type}' not found")
+        self.logger.warning(f"Instance type '{self.instance_type}' not found in zone {self.zone_name}")
         return None
     
     def _ensure_security_group(self) -> Optional[str]:
@@ -236,40 +282,69 @@ class ExoscaleOllamaAdapter:
         """Generate cloud-init user-data script.
         
         The script:
-        - Installs Docker
+        - Installs NVIDIA drivers for GPU instances
+        - Installs Docker and NVIDIA container toolkit
         - Runs ollama/ollama container exposed on 0.0.0.0:11434
+        - For GPU instances, runs with --gpus all flag
         - Pulls the configured Ollama model
         
         Returns:
             Base64-encoded cloud-init script
         """
-        script = f"""#!/bin/bash
-set -e
-
-# Update system
-apt-get update
-apt-get install -y ca-certificates curl gnupg
-
-# Install Docker
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io
-
-# Start Ollama container on all interfaces
-docker run -d --name ollama -p 0.0.0.0:{self.OLLAMA_PORT}:{self.OLLAMA_PORT} ollama/ollama:latest
-
-# Wait for Ollama to be ready
-sleep 10
-
-# Pull the model
-docker exec ollama ollama pull {self.ollama_model}
-
-echo "Garuda Ollama setup complete"
-"""
+        is_gpu = self._is_gpu_instance()
         
+        # Base script parts
+        script_parts = [
+            "#!/bin/bash",
+            "set -e",
+            "",
+            "# Update system",
+            "apt-get update",
+            "apt-get install -y ca-certificates curl gnupg",
+            "",
+        ]
+        
+        # Add NVIDIA driver installation for GPU instances
+        if is_gpu:
+            script_parts.extend([
+                "# Install NVIDIA drivers and container toolkit",
+                "apt-get install -y nvidia-driver-570 nvidia-container-toolkit",
+                "",
+            ])
+        
+        # Add Docker installation
+        script_parts.extend([
+            "# Install Docker",
+            "install -m 0755 -d /etc/apt/keyrings",
+            "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg",
+            "chmod a+r /etc/apt/keyrings/docker.gpg",
+            'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null',
+            "apt-get update",
+            "apt-get install -y docker-ce docker-ce-cli containerd.io",
+            "",
+        ])
+        
+        # Add Ollama container with or without GPU support
+        if is_gpu:
+            script_parts.append(f"# Start Ollama container with GPU support on all interfaces")
+            script_parts.append(f"docker run -d --gpus all --name ollama -p 0.0.0.0:{self.OLLAMA_PORT}:{self.OLLAMA_PORT} ollama/ollama:latest")
+        else:
+            script_parts.append(f"# Start Ollama container on all interfaces")
+            script_parts.append(f"docker run -d --name ollama -p 0.0.0.0:{self.OLLAMA_PORT}:{self.OLLAMA_PORT} ollama/ollama:latest")
+        
+        # Add model pulling
+        script_parts.extend([
+            "",
+            "# Wait for Ollama to be ready",
+            "sleep 10",
+            "",
+            "# Pull the model",
+            f"docker exec ollama ollama pull {self.ollama_model}",
+            "",
+            "echo \"Garuda Ollama setup complete\"",
+        ])
+        
+        script = "\n".join(script_parts)
         return base64.b64encode(script.encode()).decode()
     
     def _find_existing_instance(self) -> Optional[Dict[str, Any]]:

@@ -103,7 +103,7 @@ class Settings:
     exoscale_api_secret: Optional[str] = None
     exoscale_zone: str = "at-vie-2"
     exoscale_instance_type: str = "a5000.small"  # CPU type, user can change to GPU
-    exoscale_template: str = "Linux Ubuntu 22.04 LTS 64-bit"
+    exoscale_template: str = "Linux Ubuntu 24.04 LTS 64-bit"
     exoscale_disk_size: int = 50  # GB
     exoscale_ollama_key: Optional[str] = None  # Auto-generated if not set
     exoscale_idle_timeout: int = 1800  # 30 minutes in seconds
@@ -179,7 +179,7 @@ class Settings:
             exoscale_api_secret=os.environ.get("EXOSCALE_API_SECRET"),
             exoscale_zone=os.environ.get("EXOSCALE_ZONE", "at-vie-2"),
             exoscale_instance_type=os.environ.get("EXOSCALE_INSTANCE_TYPE", "a5000.small"),
-            exoscale_template=os.environ.get("EXOSCALE_TEMPLATE", "Linux Ubuntu 22.04 LTS 64-bit"),
+            exoscale_template=os.environ.get("EXOSCALE_TEMPLATE", "Linux Ubuntu 24.04 LTS 64-bit"),
             exoscale_disk_size=int(os.environ.get("EXOSCALE_DISK_SIZE", "50")),
             exoscale_ollama_key=os.environ.get("EXOSCALE_OLLAMA_KEY", f"garuda-remote-ollama-{os.urandom(4).hex()}"),
             exoscale_idle_timeout=int(os.environ.get("EXOSCALE_IDLE_TIMEOUT", "1800")),
