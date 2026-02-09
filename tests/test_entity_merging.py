@@ -951,7 +951,8 @@ class TestDeduplicationPreservesHighestKind:
         Full integration test: 3 entities for Bill Gates with different kinds.
         
         Bill Gates(entity), B. Gates(founder), William Bill Gates(person)
-        → William Bill Gates (founder) with all data merged.
+        → William Bill Gates (founder) as master with all data merged.
+        Duplicates are soft-merged (kept as subordinates with duplicate_of relationship).
         """
         from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
         
@@ -986,12 +987,19 @@ class TestDeduplicationPreservesHighestKind:
         # Run deduplication with a low threshold so all three match
         report = deduplicator.deduplicate_entities(dry_run=False, threshold=0.3)
         
-        # Verify only one entity remains
+        # All 3 entities should still exist (soft-merge preserves duplicates)
         with db_session() as session:
             remaining = session.execute(select(Entity)).scalars().all()
-            assert len(remaining) == 1
+            assert len(remaining) == 3
             
-            survivor = remaining[0]
+            # Find the master entity (the one without merged_into)
+            master_entities = [
+                e for e in remaining
+                if not (e.metadata_json and e.metadata_json.get("merged_into"))
+            ]
+            assert len(master_entities) == 1
+            
+            survivor = master_entities[0]
             # Should have the most specific kind: founder (rank 2)
             assert survivor.kind == "founder"
             # Should have the longest name
@@ -1001,13 +1009,30 @@ class TestDeduplicationPreservesHighestKind:
             assert survivor.data.get("founded") == "Microsoft Corporation"
             assert survivor.data.get("born") == "1955"
             assert survivor.data.get("nationality") == "American"
+            
+            # Subordinate entities should be marked with merged_into
+            subordinates = [
+                e for e in remaining
+                if e.metadata_json and e.metadata_json.get("merged_into")
+            ]
+            assert len(subordinates) == 2
+            for sub in subordinates:
+                assert sub.metadata_json["merged_into"] == str(survivor.id)
+            
+            # duplicate_of relationships should exist
+            dup_rels = session.execute(
+                select(Relationship).where(Relationship.relation_type == "duplicate_of")
+            ).scalars().all()
+            assert len(dup_rels) == 2
+            for rel in dup_rels:
+                assert str(rel.target_id) == str(survivor.id)
 
 
 class TestMergeTransfersAllReferences:
     """Test that _merge_entities properly transfers all references and handles edge cases."""
     
     def test_merge_transfers_relationships_with_flush(self, db_session):
-        """Test that relationships survive the merge with proper flush before delete."""
+        """Test that relationships survive the merge with proper flush and duplicate_of is created."""
         from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
         
         deduplicator = SemanticEntityDeduplicator(db_session)
@@ -1058,24 +1083,31 @@ class TestMergeTransfersAllReferences:
             deduplicator._merge_entities(session, source_id, target_id)
             session.commit()
         
-        # Verify relationships survived and point to target
+        # Verify relationships survived and point to target, plus duplicate_of
         with db_session() as session:
             relationships = session.execute(select(Relationship)).scalars().all()
-            assert len(relationships) == 2, "Both relationships should survive"
+            # 2 original relationships redirected + 1 duplicate_of = 3
+            assert len(relationships) == 3, "Both relationships should survive plus duplicate_of"
             
-            # Check that relationships now point to target instead of source
+            # Check that original relationships now point to target instead of source
             rel_types = {}
+            dup_of_count = 0
             for rel in relationships:
-                if str(rel.source_id) == target_id and str(rel.target_id) == entity_c_id:
+                if rel.relation_type == "duplicate_of":
+                    dup_of_count += 1
+                    assert str(rel.source_id) == source_id
+                    assert str(rel.target_id) == target_id
+                elif str(rel.source_id) == target_id and str(rel.target_id) == entity_c_id:
                     rel_types['target_to_c'] = rel.relation_type
                 elif str(rel.source_id) == entity_c_id and str(rel.target_id) == target_id:
                     rel_types['c_to_target'] = rel.relation_type
             
             assert rel_types.get('target_to_c') == "FOUNDED_BY"
             assert rel_types.get('c_to_target') == "FOUNDED"
+            assert dup_of_count == 1
     
     def test_merge_removes_self_referential_relationships(self, db_session):
-        """Test that self-referential relationships are removed after merge."""
+        """Test that self-referential relationships are removed after merge, but duplicate_of remains."""
         from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
         
         deduplicator = SemanticEntityDeduplicator(db_session)
@@ -1114,13 +1146,17 @@ class TestMergeTransfersAllReferences:
             deduplicator._merge_entities(session, source_id, target_id)
             session.commit()
         
-        # Verify self-referential relationship is removed
+        # Verify self-referential relationship is removed but duplicate_of exists
         with db_session() as session:
             relationships = session.execute(select(Relationship)).scalars().all()
-            assert len(relationships) == 0, "Self-referential relationship should be removed"
+            # Only the duplicate_of relationship should remain
+            assert len(relationships) == 1, "Only duplicate_of relationship should remain"
+            assert relationships[0].relation_type == "duplicate_of"
+            assert str(relationships[0].source_id) == source_id
+            assert str(relationships[0].target_id) == target_id
     
     def test_merge_deduplicates_relationships(self, db_session):
-        """Test that duplicate relationships are deduplicated, keeping highest confidence."""
+        """Test that duplicate relationships are deduplicated, plus duplicate_of is created."""
         from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
         
         deduplicator = SemanticEntityDeduplicator(db_session)
@@ -1171,15 +1207,23 @@ class TestMergeTransfersAllReferences:
             deduplicator._merge_entities(session, source_id, target_id)
             session.commit()
         
-        # Verify only one relationship remains
+        # Verify: 1 deduplicated FOUNDED_BY + 1 duplicate_of = 2 relationships
         with db_session() as session:
             relationships = session.execute(select(Relationship)).scalars().all()
-            assert len(relationships) == 1, "Duplicate relationships should be deduplicated"
+            assert len(relationships) == 2, "Deduplicated relationship + duplicate_of should remain"
             
-            rel = relationships[0]
+            founded_by_rels = [r for r in relationships if r.relation_type == "FOUNDED_BY"]
+            dup_of_rels = [r for r in relationships if r.relation_type == "duplicate_of"]
+            
+            assert len(founded_by_rels) == 1
+            rel = founded_by_rels[0]
             assert str(rel.source_id) == target_id
             assert str(rel.target_id) == entity_c_id
             assert rel.relation_type == "FOUNDED_BY"
+            
+            assert len(dup_of_rels) == 1
+            assert str(dup_of_rels[0].source_id) == source_id
+            assert str(dup_of_rels[0].target_id) == target_id
     
     def test_merge_transfers_entity_field_values(self, db_session):
         """Test that EntityFieldValue records are transferred to target."""
@@ -1445,3 +1489,238 @@ class TestMergeTransfersAllReferences:
             assert len(merge_history) == 1
             assert merge_history[0]["id"] == source_id
             assert merge_history[0]["name"] == "Microsoft"
+
+
+class TestSoftMergeProvenance:
+    """Test that soft-merge preserves duplicate entities for provenance tracking."""
+    
+    def test_source_entity_preserved_after_merge(self, db_session):
+        """Test that the source entity is not deleted after merge."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corp",
+                kind="company",
+                data={"industry": "tech"},
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+                data={"website": "microsoft.com"},
+            )
+            session.add_all([source, target])
+            session.commit()
+            source_id = str(source.id)
+            target_id = str(target.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Source entity should still exist
+        with db_session() as session:
+            source = session.execute(
+                select(Entity).where(Entity.id == source_id)
+            ).scalar_one_or_none()
+            assert source is not None, "Source entity should be preserved (not deleted)"
+    
+    def test_source_entity_marked_with_merged_into(self, db_session):
+        """Test that the source entity is marked with merged_into metadata."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Bill Gates",
+                kind="person",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="William Bill Gates",
+                kind="founder",
+            )
+            session.add_all([source, target])
+            session.commit()
+            source_id = str(source.id)
+            target_id = str(target.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        with db_session() as session:
+            source = session.execute(
+                select(Entity).where(Entity.id == source_id)
+            ).scalar_one()
+            assert source.metadata_json is not None
+            assert source.metadata_json.get("merged_into") == target_id
+            assert "merged_at" in source.metadata_json
+    
+    def test_duplicate_of_relationship_created(self, db_session):
+        """Test that a duplicate_of relationship is created from source → target."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            source = Entity(
+                id=uuid.uuid4(),
+                name="MSFT",
+                kind="company",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Microsoft Corporation",
+                kind="company",
+            )
+            session.add_all([source, target])
+            session.commit()
+            source_id = str(source.id)
+            target_id = str(target.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        with db_session() as session:
+            dup_rel = session.execute(
+                select(Relationship).where(
+                    Relationship.source_id == source_id,
+                    Relationship.target_id == target_id,
+                    Relationship.relation_type == "duplicate_of",
+                )
+            ).scalar_one_or_none()
+            
+            assert dup_rel is not None, "duplicate_of relationship should be created"
+            assert dup_rel.metadata_json is not None
+            assert "merged_at" in dup_rel.metadata_json
+            assert dup_rel.metadata_json.get("original_name") == "MSFT"
+            assert dup_rel.metadata_json.get("original_kind") == "company"
+    
+    def test_provenance_preserved_through_page_references(self, db_session):
+        """Test that source entity's page references are preserved for provenance."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Bill Gates",
+                kind="person",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="William Bill Gates",
+                kind="founder",
+            )
+            session.add_all([source, target])
+            session.commit()
+            
+            # Create a page associated with the source (provenance)
+            page = Page(
+                id=uuid.uuid4(),
+                url="https://intel-source.com/bill-gates",
+                title="Intel page about Bill Gates",
+            )
+            session.add(page)
+            session.commit()
+            page.entity_id = source.id
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+            page_id = str(page.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        # Source entity should still exist and be linked via duplicate_of
+        with db_session() as session:
+            source = session.execute(
+                select(Entity).where(Entity.id == source_id)
+            ).scalar_one_or_none()
+            assert source is not None, "Source entity preserved for provenance"
+            
+            # duplicate_of relationship exists
+            dup_rel = session.execute(
+                select(Relationship).where(
+                    Relationship.source_id == source_id,
+                    Relationship.relation_type == "duplicate_of",
+                )
+            ).scalar_one_or_none()
+            assert dup_rel is not None
+    
+    def test_richest_name_wins_in_merge(self, db_session):
+        """Test that the longest (richest) name is preserved on the target."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            source = Entity(
+                id=uuid.uuid4(),
+                name="William Henry Gates III",
+                kind="person",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Bill Gates",
+                kind="person",
+            )
+            session.add_all([source, target])
+            session.commit()
+            source_id = str(source.id)
+            target_id = str(target.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        with db_session() as session:
+            target = session.execute(
+                select(Entity).where(Entity.id == target_id)
+            ).scalar_one()
+            assert target.name == "William Henry Gates III"
+    
+    def test_most_specific_kind_wins_in_merge(self, db_session):
+        """Test that the most specific kind wins when merging."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            # Source has kind "person" (rank 1), target has "entity" (rank 0)
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Some Person",
+                kind="person",
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Some Person Entity",
+                kind="entity",
+            )
+            session.add_all([source, target])
+            session.commit()
+            source_id = str(source.id)
+            target_id = str(target.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        with db_session() as session:
+            target = session.execute(
+                select(Entity).where(Entity.id == target_id)
+            ).scalar_one()
+            # "person" (rank 1) should win over "entity" (rank 0)
+            assert target.kind == "person"

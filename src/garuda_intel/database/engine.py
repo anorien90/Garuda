@@ -862,8 +862,37 @@ class SQLAlchemyStore(PersistenceStore):
                 for page in s.execute(select(Page).where(Page.entity_id == source_id)).scalars().all():
                     page.entity_id = target_id
                 
-                # Delete source entity
-                s.delete(source)
+                # Soft-merge: keep the source entity as a subordinate
+                merge_timestamp = datetime.now(timezone.utc).isoformat()
+                if not source.metadata_json:
+                    source.metadata_json = {}
+                source.metadata_json["merged_into"] = str(target_id)
+                source.metadata_json["merged_at"] = merge_timestamp
+                
+                # Create "duplicate_of" relationship from source → target
+                existing_dup_rel = s.execute(
+                    select(Relationship).where(
+                        Relationship.source_id == source_id,
+                        Relationship.target_id == target_id,
+                        Relationship.relation_type == "duplicate_of",
+                    )
+                ).scalar_one_or_none()
+                if not existing_dup_rel:
+                    dup_rel = Relationship(
+                        id=uuid.uuid4(),
+                        source_id=source_id,
+                        target_id=target_id,
+                        relation_type="duplicate_of",
+                        source_type="entity",
+                        target_type="entity",
+                        metadata_json={
+                            "merged_at": merge_timestamp,
+                            "original_name": source.name,
+                            "original_kind": source.kind,
+                        },
+                    )
+                    s.add(dup_rel)
+                
                 s.commit()
                 
                 self.logger.info(f"Merged entity {source.name} ({source_id}) into {target.name} ({target_id})")

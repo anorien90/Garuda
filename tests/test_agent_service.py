@@ -611,11 +611,11 @@ class TestProcessManagement:
         assert status["status"] == "completed"
 
 
-class TestHardDeleteEntities:
-    """Test that entity merging uses hard delete to clean up secondary entities."""
+class TestSoftMergeEntities:
+    """Test that entity merging uses soft-merge to preserve subordinate entities."""
 
-    def test_merge_entity_group_hard_delete(self):
-        """Test that _merge_entity_group deletes secondary entities after merging."""
+    def test_merge_entity_group_soft_merge(self):
+        """Test that _merge_entity_group soft-merges secondary entities instead of deleting."""
         from garuda_intel.services.agent_service import AgentService
 
         mock_store = MagicMock()
@@ -646,10 +646,11 @@ class TestHardDeleteEntities:
 
         mock_session.get = mock_get
 
-        # Mock execute to return empty lists for all queries
+        # Mock execute to return empty lists for .all() and None for .scalar_one_or_none()
         def mock_execute(_):
             mock_result = MagicMock()
             mock_result.scalars.return_value.all.return_value = []
+            mock_result.scalar_one_or_none.return_value = None
             return mock_result
         
         mock_session.execute = mock_execute
@@ -669,16 +670,21 @@ class TestHardDeleteEntities:
         assert result["merged_count"] == 1
         assert result["primary_entity"]["id"] == "primary-uuid"
 
-        # Verify secondary entity WAS deleted
-        mock_session.delete.assert_called()
-        
-        # Check that session.delete was called with secondary_entity
+        # Verify secondary entity was NOT deleted (soft-merge)
         delete_calls = mock_session.delete.call_args_list
         deleted_secondary = any(
             hasattr(call[0][0], 'id') and call[0][0].id == "secondary-uuid"
             for call in delete_calls
         )
-        assert deleted_secondary, "Secondary entity should have been deleted"
+        assert not deleted_secondary, "Secondary entity should NOT have been deleted (soft-merge)"
+
+        # Verify secondary entity has merged_into metadata
+        assert secondary_entity.metadata_json is not None
+        assert secondary_entity.metadata_json.get("merged_into") == "primary-uuid"
+        assert "merged_at" in secondary_entity.metadata_json
+
+        # Verify duplicate_of relationship was created
+        mock_session.add.assert_called()
 
         # Verify flush was called
         mock_session.flush.assert_called()

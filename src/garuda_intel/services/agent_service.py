@@ -13,7 +13,7 @@ import json
 import logging
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import select, func, desc, and_, or_
@@ -486,8 +486,36 @@ class AgentService:
             })
             primary_entity.metadata_json["merged_from"] = merge_history
             
-            # Hard delete the secondary entity
-            session.delete(secondary_entity)
+            # Soft-merge: keep the secondary entity as a subordinate
+            merge_timestamp = datetime.now(timezone.utc).isoformat()
+            if not secondary_entity.metadata_json:
+                secondary_entity.metadata_json = {}
+            secondary_entity.metadata_json["merged_into"] = str(primary_id)
+            secondary_entity.metadata_json["merged_at"] = merge_timestamp
+            
+            # Create "duplicate_of" relationship from secondary → primary
+            existing_dup_rel = session.execute(
+                select(Relationship).where(
+                    Relationship.source_id == secondary_id,
+                    Relationship.target_id == primary_id,
+                    Relationship.relation_type == "duplicate_of",
+                )
+            ).scalar_one_or_none()
+            if not existing_dup_rel:
+                dup_rel = Relationship(
+                    id=uuid.uuid4(),
+                    source_id=secondary_id,
+                    target_id=primary_id,
+                    relation_type="duplicate_of",
+                    source_type="entity",
+                    target_type="entity",
+                    metadata_json={
+                        "merged_at": merge_timestamp,
+                        "original_name": secondary_entity.name,
+                        "original_kind": secondary_entity.kind,
+                    },
+                )
+                session.add(dup_rel)
             merged_count += 1
         
         return {

@@ -1422,8 +1422,39 @@ class SemanticEntityDeduplicator:
         target.metadata_json["merged_from"] = merge_history
         flag_modified(target, 'metadata_json')
         
-        # Delete source
-        session.delete(source)
+        # Soft-merge: keep the source entity as a subordinate, not deleted
+        # Mark source as merged into target
+        merge_timestamp = datetime.now(timezone.utc).isoformat()
+        if not source.metadata_json:
+            source.metadata_json = {}
+        source.metadata_json["merged_into"] = str(target_id)
+        source.metadata_json["merged_at"] = merge_timestamp
+        flag_modified(source, 'metadata_json')
+        
+        # Create "duplicate_of" relationship from source → target
+        # Check it doesn't already exist
+        existing_dup_rel = session.execute(
+            select(Relationship).where(
+                Relationship.source_id == source_id,
+                Relationship.target_id == target_id,
+                Relationship.relation_type == "duplicate_of",
+            )
+        ).scalar_one_or_none()
+        if not existing_dup_rel:
+            dup_rel = Relationship(
+                id=uuid.uuid4(),
+                source_id=source_id,
+                target_id=target_id,
+                relation_type="duplicate_of",
+                source_type="entity",
+                target_type="entity",
+                metadata_json={
+                    "merged_at": merge_timestamp,
+                    "original_name": source.name,
+                    "original_kind": source.kind,
+                },
+            )
+            session.add(dup_rel)
         
         self.logger.info(f"Merged entity '{source.name}' ({source_kind}) into '{target.name}' ({target.kind})")
         return True
