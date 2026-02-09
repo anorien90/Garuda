@@ -460,92 +460,95 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Search Form
   const searchForm = document.getElementById('agent-search-form');
-  searchForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
-    const query = document.getElementById('agent-search-q').value.trim();
-    const topK = parseInt(document.getElementById('agent-search-topk').value) || 10;
-    const graphDepth = parseInt(document.getElementById('agent-search-depth').value) || 2;
-    const includeGraph = document.getElementById('agent-search-graph').value === 'true';
-    
-    if (!query) {
-      alert('Please enter a search query');
-      return;
-    }
-    
-    const resultsContainer = document.getElementById('agent-search-results');
-    resultsContainer.innerHTML = '<div class="text-sm text-purple-600 p-4">🔍 Searching multidimensionally...</div>';
-    
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      const apiKey = getApiKey();
-      if (apiKey) headers['X-API-Key'] = apiKey;
+  if (searchForm) {
+    searchForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
       
-      const response = await fetch('/api/agent/search', {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify({
-          query: query,
-          top_k: topK,
-          include_graph: includeGraph,
-          graph_depth: graphDepth
-        })
-      });
+      const query = document.getElementById('agent-search-q').value.trim();
+      const topK = parseInt(document.getElementById('agent-search-topk').value) || 10;
+      const graphDepth = parseInt(document.getElementById('agent-search-depth').value) || 2;
+      const includeGraph = document.getElementById('agent-search-graph').value === 'true';
       
-      const data = await response.json();
-      
-      if (data.error) {
-        resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${data.error}</div>`;
+      if (!query) {
+        alert('Please enter a search query');
         return;
       }
       
-      const stats = data.statistics || {};
-      const results = data.combined_results || [];
+      const resultsContainer = document.getElementById('agent-search-results');
+      if (!resultsContainer) return;
+      resultsContainer.innerHTML = '<div class="text-sm text-purple-600 p-4">🔍 Searching multidimensionally...</div>';
       
-      resultsContainer.innerHTML = `
-        <div class="space-y-4">
-          <div class="flex flex-wrap gap-2">
-            <span class="inline-block px-2 py-1 text-xs rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
-              Embedding: ${stats.embedding_hits || 0}
-            </span>
-            <span class="inline-block px-2 py-1 text-xs rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
-              Graph: ${stats.graph_hits || 0}
-            </span>
-            <span class="inline-block px-2 py-1 text-xs rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
-              Total Unique: ${stats.unique_results || 0}
-            </span>
-          </div>
-          
-          ${results.length > 0 ? `
-            <div class="space-y-2 max-h-96 overflow-y-auto">
-              ${results.map((r, i) => {
-                const source = r.source || 'unknown';
-                const sourceClass = source === 'embedding' 
-                  ? 'border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/20' 
-                  : 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20';
-                const sourceLabel = source === 'embedding' ? '🧠 Embedding' : '🕸️ Graph';
-                const score = r.combined_score || r.score || 0;
-                
-                return `
-                  <div class="p-3 rounded-lg border ${sourceClass}">
-                    <div class="flex justify-between items-start mb-2">
-                      <span class="text-xs font-semibold">${sourceLabel}</span>
-                      <span class="text-xs text-slate-500">Score: ${score.toFixed(3)}</span>
-                    </div>
-                    ${r.entity ? `<div class="text-sm font-medium text-slate-900 dark:text-white mb-1">${r.entity}</div>` : ''}
-                    ${r.url ? `<div class="text-xs text-brand-600 dark:text-brand-400 truncate mb-1">${r.url}</div>` : ''}
-                    ${r.text ? `<p class="text-xs text-slate-600 dark:text-slate-400 line-clamp-3">${r.text.substring(0, 300)}${r.text.length > 300 ? '...' : ''}</p>` : ''}
-                  </div>
-                `;
-              }).join('')}
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        const apiKey = getApiKey();
+        if (apiKey) headers['X-API-Key'] = apiKey;
+        
+        const response = await fetch('/api/agent/search', {
+          method: 'POST',
+          headers: headers,
+          body: JSON.stringify({
+            query: query,
+            top_k: topK,
+            include_graph: includeGraph,
+            graph_depth: graphDepth
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) {
+          resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${data.error}</div>`;
+          return;
+        }
+        
+        const stats = data.statistics || {};
+        const results = data.combined_results || [];
+        
+        resultsContainer.innerHTML = `
+          <div class="space-y-4">
+            <div class="flex flex-wrap gap-2">
+              <span class="inline-block px-2 py-1 text-xs rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
+                Embedding: ${stats.embedding_hits || 0}
+              </span>
+              <span class="inline-block px-2 py-1 text-xs rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                Graph: ${stats.graph_hits || 0}
+              </span>
+              <span class="inline-block px-2 py-1 text-xs rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
+                Total Unique: ${stats.unique_results || 0}
+              </span>
             </div>
-          ` : '<div class="text-sm text-slate-500 p-4">No results found</div>'}
-        </div>
-      `;
-    } catch (err) {
-      resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
-    }
-  });
+            
+            ${results.length > 0 ? `
+              <div class="space-y-2 max-h-96 overflow-y-auto">
+                ${results.map((r, i) => {
+                  const source = r.source || 'unknown';
+                  const sourceClass = source === 'embedding' 
+                    ? 'border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/20' 
+                    : 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20';
+                  const sourceLabel = source === 'embedding' ? '🧠 Embedding' : '🕸️ Graph';
+                  const score = r.combined_score || r.score || 0;
+                  
+                  return `
+                    <div class="p-3 rounded-lg border ${sourceClass}">
+                      <div class="flex justify-between items-start mb-2">
+                        <span class="text-xs font-semibold">${sourceLabel}</span>
+                        <span class="text-xs text-slate-500">Score: ${score.toFixed(3)}</span>
+                      </div>
+                      ${r.entity ? `<div class="text-sm font-medium text-slate-900 dark:text-white mb-1">${r.entity}</div>` : ''}
+                      ${r.url ? `<div class="text-xs text-brand-600 dark:text-brand-400 truncate mb-1">${r.url}</div>` : ''}
+                      ${r.text ? `<p class="text-xs text-slate-600 dark:text-slate-400 line-clamp-3">${r.text.substring(0, 300)}${r.text.length > 300 ? '...' : ''}</p>` : ''}
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            ` : '<div class="text-sm text-slate-500 p-4">No results found</div>'}
+          </div>
+        `;
+      } catch (err) {
+        resultsContainer.innerHTML = `<div class="text-sm text-red-500 p-4">Error: ${err.message}</div>`;
+      }
+    });
+  }
   
   // Autonomous Mode - Action Selection
   let selectedAction = 'reflect-relate';
