@@ -2,6 +2,7 @@ services:
   garuda:
     build: .
     container_name: garuda-webapp
+    network_mode: host
     restart: unless-stopped
     environment:
       - GARUDA_UI_API_KEY=${GARUDA_UI_API_KEY:-changeme}
