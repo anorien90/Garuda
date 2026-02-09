@@ -2,14 +2,14 @@
 
 This test suite validates the Exoscale adapter's functionality including:
 - Authentication and API request handling
-- Instance lifecycle management (create, start, stop, destroy)
+- Instance lifecycle management (create, start, stop)
 - Security group management
 - Cloud-init script generation
-- Idle monitoring and auto-shutdown
+- Idle monitoring and auto-stop
 - Request proxying
 - Graceful shutdown
 
-Test Coverage (57 tests total):
+Test Coverage (58 tests total):
 
 1. Initialization (3 tests)
    - Default and custom parameters
@@ -40,12 +40,12 @@ Test Coverage (57 tests total):
    - Creating new security group
    - Adding firewall rules
 
-7. Instance Lifecycle (11 tests)
+7. Instance Lifecycle (12 tests)
    - Finding existing instances
    - Ensuring instance is running
    - Creating new instances
-   - Starting stopped instances
-   - Destroying instances
+   - Starting stopped/halted instances
+   - Stopping instances (preserving for restart)
    - Getting instance status
    - Error handling
 
@@ -57,7 +57,7 @@ Test Coverage (57 tests total):
    - Thread safety
 
 10. Idle Monitoring (4 tests)
-    - Auto-destroy after timeout
+    - Auto-stop after timeout
     - Starting/stopping monitor
     - Already running checks
 
@@ -602,7 +602,7 @@ class TestEnsureInstance:
     @patch.object(ExoscaleOllamaAdapter, '_api_request')
     @patch.object(ExoscaleOllamaAdapter, 'get_ollama_url')
     def test_ensure_instance_stopped_starts(self, mock_get_url, mock_api, mock_find, adapter):
-        """Test ensure_instance starts a stopped instance."""
+        """Test ensure_instance starts a stopped/halted instance."""
         mock_find.return_value = {
             "id": "inst-stopped",
             "state": "stopped",
@@ -625,6 +625,34 @@ class TestEnsureInstance:
         # Verify start was called
         calls = mock_api.call_args_list
         assert any("inst-stopped:start" in str(call) for call in calls)
+    
+    @patch.object(ExoscaleOllamaAdapter, '_find_existing_instance')
+    @patch.object(ExoscaleOllamaAdapter, '_api_request')
+    @patch.object(ExoscaleOllamaAdapter, 'get_ollama_url')
+    def test_ensure_instance_halted_starts(self, mock_get_url, mock_api, mock_find, adapter):
+        """Test ensure_instance starts a halted instance."""
+        mock_find.return_value = {
+            "id": "inst-halted",
+            "state": "halted",
+        }
+        
+        # Mock start instance and subsequent GET
+        mock_api.side_effect = [
+            {"id": "inst-halted"},  # PUT :start
+            {"id": "inst-halted", "state": "running", "public-ip": "1.2.3.6"},  # GET status
+        ]
+        
+        mock_get_url.return_value = "http://1.2.3.6:11435/api/generate"
+        
+        with patch('time.sleep'):  # Don't actually sleep
+            url = adapter.ensure_instance()
+        
+        assert url == "http://1.2.3.6:11435/api/generate"
+        assert adapter.instance_ip == "1.2.3.6"
+        
+        # Verify start was called
+        calls = mock_api.call_args_list
+        assert any("inst-halted:start" in str(call) for call in calls)
     
     @patch.object(ExoscaleOllamaAdapter, '_find_existing_instance')
     @patch.object(ExoscaleOllamaAdapter, 'create_instance')
@@ -696,42 +724,43 @@ class TestCreateInstance:
         assert url is None
 
 
-class TestDestroyInstance:
-    """Test instance destruction."""
+class TestStopInstance:
+    """Test instance stopping (halt instead of destroy)."""
     
     @patch.object(ExoscaleOllamaAdapter, '_api_request')
-    def test_destroy_instance_success(self, mock_api, adapter):
-        """Test successful instance destruction."""
-        adapter.instance_id = "inst-to-delete"
+    def test_stop_instance_success(self, mock_api, adapter):
+        """Test successful instance stopping."""
+        adapter.instance_id = "inst-to-stop"
         adapter.instance_ip = "1.2.3.4"
         
-        mock_api.return_value = {}  # 204 No Content
+        mock_api.return_value = {}  # Success response
         
-        result = adapter.destroy_instance()
+        result = adapter.stop_instance()
         
         assert result is True
-        assert adapter.instance_id is None
-        assert adapter.instance_ip is None
-        mock_api.assert_called_once_with("DELETE", "/instance/inst-to-delete")
+        # Instance ID and IP should be kept for restart
+        assert adapter.instance_id == "inst-to-stop"
+        assert adapter.instance_ip == "1.2.3.4"
+        mock_api.assert_called_once_with("PUT", "/instance/inst-to-stop:stop")
     
     @patch.object(ExoscaleOllamaAdapter, '_api_request')
-    def test_destroy_instance_failure(self, mock_api, adapter):
-        """Test instance destruction failure."""
-        adapter.instance_id = "inst-to-delete"
+    def test_stop_instance_failure(self, mock_api, adapter):
+        """Test instance stopping failure."""
+        adapter.instance_id = "inst-to-stop"
         
         mock_api.return_value = None  # API error
         
-        result = adapter.destroy_instance()
+        result = adapter.stop_instance()
         
         assert result is False
         # Instance ID should still be set on failure
-        assert adapter.instance_id == "inst-to-delete"
+        assert adapter.instance_id == "inst-to-stop"
     
-    def test_destroy_instance_no_instance(self, adapter):
-        """Test destroying when no instance exists."""
+    def test_stop_instance_no_instance(self, adapter):
+        """Test stopping when no instance exists."""
         adapter.instance_id = None
         
-        result = adapter.destroy_instance()
+        result = adapter.stop_instance()
         
         assert result is False
 
@@ -819,14 +848,14 @@ class TestRecordActivity:
         assert len(results) == 300
 
 
-class TestIdleMonitor:
-    """Test idle monitoring and auto-shutdown."""
+class TestIdleMonitoring:
+    """Test idle monitoring and auto-stop."""
     
     @patch('time.sleep')
     @patch('time.time')
-    @patch.object(ExoscaleOllamaAdapter, 'destroy_instance')
-    def test_idle_monitor_auto_destroys(self, mock_destroy, mock_time, mock_sleep, adapter):
-        """Test idle monitor destroys instance after timeout."""
+    @patch.object(ExoscaleOllamaAdapter, 'stop_instance')
+    def test_idle_monitor_auto_stops(self, mock_stop, mock_time, mock_sleep, adapter):
+        """Test idle monitor stops instance after timeout."""
         # Set short timeout for testing
         adapter.idle_timeout = 10
         adapter.last_activity = 1000
@@ -844,8 +873,8 @@ class TestIdleMonitor:
         # Wait for thread to process
         adapter.idle_monitor_thread.join(timeout=2)
         
-        # Should have destroyed instance
-        mock_destroy.assert_called_once()
+        # Should have stopped instance
+        mock_stop.assert_called_once()
     
     def test_start_idle_monitor(self, adapter):
         """Test starting idle monitor."""
@@ -952,45 +981,45 @@ class TestShutdown:
     """Test graceful shutdown."""
     
     @patch.object(ExoscaleOllamaAdapter, 'stop_idle_monitor')
-    @patch.object(ExoscaleOllamaAdapter, 'destroy_instance')
-    def test_shutdown_success(self, mock_destroy, mock_stop, adapter):
+    @patch.object(ExoscaleOllamaAdapter, 'stop_instance')
+    def test_shutdown_success(self, mock_stop, mock_stop_monitor, adapter):
         """Test successful shutdown."""
         adapter.instance_id = "inst-123"
         
         adapter.shutdown()
         
+        mock_stop_monitor.assert_called_once()
         mock_stop.assert_called_once()
-        mock_destroy.assert_called_once()
         assert adapter._shutdown_called is True
     
     @patch.object(ExoscaleOllamaAdapter, 'stop_idle_monitor')
-    @patch.object(ExoscaleOllamaAdapter, 'destroy_instance')
-    def test_shutdown_idempotent(self, mock_destroy, mock_stop, adapter):
+    @patch.object(ExoscaleOllamaAdapter, 'stop_instance')
+    def test_shutdown_idempotent(self, mock_stop, mock_stop_monitor, adapter):
         """Test shutdown is idempotent - calling twice doesn't error."""
         adapter.instance_id = "inst-123"
         
         # First shutdown
         adapter.shutdown()
-        assert mock_destroy.call_count == 1
+        assert mock_stop.call_count == 1
         
         # Second shutdown
         adapter.shutdown()
         
-        # Should not destroy again
-        assert mock_destroy.call_count == 1
+        # Should not stop again
         assert mock_stop.call_count == 1
+        assert mock_stop_monitor.call_count == 1
     
     @patch.object(ExoscaleOllamaAdapter, 'stop_idle_monitor')
-    @patch.object(ExoscaleOllamaAdapter, 'destroy_instance')
-    def test_shutdown_without_instance(self, mock_destroy, mock_stop, adapter):
+    @patch.object(ExoscaleOllamaAdapter, 'stop_instance')
+    def test_shutdown_without_instance(self, mock_stop, mock_stop_monitor, adapter):
         """Test shutdown when no instance exists."""
         adapter.instance_id = None
         
         adapter.shutdown()
         
-        mock_stop.assert_called_once()
-        # destroy_instance should NOT be called if instance_id is None
-        mock_destroy.assert_not_called()
+        mock_stop_monitor.assert_called_once()
+        # stop_instance should NOT be called if instance_id is None
+        mock_stop.assert_not_called()
         assert adapter._shutdown_called is True
     
     def test_shutdown_thread_safe(self, adapter):
@@ -998,7 +1027,7 @@ class TestShutdown:
         adapter.instance_id = "inst-123"
         
         with patch.object(adapter, 'stop_idle_monitor'), \
-             patch.object(adapter, 'destroy_instance'):
+             patch.object(adapter, 'stop_instance'):
             
             # Call shutdown from multiple threads
             threads = [threading.Thread(target=adapter.shutdown) for _ in range(10)]
@@ -1018,7 +1047,7 @@ class TestIntegrationScenarios:
     @patch('time.sleep')
     @patch('time.time')
     def test_full_lifecycle(self, mock_time, mock_sleep, mock_api, adapter):
-        """Test full instance lifecycle: create -> use -> destroy."""
+        """Test full instance lifecycle: create -> use -> stop."""
         # Mock time
         mock_time.return_value = 1000
         
@@ -1036,7 +1065,7 @@ class TestIntegrationScenarios:
             {"id": "inst-new"},
             # create_instance GET status
             {"id": "inst-new", "state": "running", "public-ip": "1.2.3.4"},
-            # destroy_instance DELETE
+            # stop_instance PUT
             {},
         ]
         
@@ -1045,10 +1074,11 @@ class TestIntegrationScenarios:
         assert url == "http://1.2.3.4:11435/api/generate"
         assert adapter.instance_id == "inst-new"
         
-        # Destroy instance
-        result = adapter.destroy_instance()
+        # Stop instance (instead of destroy to preserve for restart)
+        result = adapter.stop_instance()
         assert result is True
-        assert adapter.instance_id is None
+        # Instance ID should be kept for restart
+        assert adapter.instance_id == "inst-new"
     
     @patch('garuda_intel.exoscale.adapter.requests.post')
     def test_proxy_with_activity_tracking(self, mock_post, adapter):

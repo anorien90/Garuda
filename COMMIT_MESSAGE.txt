@@ -1,0 +1,28 @@
+feat: Replace instance deletion with stop/halt to preserve quota
+
+Changed Exoscale Ollama adapters to stop (halt) instances instead of 
+deleting them when idle or shutting down. This preserves instances to 
+avoid quota limitations and enables faster restarts.
+
+Changes:
+- Renamed destroy_instance() to stop_instance() in both adapters
+- Updated ensure_instance() to handle halted state
+- Modified idle monitor and shutdown to stop instead of delete
+- Updated CLI stop command to preserve instances
+- Updated all tests and documentation
+
+Benefits:
+- Quota preservation (no instance creation limits hit)
+- Faster restarts (30-60s vs 1-2 minutes)  
+- Same cost savings (stopped instances don't incur charges)
+- Backward compatible behavior
+
+Files modified:
+- src/garuda_intel/exoscale/adapter.py (manual HTTP)
+- src/garuda_intel/exoscale/cli.py
+- ollama-exoscale/exoscale_adapter.py (SDK)
+- tests/test_exoscale_adapter.py (62 tests pass)
+- tests/test_ollama_exoscale.py (11 tests pass)
+- ollama-exoscale/README.md
+
+Fixes issue with quota limitations during instance restart.

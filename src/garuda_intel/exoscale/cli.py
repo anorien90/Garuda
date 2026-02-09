@@ -3,7 +3,7 @@
 This CLI provides commands to manage Exoscale Ollama instances:
 - status: Show instance status
 - start: Manually start/create instance
-- stop: Manually stop/destroy instance
+- stop: Manually stop instance (preserves for restart)
 - logs: Show instance information
 """
 
@@ -105,7 +105,7 @@ def cmd_start(args):
 
 
 def cmd_stop(args):
-    """Manually stop/destroy Exoscale Ollama instance."""
+    """Manually stop Exoscale Ollama instance."""
     adapter = get_adapter_from_env()
     if not adapter:
         return 1
@@ -119,11 +119,11 @@ def cmd_stop(args):
     adapter.instance_id = instance.get("id")
     
     print(f"Stopping instance {adapter.instance_id}...")
-    if adapter.destroy_instance():
-        print("✓ Instance destroyed")
+    if adapter.stop_instance():
+        print("✓ Instance stopped (preserved for restart)")
         return 0
     else:
-        print("✗ Failed to destroy instance")
+        print("✗ Failed to stop instance")
         return 1
 
 
@@ -196,7 +196,7 @@ Examples:
     
     subparsers.add_parser("status", help="Show instance status")
     subparsers.add_parser("start", help="Start or create instance")
-    subparsers.add_parser("stop", help="Stop/destroy instance")
+    subparsers.add_parser("stop", help="Stop instance (preserves for restart)")
     subparsers.add_parser("logs", help="Show detailed instance information")
     
     args = parser.parse_args()
