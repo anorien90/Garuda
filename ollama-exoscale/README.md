@@ -98,12 +98,21 @@ The proxy implements all Ollama API endpoints:
 1. **Startup**: The container starts and initializes the Exoscale adapter
 2. **First Request**: When the first API request arrives:
    - The adapter checks for an existing Exoscale instance
-   - If found and stopped, it starts the instance
-   - If not found, it creates a new instance with cloud-init script
+   - If found and stopped, it starts the instance (blocks ~30-60s)
+   - If not found, it starts background provisioning of a new instance
+   - The initial request returns HTTP 503 with provisioning status
+3. **Background Provisioning**: Instance creation happens asynchronously:
+   - Creates security group if needed
+   - Launches compute instance with cloud-init script
+   - Waits for instance to be running (up to 5 minutes)
+   - Waits for cloud-init to complete (60 seconds)
    - The cloud-init script installs Docker and runs the Ollama container
-3. **Request Proxying**: All requests are transparently forwarded to the remote Ollama instance
-4. **Activity Tracking**: Each request records activity for idle monitoring
-5. **Idle Shutdown**: After `EXOSCALE_IDLE_TIMEOUT` seconds of inactivity, the remote instance is destroyed
+4. **Subsequent Requests**: Clients should retry when receiving 503 with `"provisioning": true`
+   - Requests return 503 while provisioning is in progress
+   - Once ready, requests are proxied to the remote Ollama instance
+5. **Request Proxying**: All requests are transparently forwarded to the remote Ollama instance
+6. **Activity Tracking**: Each request records activity for idle monitoring
+7. **Idle Shutdown**: After `EXOSCALE_IDLE_TIMEOUT` seconds of inactivity, the remote instance is destroyed
 
 ## Monitoring
 
@@ -117,6 +126,7 @@ Response example:
 ```json
 {
   "service": "ollama-exoscale",
+  "provisioning_status": "ready",
   "instance_status": "running",
   "remote_url": "http://185.19.30.45:11434",
   "zone": "at-vie-2",
@@ -125,6 +135,12 @@ Response example:
   "idle_timeout": 1800
 }
 ```
+
+Possible `provisioning_status` values:
+- `idle`: No instance provisioning
+- `provisioning`: Instance is being created in background
+- `ready`: Instance is running and ready to accept requests
+- `error`: Provisioning failed (check `error` field)
 
 ## Cost Optimization
 
@@ -153,10 +169,16 @@ docker logs ollama-exoscale
 
 ### Instance takes too long to start
 
-The first startup takes 1-2 minutes for cloud-init to complete:
-- Installing Docker
-- Pulling the Ollama container
-- Pulling the configured model
+The first startup takes 5-7 minutes for instance provisioning and cloud-init:
+- Creating and booting the compute instance (1-2 minutes)
+- Installing Docker and NVIDIA drivers (2-3 minutes)
+- Pulling the Ollama container (1-2 minutes)
+- Pulling the configured model (1-2 minutes)
+
+**Important**: Instance creation is now asynchronous. The first request will return HTTP 503 with `"provisioning": true`. Clients should:
+1. Retry the request after a delay (e.g., every 30 seconds)
+2. Check `/status` endpoint to monitor provisioning progress
+3. Once `provisioning_status` is `ready`, requests will be proxied normally
 
 Subsequent starts are faster (30-60 seconds) if the instance was stopped, not destroyed.
 

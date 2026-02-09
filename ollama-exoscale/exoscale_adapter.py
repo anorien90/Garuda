@@ -133,6 +133,12 @@ class ExoscaleOllamaAdapter:
         self.activity_lock = threading.Lock()
         self.idle_monitor_thread: Optional[threading.Thread] = None
         self.idle_monitor_running = False
+        
+        # Background provisioning
+        self.provisioning_lock = threading.Lock()
+        self.provisioning_thread: Optional[threading.Thread] = None
+        self.provisioning_status: str = "idle"  # idle, provisioning, ready, error
+        self.provisioning_error: Optional[str] = None
     
     def _find_template_id(self) -> Optional[str]:
         """Find the template ID by name.
@@ -363,92 +369,147 @@ class ExoscaleOllamaAdapter:
         
         return None
     
-    def create_instance(self) -> Optional[str]:
-        """Create a new Exoscale compute instance with Ollama.
+    def _create_instance_blocking(self) -> Optional[str]:
+        """Internal blocking method to create instance.
+        
+        This is called by background thread. Updates provisioning status.
         
         Returns:
             Remote Ollama base URL (http://ip:port) or None on error
         """
-        # Ensure security group exists
-        sg_id = self._ensure_security_group()
-        if not sg_id:
-            self.logger.error("Failed to create/find security group")
-            return None
-        
-        # Find template and instance type IDs
-        template_id = self._find_template_id()
-        instance_type_id = self._find_instance_type_id()
-        
-        if not template_id or not instance_type_id:
-            self.logger.error("Failed to find template or instance type")
-            return None
-        
-        # Generate cloud-init script
-        user_data = self._generate_cloud_init()
-        
-        # Create instance
         try:
-            self.logger.info(f"Creating instance '{self.INSTANCE_NAME}'")
-            op = self.client.create_instance(
-                name=self.INSTANCE_NAME,
-                instance_type={"id": instance_type_id},
-                template={"id": template_id},
-                disk_size=self.disk_size,
-                security_groups=[{"id": sg_id}],
-                user_data=user_data,
-            )
-            self.client.wait(op["id"])
-            
-            # Get instance ID from operation reference
-            self.instance_id = op.get("reference", {}).get("id")
-            if not self.instance_id:
-                self.logger.error("Failed to get instance ID from operation")
+            # Ensure security group exists
+            sg_id = self._ensure_security_group()
+            if not sg_id:
+                self.logger.error("Failed to create/find security group")
+                with self.provisioning_lock:
+                    self.provisioning_status = "error"
+                    self.provisioning_error = "Failed to create/find security group"
                 return None
             
-            self.logger.info(f"Instance created: {self.instance_id}")
-        except Exception as e:
-            self.logger.error(f"Failed to create instance: {e}")
+            # Find template and instance type IDs
+            template_id = self._find_template_id()
+            instance_type_id = self._find_instance_type_id()
+            
+            if not template_id or not instance_type_id:
+                self.logger.error("Failed to find template or instance type")
+                with self.provisioning_lock:
+                    self.provisioning_status = "error"
+                    self.provisioning_error = "Failed to find template or instance type"
+                return None
+            
+            # Generate cloud-init script
+            user_data = self._generate_cloud_init()
+            
+            # Create instance
+            try:
+                self.logger.info(f"Creating instance '{self.INSTANCE_NAME}'")
+                op = self.client.create_instance(
+                    name=self.INSTANCE_NAME,
+                    instance_type={"id": instance_type_id},
+                    template={"id": template_id},
+                    disk_size=self.disk_size,
+                    security_groups=[{"id": sg_id}],
+                    user_data=user_data,
+                )
+                self.client.wait(op["id"])
+                
+                # Get instance ID from operation reference
+                self.instance_id = op.get("reference", {}).get("id")
+                if not self.instance_id:
+                    self.logger.error("Failed to get instance ID from operation")
+                    with self.provisioning_lock:
+                        self.provisioning_status = "error"
+                        self.provisioning_error = "Failed to get instance ID"
+                    return None
+                
+                self.logger.info(f"Instance created: {self.instance_id}")
+            except Exception as e:
+                self.logger.error(f"Failed to create instance: {e}")
+                with self.provisioning_lock:
+                    self.provisioning_status = "error"
+                    self.provisioning_error = str(e)
+                return None
+            
+            # Wait for instance to be running and get public IP
+            max_wait = self.INSTANCE_STARTUP_TIMEOUT
+            start_time = time.time()
+            
+            while time.time() - start_time < max_wait:
+                try:
+                    instance = self.client.get_instance(id=self.instance_id)
+                    state = instance.get("state")
+                    
+                    if state == "running":
+                        public_ip = instance.get("public_ip")
+                        if public_ip:
+                            self.instance_ip = public_ip
+                            self.logger.info(f"Instance running at {public_ip}")
+                            
+                            # Wait for cloud-init to complete
+                            self.logger.info(
+                                f"Waiting for cloud-init ({self.CLOUD_INIT_WAIT_TIME}s)"
+                            )
+                            time.sleep(self.CLOUD_INIT_WAIT_TIME)
+                            
+                            # Mark as ready
+                            with self.provisioning_lock:
+                                self.provisioning_status = "ready"
+                            
+                            return self.get_remote_url()
+                    
+                    self.logger.debug(f"Instance state: {state}, waiting...")
+                except Exception as e:
+                    self.logger.warning(f"Error checking instance state: {e}")
+                
+                time.sleep(10)
+            
+            self.logger.error("Instance failed to start within timeout")
+            with self.provisioning_lock:
+                self.provisioning_status = "error"
+                self.provisioning_error = "Instance failed to start within timeout"
             return None
         
-        # Wait for instance to be running and get public IP
-        max_wait = self.INSTANCE_STARTUP_TIMEOUT
-        start_time = time.time()
-        
-        while time.time() - start_time < max_wait:
-            try:
-                instance = self.client.get_instance(id=self.instance_id)
-                state = instance.get("state")
-                
-                if state == "running":
-                    public_ip = instance.get("public_ip")
-                    if public_ip:
-                        self.instance_ip = public_ip
-                        self.logger.info(f"Instance running at {public_ip}")
-                        
-                        # Wait for cloud-init to complete
-                        self.logger.info(
-                            f"Waiting for cloud-init ({self.CLOUD_INIT_WAIT_TIME}s)"
-                        )
-                        time.sleep(self.CLOUD_INIT_WAIT_TIME)
-                        
-                        return self.get_remote_url()
-                
-                self.logger.debug(f"Instance state: {state}, waiting...")
-            except Exception as e:
-                self.logger.warning(f"Error checking instance state: {e}")
-            
-            time.sleep(10)
-        
-        self.logger.error("Instance failed to start within timeout")
-        return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error during instance creation: {e}")
+            with self.provisioning_lock:
+                self.provisioning_status = "error"
+                self.provisioning_error = str(e)
+            return None
     
-    def ensure_instance(self) -> Optional[str]:
-        """Ensure an Ollama instance is running.
-        
-        Checks for existing instance, starts if stopped, creates if missing.
+    def create_instance(self) -> bool:
+        """Start background instance creation.
         
         Returns:
-            Remote Ollama base URL (http://ip:port) or None on error
+            True if provisioning started, False if already in progress
+        """
+        with self.provisioning_lock:
+            if self.provisioning_status == "provisioning":
+                self.logger.info("Instance provisioning already in progress")
+                return False
+            
+            self.provisioning_status = "provisioning"
+            self.provisioning_error = None
+        
+            # Start background thread (non-daemon to ensure proper cleanup)
+            self.provisioning_thread = threading.Thread(
+                target=self._create_instance_blocking,
+                daemon=False,  # Non-daemon to ensure graceful shutdown
+                name="ExoscaleProvisioning"
+            )
+            self.provisioning_thread.start()
+        
+        self.logger.info("Instance provisioning started in background")
+        return True
+    
+    def ensure_instance(self) -> Optional[str]:
+        """Ensure an Ollama instance is running or being provisioned.
+        
+        Returns URL immediately if instance is ready, or None if provisioning.
+        Check provisioning_status for current state.
+        
+        Returns:
+            Remote Ollama base URL (http://ip:port) if ready, None if provisioning/error
         """
         # Check for existing instance
         instance = self._find_existing_instance()
@@ -462,6 +523,8 @@ class ExoscaleOllamaAdapter:
                 self.logger.info(
                     f"Found running instance: {self.instance_id} at {self.instance_ip}"
                 )
+                with self.provisioning_lock:
+                    self.provisioning_status = "ready"
                 return self.get_remote_url()
             elif state == "stopped":
                 self.logger.info(f"Found stopped instance {self.instance_id}, starting...")
@@ -474,13 +537,54 @@ class ExoscaleOllamaAdapter:
                     instance = self.client.get_instance(id=self.instance_id)
                     if instance.get("state") == "running":
                         self.instance_ip = instance.get("public_ip")
+                        with self.provisioning_lock:
+                            self.provisioning_status = "ready"
                         return self.get_remote_url()
                 except Exception as e:
                     self.logger.error(f"Failed to start instance: {e}")
         
-        # No existing instance, create new one
-        self.logger.info("No existing instance found, creating new one")
-        return self.create_instance()
+        # Check/start provisioning - hold lock to prevent race condition
+        with self.provisioning_lock:
+            if self.provisioning_status == "provisioning":
+                self.logger.info("Instance provisioning in progress")
+                return None
+            elif self.provisioning_status == "ready":
+                return self.get_remote_url()
+            elif self.provisioning_status == "error":
+                self.logger.error(f"Previous provisioning failed: {self.provisioning_error}")
+                # Reset status to allow retry
+                self.provisioning_status = "idle"
+            
+            # No existing instance and not provisioning, start background provisioning
+            # Keep lock held to prevent TOCTOU race
+            if self.provisioning_status == "idle":
+                self.logger.info("No existing instance found, starting background provisioning")
+                self.provisioning_status = "provisioning"
+                self.provisioning_error = None
+                
+                # Start background thread (non-daemon to ensure proper cleanup)
+                self.provisioning_thread = threading.Thread(
+                    target=self._create_instance_blocking,
+                    daemon=False,
+                    name="ExoscaleProvisioning"
+                )
+                self.provisioning_thread.start()
+                self.logger.info("Instance provisioning started in background")
+        
+        return None
+    
+    def get_provisioning_status(self) -> Dict[str, Any]:
+        """Get current provisioning status.
+        
+        Returns:
+            Dict with status, error (if any), and remote_url (if ready)
+        """
+        with self.provisioning_lock:
+            return {
+                "status": self.provisioning_status,
+                "error": self.provisioning_error,
+                "remote_url": self.get_remote_url() if self.provisioning_status == "ready" else None,
+            }
     
     def destroy_instance(self) -> bool:
         """Destroy the Ollama instance.
@@ -575,7 +679,7 @@ class ExoscaleOllamaAdapter:
     def shutdown(self):
         """Shutdown the adapter and cleanup resources.
         
-        Stops idle monitor and destroys instance.
+        Stops idle monitor, waits for provisioning thread, and destroys instance.
         Protected against duplicate calls.
         """
         with self._shutdown_lock:
@@ -586,5 +690,18 @@ class ExoscaleOllamaAdapter:
         
         self.logger.info("Shutting down Exoscale adapter")
         self.stop_idle_monitor()
+        
+        # Wait for provisioning thread to complete if running
+        # Note: If provisioning is in progress, this may not complete within timeout
+        # The thread will continue to run but the instance will be destroyed below
+        if self.provisioning_thread and self.provisioning_thread.is_alive():
+            self.logger.info("Waiting for provisioning thread to complete...")
+            self.provisioning_thread.join(timeout=30)
+            if self.provisioning_thread.is_alive():
+                self.logger.warning(
+                    "Provisioning thread still running after 30s timeout. "
+                    "Instance will be destroyed but thread may continue briefly."
+                )
+        
         if self.instance_id:
             self.destroy_instance()
