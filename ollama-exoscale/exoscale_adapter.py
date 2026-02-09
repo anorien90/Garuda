@@ -491,10 +491,10 @@ class ExoscaleOllamaAdapter:
             self.provisioning_status = "provisioning"
             self.provisioning_error = None
         
-            # Start background thread (non-daemon for proper cleanup)
+            # Start background thread (non-daemon to ensure proper cleanup)
             self.provisioning_thread = threading.Thread(
                 target=self._create_instance_blocking,
-                daemon=False,  # Non-daemon to prevent orphaned instances
+                daemon=False,  # Non-daemon to ensure graceful shutdown
                 name="ExoscaleProvisioning"
             )
             self.provisioning_thread.start()
@@ -562,7 +562,7 @@ class ExoscaleOllamaAdapter:
                 self.provisioning_status = "provisioning"
                 self.provisioning_error = None
                 
-                # Start background thread (non-daemon for proper cleanup)
+                # Start background thread (non-daemon to ensure proper cleanup)
                 self.provisioning_thread = threading.Thread(
                     target=self._create_instance_blocking,
                     daemon=False,
@@ -692,11 +692,16 @@ class ExoscaleOllamaAdapter:
         self.stop_idle_monitor()
         
         # Wait for provisioning thread to complete if running
+        # Note: If provisioning is in progress, this may not complete within timeout
+        # The thread will continue to run but the instance will be destroyed below
         if self.provisioning_thread and self.provisioning_thread.is_alive():
             self.logger.info("Waiting for provisioning thread to complete...")
-            self.provisioning_thread.join(timeout=10)
+            self.provisioning_thread.join(timeout=30)
             if self.provisioning_thread.is_alive():
-                self.logger.warning("Provisioning thread did not complete within timeout")
+                self.logger.warning(
+                    "Provisioning thread still running after 30s timeout. "
+                    "Instance will be destroyed but thread may continue briefly."
+                )
         
         if self.instance_id:
             self.destroy_instance()
