@@ -11,11 +11,6 @@ services:
       - GARUDA_OLLAMA_URL=${GARUDA_OLLAMA_URL:-http://garuda-ollama:11434/api/generate}
       - GARUDA_OLLAMA_MODEL=${GARUDA_OLLAMA_MODEL:-granite3.1-dense:8b}
       - GARUDA_UI_CORS_ORIGINS=*
-      - EXOSCALE_API_KEY=${EXOSCALE_API_KEY:-}
-      - EXOSCALE_API_SECRET=${EXOSCALE_API_SECRET:-}
-      - EXOSCALE_ZONE=${EXOSCALE_ZONE:-at-vie-2}
-      - EXOSCALE_INSTANCE_TYPE=${EXOSCALE_INSTANCE_TYPE:-a5000.small}
-      - EXOSCALE_IDLE_TIMEOUT=${EXOSCALE_IDLE_TIMEOUT:-1800}
     ports:
       - "8080:8080"
     volumes:
@@ -56,4 +51,22 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]  # Remove this block if no GPU
+
+  ollama-exoscale:
+    build: ./ollama-exoscale
+    container_name: garuda-ollama-exoscale
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    profiles:
+      - "exoscale"
+    environment:
+      - EXOSCALE_API_KEY=${EXOSCALE_API_KEY:-}
+      - EXOSCALE_API_SECRET=${EXOSCALE_API_SECRET:-}
+      - EXOSCALE_ZONE=${EXOSCALE_ZONE:-at-vie-2}
+      - EXOSCALE_INSTANCE_TYPE=${EXOSCALE_INSTANCE_TYPE:-a5000.small}
+      - EXOSCALE_TEMPLATE=${EXOSCALE_TEMPLATE:-Linux Ubuntu 22.04 LTS 64-bit}
+      - EXOSCALE_DISK_SIZE=${EXOSCALE_DISK_SIZE:-50}
+      - EXOSCALE_IDLE_TIMEOUT=${EXOSCALE_IDLE_TIMEOUT:-1800}
+      - OLLAMA_MODEL=${GARUDA_OLLAMA_MODEL:-granite3.1-dense:8b}
 

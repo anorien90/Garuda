@@ -618,6 +618,40 @@ docker-compose logs -f garuda
 # Open browser to: http://localhost:8080
 ```
 
+### Method 3: Docker Compose with Exoscale (Cloud LLM)
+
+Use the **Ollama Exoscale** proxy to run Ollama on remote cloud infrastructure instead of locally. This is ideal for:
+- Systems without GPU/sufficient resources for local LLM
+- Cost optimization (only pay when actively processing)
+- Auto-scaling workloads
+
+```bash
+# Clone the repository
+git clone https://github.com/anorien90/Garuda.git
+cd Garuda
+
+# Set Exoscale credentials
+export EXOSCALE_API_KEY="your_exoscale_api_key"
+export EXOSCALE_API_SECRET="your_exoscale_api_secret"
+
+# Start with Exoscale profile (replaces local Ollama with cloud proxy)
+docker-compose --profile exoscale up -d
+
+# View logs
+docker-compose logs -f ollama-exoscale
+
+# Access Web UI
+# Open browser to: http://localhost:8080
+```
+
+The `ollama-exoscale` service:
+- Acts like a local Ollama container on port 11434
+- Automatically creates/starts/stops a remote Ollama instance on Exoscale cloud
+- Shuts down the remote instance after 30 minutes of inactivity (configurable)
+- Uses the official `python-exoscale` SDK for robust cloud management
+
+See [`ollama-exoscale/README.md`](ollama-exoscale/README.md) for detailed configuration and usage.
+
 ---
 
 ## Configuration
@@ -644,6 +678,22 @@ Garuda uses environment variables for all configuration. These can be set in:
 | `GARUDA_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Sentence transformer embedding model |
 | `GARUDA_OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama LLM API endpoint |
 | `GARUDA_OLLAMA_MODEL` | `granite3.1-dense:8b` | Ollama model name (also supports `phi3:3.8b`) |
+
+#### Exoscale Cloud LLM (ollama-exoscale)
+
+Use these variables when running with `--profile exoscale` to use remote Ollama on Exoscale cloud:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EXOSCALE_API_KEY` | (none) | Exoscale API key (required) |
+| `EXOSCALE_API_SECRET` | (none) | Exoscale API secret (required) |
+| `EXOSCALE_ZONE` | `at-vie-2` | Exoscale zone (e.g., `ch-gva-2`, `de-fra-1`, `at-vie-2`) |
+| `EXOSCALE_INSTANCE_TYPE` | `a5000.small` | Instance type (e.g., `standard.medium`, `gpu2.medium`) |
+| `EXOSCALE_TEMPLATE` | `Linux Ubuntu 22.04 LTS 64-bit` | OS template name |
+| `EXOSCALE_DISK_SIZE` | `50` | Root disk size in GB |
+| `EXOSCALE_IDLE_TIMEOUT` | `1800` | Seconds of inactivity before instance shutdown (30 min) |
+
+**Note**: When using `ollama-exoscale`, set `GARUDA_OLLAMA_URL=http://garuda-ollama-exoscale:11434/api/generate` in the garuda service.
 
 #### Web UI & API
 

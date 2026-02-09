@@ -1,6 +1,5 @@
 """Garuda Intel Webapp - Main Application Entry Point."""
 
-import atexit
 import signal
 import sys
 import threading
@@ -49,32 +48,6 @@ print(f"Starting Garuda Intel Webapp with DB: {settings.db_url}")
 print(f"Qdrant Vector Store: {settings.qdrant_url} Collection: {settings.qdrant_collection}")
 print(f"Ollama LLM: {settings.ollama_url} Model: {settings.ollama_model}")
 print(f"Embedding Model: {settings.embedding_model}")
-
-# Initialize Exoscale remote Ollama if configured
-exoscale_adapter = None
-if settings.exoscale_enabled:
-    from ..exoscale.adapter import ExoscaleOllamaAdapter
-    try:
-        logger.info("Initializing Exoscale remote Ollama adapter")
-        exoscale_adapter = ExoscaleOllamaAdapter(
-            api_key=settings.exoscale_api_key,
-            api_secret=settings.exoscale_api_secret,
-            zone=settings.exoscale_zone,
-            instance_type=settings.exoscale_instance_type,
-            template_name=settings.exoscale_template,
-            disk_size=settings.exoscale_disk_size,
-            ollama_model=settings.ollama_model,
-            ollama_key=settings.exoscale_ollama_key,
-            idle_timeout=settings.exoscale_idle_timeout,
-        )
-        ollama_url = exoscale_adapter.ensure_instance()
-        if ollama_url:
-            settings.ollama_url = ollama_url
-            logger.info(f"✓ Exoscale Ollama instance ready at {ollama_url}")
-        exoscale_adapter.start_idle_monitor()
-    except Exception as e:
-        logger.error(f"✗ Exoscale Ollama initialization failed: {e}")
-        exoscale_adapter = None
 
 # Initialize core components
 store = SQLAlchemyStore(settings.db_url)
@@ -412,12 +385,6 @@ def main():
         """
         shutdown_manager.request_shutdown()
         task_queue.stop_worker()
-        if exoscale_adapter:
-            exoscale_adapter.shutdown()
-    
-    # Register atexit handler for cases where signal handlers don't fire
-    if exoscale_adapter:
-        atexit.register(exoscale_adapter.shutdown)
     
     # Only register signal handlers in production mode
     # In debug mode, Flask's reloader interferes with signal handling
