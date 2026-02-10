@@ -14,7 +14,7 @@
       <input id="popup-chat-topk" type="number" min="1" max="20" value="6" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
     </label>
   </div>
-  <div class="grid gap-3 grid-cols-2">
+  <div class="grid gap-3 grid-cols-3">
     <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
       Max Cycles
       <input id="popup-chat-max-cycles" type="number" min="1" max="10" value="3" class="mt-1 w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:border-brand-500 focus:ring-brand-500"/>
@@ -22,6 +22,10 @@
     <label class="flex items-center space-x-2 pt-6">
       <input id="popup-chat-autonomous-mode" type="checkbox" class="rounded border-slate-300 dark:border-slate-700 text-brand-600 focus:ring-brand-500"/>
       <span class="text-sm font-medium text-slate-800 dark:text-slate-100">🤖 Auto</span>
+    </label>
+    <label class="flex items-center space-x-2 pt-6">
+      <input id="popup-chat-use-planner" type="checkbox" checked class="rounded border-slate-300 dark:border-slate-700 text-brand-600 focus:ring-brand-500"/>
+      <span class="text-sm font-medium text-slate-800 dark:text-slate-100">🧩 Planner</span>
     </label>
   </div>
   <button type="submit" class="w-full inline-flex items-center justify-center rounded-lg bg-brand-600 text-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500">

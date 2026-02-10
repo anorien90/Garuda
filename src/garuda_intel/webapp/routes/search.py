@@ -239,6 +239,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         entity = body.get("entity") or request.args.get("entity")
         top_k = safe_int(body.get("top_k") or request.args.get("top_k"), 6)
         session_id = body.get("session_id") or request.args.get("session_id")
+        use_planner = body.get("use_planner", True)
         # Get configurable max search cycles (default from settings or body override)
         max_search_cycles = safe_int(
             body.get("max_search_cycles") or request.args.get("max_search_cycles"),
@@ -257,6 +258,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                     "entity": entity,
                     "top_k": top_k,
                     "max_search_cycles": max_search_cycles,
+                    "use_planner": use_planner,
                 }, priority=5)  # Higher priority for chat
                 return jsonify({"task_id": task_id, "status": "pending", "message": "Chat task queued"}), 202
             except Exception as e:
@@ -265,8 +267,34 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         emit_event("chat", "chat request received", payload={
             "session_id": session_id, 
             "question": question,
-            "max_search_cycles": max_search_cycles
+            "max_search_cycles": max_search_cycles,
+            "use_planner": use_planner,
         })
+
+        # --- Dynamic task planner path ---
+        if use_planner:
+            try:
+                from ...services.task_planner import TaskPlanner
+                planner = TaskPlanner(
+                    store=store,
+                    llm=llm,
+                    vector_store=vector_store,
+                    settings=settings,
+                )
+                result = planner.run(
+                    question=question,
+                    entity=entity or "",
+                    top_k=top_k,
+                    session_id=session_id,
+                )
+                emit_event("chat", "Task planner completed", payload={
+                    "plan_id": result.get("plan_id"),
+                    "steps": result.get("total_steps_executed"),
+                })
+                return jsonify(result)
+            except Exception as e:
+                logger.warning(f"Task planner failed, falling back to legacy: {e}")
+                emit_event("chat", f"Task planner error – legacy fallback: {e}", level="warning")
     
         # Get configurable thresholds from settings
         rag_quality_threshold = getattr(settings, "chat_rag_quality_threshold", 0.7)
