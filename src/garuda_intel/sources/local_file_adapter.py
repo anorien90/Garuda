@@ -5,6 +5,7 @@ from PDFs, text files, images (via OCR), and audio/video (via transcription).
 """
 
 import hashlib
+import logging
 import os
 import mimetypes
 from typing import List, Dict, Any, Optional
@@ -17,6 +18,8 @@ from .base_adapter import (
     FetchError,
     NormalizationError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LocalFileAdapter(SourceAdapter):
@@ -388,7 +391,7 @@ class LocalFileAdapter(SourceAdapter):
                                     text_parts.append(f"Image OCR: {img_info['ocr_text']}")
                     except Exception as e:
                         # Don't fail the whole PDF if image extraction fails
-                        pass
+                        logger.debug(f"Failed to extract images from page {page_num + 1}: {e}")
                 
                 # Extract table data from pages
                 try:
@@ -397,8 +400,8 @@ class LocalFileAdapter(SourceAdapter):
                     )
                     if table_content:
                         text_parts.append(f"\n[Extracted Table Data]\n{table_content}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to extract tables from PDF: {e}")
                 
                 # Store extracted image paths in metadata for pipeline processing
                 if extracted_images:
@@ -476,16 +479,17 @@ class LocalFileAdapter(SourceAdapter):
                                     ocr_text = self.pytesseract.image_to_string(pil_img)
                                     if ocr_text and ocr_text.strip():
                                         img_info["ocr_text"] = ocr_text.strip()
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
+                                except Exception as e:
+                                    logger.debug(f"OCR failed for image {img_filename}: {e}")
+                        except Exception as e:
+                            logger.debug(f"Failed to get image dimensions for {img_filename}: {e}")
                     
                     extracted.append(img_info)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Failed to extract image {img_idx + 1} from page {page_num + 1}: {e}")
                     continue
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to process images for page {page_num + 1}: {e}")
         
         return extracted
     
@@ -608,8 +612,8 @@ class LocalFileAdapter(SourceAdapter):
                     table_data = self._extract_csv_structured(path, raw_content)
                     if table_data:
                         return f"{raw_content}\n\n[Structured Table Data]\n{table_data}"
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to extract structured data from CSV {path}: {e}")
             
             return raw_content
                 
