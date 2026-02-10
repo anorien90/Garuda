@@ -366,10 +366,10 @@ class TestSafeHelpers:
         assert TaskPlanner._safe_json(None) is None
 
     def test_safe_memory_filters_bad(self):
-        class Unserializable:
+        class FailingRepr:
             def __repr__(self):
                 raise ValueError("cannot repr")
-        mem = {"ok": [1, 2], "bad": Unserializable()}
+        mem = {"ok": [1, 2], "bad": FailingRepr()}
         safe = TaskPlanner._safe_memory(mem)
         assert "ok" in safe
         # The bad value should be converted to some string representation

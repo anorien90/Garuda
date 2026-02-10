@@ -113,6 +113,7 @@ class TaskPlanner:
         plan_steps_log: List[Dict[str, Any]] = []
         current_plan: Optional[List[Dict[str, Any]]] = None
         final_answer: Optional[str] = None
+        last_cycle = 1
 
         # --- Look up past patterns for a head-start ---
         existing_pattern = self._find_matching_pattern(question)
@@ -120,6 +121,7 @@ class TaskPlanner:
             logger.info("Found matching step pattern – will try reuse")
 
         for cycle in range(1, self.max_cycles + 1):
+            last_cycle = cycle
             plan_changes_this_cycle = 0
 
             while plan_changes_this_cycle < self.max_plan_changes_per_cycle:
@@ -213,7 +215,7 @@ class TaskPlanner:
             memory=memory,
             total_plan_changes=total_plan_changes,
             total_steps=total_steps,
-            cycle_count=min(cycle, self.max_cycles) if "cycle" in dir() else 1,
+            cycle_count=min(last_cycle, self.max_cycles),
             plan_id=plan_id,
         )
 
@@ -277,7 +279,7 @@ Previous steps: {history_summary or 'None'}
 Rules:
 1. Start with search_local_data to check existing knowledge
 2. If local data is insufficient, use crawl_external_data
-3. Always reflect_findings before finalising
+3. Always reflect_findings before finalizing
 4. Use store_memory_data to save intermediate results
 5. Keep the plan concise (3-8 steps)
 6. For multi-part questions, create steps for each sub-question
@@ -823,12 +825,12 @@ Instructions:
             logger.warning("Pattern storage failed (non-critical): %s", e)
 
     def _generalize_task(self, question: str) -> str:
-        """Ask the LLM to produce a generalised reformulation of the task."""
-        prompt = f"""Rewrite the following user question as a short, generalised task description 
+        """Ask the LLM to produce a generalized reformulation of the task."""
+        prompt = f"""Rewrite the following user question as a short, generalized task description 
 that could match similar future questions. Remove specific names/dates but keep the intent.
 
 Question: "{question}"
-Return ONLY the generalised task description as a plain string (no JSON).
+Return ONLY the generalized task description as a plain string (no JSON).
 """
         try:
             payload = {"model": self.llm.model, "prompt": prompt, "stream": False}

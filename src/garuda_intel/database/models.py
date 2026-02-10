@@ -856,7 +856,7 @@ class ChatPlan(BasicDataEntry):
     cycle_number: Mapped[int] = mapped_column(Integer, default=1)
     total_steps_executed: Mapped[int] = mapped_column(Integer, default=0)
     final_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    sources_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    sources_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
