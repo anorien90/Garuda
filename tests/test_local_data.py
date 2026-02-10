@@ -339,9 +339,9 @@ class TestDirectoryWatcherInit:
         assert watcher.recursive is False
 
     def test_init_nonexistent_directory(self):
-        """Test initialization with non-existent directory raises."""
+        """Test initialization with non-existent directory that cannot be created raises."""
         mock_tq = Mock()
-        with pytest.raises(ValueError, match="does not exist"):
+        with pytest.raises(ValueError, match="cannot be created"):
             DirectoryWatcherService(
                 watch_dir="/nonexistent/path",
                 task_queue=mock_tq,

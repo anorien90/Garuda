@@ -65,14 +65,10 @@ def init_local_data_routes(api_key_required, settings, task_queue, directory_wat
                          f"(max: {settings.local_data_max_file_size_mb}MB)",
             }), 400
         
-        # Save to upload directory (use watch dir if configured, else fallback to data dir)
-        if settings.local_data_watch_dir:
-            upload_dir = os.path.join(settings.local_data_watch_dir, "uploads")
-        else:
-            # Derive from DB URL for SQLite, or use /app/data/uploads as fallback
-            db_path = settings.db_url.replace("sqlite:///", "")
-            base_dir = os.path.dirname(db_path) if "sqlite" in settings.db_url else "/app/data"
-            upload_dir = os.path.join(base_dir, "uploads")
+        # Save to upload directory (always use data dir, watch dir may be read-only)
+        db_path = settings.db_url.replace("sqlite:///", "")
+        base_dir = os.path.dirname(db_path) if "sqlite" in settings.db_url else "/app/data"
+        upload_dir = os.path.join(base_dir, "uploads")
         os.makedirs(upload_dir, exist_ok=True)
         
         # Use secure filename
@@ -102,7 +98,7 @@ def init_local_data_routes(api_key_required, settings, task_queue, directory_wat
             priority=1,  # Uploads get slightly higher priority
         )
         
-        emit_event("file_uploaded", f"File uploaded: {uploaded_file.filename}", {
+        emit_event("file_uploaded", f"File uploaded: {uploaded_file.filename}", payload={
             "task_id": task_id,
             "filename": uploaded_file.filename,
             "file_size": file_size,
@@ -159,7 +155,7 @@ def init_local_data_routes(api_key_required, settings, task_queue, directory_wat
         
         result = directory_watcher.scan_existing()
         
-        emit_event("directory_scanned", f"Manual scan: {result['queued']} files queued", {
+        emit_event("directory_scanned", f"Manual scan: {result['queued']} files queued", payload={
             "queued": result["queued"],
             "skipped": result["skipped"],
         })

@@ -29,7 +29,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/watch
 COPY ./src/ ./src/
 COPY ./.env .
 COPY ./docker-compose.yml .

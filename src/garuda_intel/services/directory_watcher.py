@@ -59,7 +59,7 @@ class DirectoryWatcherService:
             poll_interval: Seconds between directory scans
             recursive: If True, scan subdirectories recursively
         """
-        self.watch_dir = os.path.abspath(watch_dir)
+        self.watch_dir = os.path.realpath(watch_dir)
         self.task_queue = task_queue
         self.poll_interval = poll_interval
         self.recursive = recursive
@@ -75,9 +75,13 @@ class DirectoryWatcherService:
         # Get supported extensions from LocalFileAdapter
         self._supported_extensions = set(LocalFileAdapter.get_supported_extensions())
         
-        # Validate watch directory
+        # Auto-create watch directory if it doesn't exist
         if not os.path.isdir(self.watch_dir):
-            raise ValueError(f"Watch directory does not exist: {self.watch_dir}")
+            try:
+                os.makedirs(self.watch_dir, exist_ok=True)
+                logger.info(f"Created watch directory: {self.watch_dir}")
+            except OSError as e:
+                raise ValueError(f"Watch directory does not exist and cannot be created: {self.watch_dir} ({e})")
         
         logger.info(
             f"DirectoryWatcher initialized: dir={self.watch_dir} "
@@ -136,7 +140,7 @@ class DirectoryWatcherService:
             files_to_process = []
             
             if self.recursive:
-                for root, dirs, files in os.walk(self.watch_dir):
+                for root, dirs, files in os.walk(self.watch_dir, followlinks=True):
                     for filename in files:
                         filepath = os.path.join(root, filename)
                         if self._is_supported_file(filepath):
@@ -250,7 +254,7 @@ class DirectoryWatcherService:
         try:
             # Collect all files in directory
             if self.recursive:
-                for root, dirs, files in os.walk(self.watch_dir):
+                for root, dirs, files in os.walk(self.watch_dir, followlinks=True):
                     for filename in files:
                         filepath = os.path.join(root, filename)
                         if self._is_supported_file(filepath):

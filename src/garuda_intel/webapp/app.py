@@ -260,7 +260,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
             return result
 
     def _handle_local_ingest(task_id, params):
-        """Handle local file ingestion tasks."""
+        """Handle local file ingestion tasks (insert or update)."""
         from ..sources.local_file_adapter import LocalFileAdapter
         
         file_path = params.get("file_path", "")
@@ -276,46 +276,102 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         
         tq.update_progress(task_id, 0.5, "Content extracted, storing results")
         
-        # Store the extracted content as a page + page_content in the database
+        # Store or update the extracted content in the database
         import uuid as _uuid
         from datetime import datetime as _dt
         from ..database.models import Page, PageContent
         
-        page_id = _uuid.uuid4()
-        content_id = _uuid.uuid4()
         with store.Session() as session:
-            page = Page(
-                id=page_id,
-                entry_type="page",
-                url=document.url,
-                title=document.title,
-                page_type="local_file",
-                last_status="processed",
-                last_fetch_at=_dt.utcnow(),
-                text_length=len(document.content) if document.content else 0,
-                score=document.confidence,
-            )
-            session.add(page)
-            session.flush()
+            # Check if this file was already ingested (upsert logic)
+            existing_page = session.query(Page).filter(
+                Page.url == document.url
+            ).first()
             
-            page_content = PageContent(
-                id=content_id,
-                entry_type="page_content",
-                page_id=page_id,
-                page_url=document.url,
-                text=document.content[:50000] if document.content else "",
-                metadata_json={
-                    "source": "local_file",
-                    "event": event,
-                    "file_type": document.metadata.get("file_type", ""),
-                    "file_size_mb": document.metadata.get("file_size_mb", 0),
-                    "confidence": document.confidence,
-                    "original_filename": params.get("original_filename", document.title),
-                },
-                fetch_ts=_dt.utcnow(),
-            )
-            session.add(page_content)
-            session.commit()
+            if existing_page:
+                # Update existing page and content
+                page_id = existing_page.id
+                existing_page.title = document.title
+                existing_page.last_status = "processed"
+                existing_page.last_fetch_at = _dt.utcnow()
+                existing_page.text_length = len(document.content) if document.content else 0
+                existing_page.score = document.confidence
+                
+                existing_content = session.query(PageContent).filter(
+                    PageContent.page_id == page_id
+                ).first()
+                
+                if existing_content:
+                    existing_content.text = document.content[:50000] if document.content else ""
+                    existing_content.metadata_json = {
+                        "source": "local_file",
+                        "event": event,
+                        "file_type": document.metadata.get("file_type", ""),
+                        "file_size_mb": document.metadata.get("file_size_mb", 0),
+                        "confidence": document.confidence,
+                        "original_filename": params.get("original_filename", document.title),
+                    }
+                    existing_content.fetch_ts = _dt.utcnow()
+                else:
+                    content_id = _uuid.uuid4()
+                    page_content = PageContent(
+                        id=content_id,
+                        entry_type="page_content",
+                        page_id=page_id,
+                        page_url=document.url,
+                        text=document.content[:50000] if document.content else "",
+                        metadata_json={
+                            "source": "local_file",
+                            "event": event,
+                            "file_type": document.metadata.get("file_type", ""),
+                            "file_size_mb": document.metadata.get("file_size_mb", 0),
+                            "confidence": document.confidence,
+                            "original_filename": params.get("original_filename", document.title),
+                        },
+                        fetch_ts=_dt.utcnow(),
+                    )
+                    session.add(page_content)
+                
+                session.commit()
+                upsert_action = "updated"
+                logger.info(f"Updated existing local file record: {document.url}")
+            else:
+                # Insert new page and content
+                page_id = _uuid.uuid4()
+                content_id = _uuid.uuid4()
+                page = Page(
+                    id=page_id,
+                    entry_type="page",
+                    url=document.url,
+                    title=document.title,
+                    page_type="local_file",
+                    last_status="processed",
+                    last_fetch_at=_dt.utcnow(),
+                    text_length=len(document.content) if document.content else 0,
+                    score=document.confidence,
+                )
+                session.add(page)
+                session.flush()
+                
+                page_content = PageContent(
+                    id=content_id,
+                    entry_type="page_content",
+                    page_id=page_id,
+                    page_url=document.url,
+                    text=document.content[:50000] if document.content else "",
+                    metadata_json={
+                        "source": "local_file",
+                        "event": event,
+                        "file_type": document.metadata.get("file_type", ""),
+                        "file_size_mb": document.metadata.get("file_size_mb", 0),
+                        "confidence": document.confidence,
+                        "original_filename": params.get("original_filename", document.title),
+                    },
+                    fetch_ts=_dt.utcnow(),
+                )
+                session.add(page_content)
+                session.commit()
+                upsert_action = "inserted"
+                logger.info(f"Inserted new local file record: {document.url}")
         
         tq.update_progress(task_id, 1.0, "Local file ingestion complete")
         
@@ -327,6 +383,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
             "confidence": document.confidence,
             "source_type": document.source_type.value,
             "event": event,
+            "action": upsert_action,
         }
 
     tq.register_handler(TaskQueueService.TASK_AGENT_REFLECT, _handle_agent_reflect)
