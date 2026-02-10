@@ -102,7 +102,8 @@ init_event_logging()
 task_queue = TaskQueueService(store)
 
 
-def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler):
+def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler,
+                            llm_extractor=None, vec_store=None):
     """Register task handlers for the queue worker."""
 
     def _handle_agent_reflect(task_id, params):
@@ -266,11 +267,16 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
     )
 
     def _handle_local_ingest(task_id, params):
-        """Handle local file ingestion tasks (insert or update).
+        """Handle local file ingestion tasks with full intel extraction pipeline.
 
-        Extracts content from the file, persists it as Page + PageContent,
-        extracts URLs found in the text as Link records, and stores complete
-        file metadata (hash, stored path) for change tracking.
+        Pipeline steps:
+        1. Extract content from the file via LocalFileAdapter
+        2. Persist as Page + PageContent (upsert)
+        3. Run LLM intelligence extraction (entities, findings, relationships)
+        4. Save entities and relationships to the database
+        5. Save intelligence records
+        6. Generate and store embeddings in the vector store
+        7. Extract URLs found in the text as Link records
         """
         from ..sources.local_file_adapter import LocalFileAdapter
         import hashlib as _hashlib
@@ -279,7 +285,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         event = params.get("event", "unknown")
         stored_path = params.get("stored_path", file_path)
         
-        tq.update_progress(task_id, 0.1, f"Processing local file: {os.path.basename(file_path)}")
+        tq.update_progress(task_id, 0.05, f"Processing local file: {os.path.basename(file_path)}")
         
         adapter = LocalFileAdapter({"max_file_size_mb": getattr(settings, 'local_data_max_file_size_mb', 100)})
         document = adapter.process_file(file_path)
@@ -287,7 +293,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         if not document:
             return {"error": "Failed to extract content from file", "file_path": file_path}
         
-        tq.update_progress(task_id, 0.3, "Content extracted, storing results")
+        tq.update_progress(task_id, 0.1, "Content extracted, storing results")
         
         # Calculate file hash for change tracking
         file_hash = None
@@ -392,7 +398,250 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                 upsert_action = "inserted"
                 logger.info(f"Inserted new local file record: {document.url}")
         
-        tq.update_progress(task_id, 0.6, "Page stored, extracting links")
+        page_id_str = str(page_id)
+        
+        # ================================================================
+        # INTEL EXTRACTION PIPELINE
+        # ================================================================
+        text_content = document.content or ""
+        extracted_entities = []
+        verified_findings = []
+        verified_findings_with_scores = []
+        finding_to_entities = {}
+        entity_id_map = {}
+        intel_count = 0
+        entities_count = 0
+        relationships_count = 0
+        summary = ""
+        
+        if llm_extractor and text_content.strip():
+            try:
+                from ..types.entity import EntityProfile, EntityType
+                profile = EntityProfile(
+                    name=document.title or os.path.basename(file_path),
+                    entity_type=EntityType.TOPIC,
+                )
+                
+                tq.update_progress(task_id, 0.15, "Running LLM intelligence extraction")
+                
+                # Step 1: LLM intelligence extraction
+                raw_intel = llm_extractor.extract_intelligence(
+                    profile=profile,
+                    text=text_content,
+                    page_type="local_file",
+                    url=document.url,
+                    existing_intel=None,
+                )
+                
+                if raw_intel:
+                    # Normalise to list
+                    findings_list = raw_intel if isinstance(raw_intel, list) else [raw_intel]
+                    for finding in findings_list:
+                        if not isinstance(finding, dict):
+                            continue
+                        is_verified, conf_score = llm_extractor.reflect_and_verify(profile, finding)
+                        if is_verified:
+                            verified_findings.append(finding)
+                            verified_findings_with_scores.append((finding, conf_score))
+                            f_entities = llm_extractor.extract_entities_from_finding(finding)
+                            finding_to_entities[id(finding)] = f_entities
+                            extracted_entities.extend(f_entities)
+                    
+                    # Fallback: extract entities even when no findings passed verification
+                    if not verified_findings:
+                        extracted_entities.extend(
+                            llm_extractor.extract_entities_from_finding(raw_intel)
+                        )
+                
+                tq.update_progress(
+                    task_id, 0.3,
+                    f"Extracted {len(verified_findings)} findings, {len(extracted_entities)} entities",
+                )
+                
+                # Step 2: Infer relationships between extracted entities
+                if extracted_entities and hasattr(llm_extractor, 'infer_relationships_from_entities'):
+                    _MAX_REL_CTX = 5000
+                    inferred_rels = llm_extractor.infer_relationships_from_entities(
+                        entities=extracted_entities,
+                        context_text=text_content[:_MAX_REL_CTX],
+                    )
+                    if inferred_rels:
+                        logger.info(f"Inferred {len(inferred_rels)} relationships from entity context")
+                        if verified_findings:
+                            verified_findings[-1].setdefault("relationships", []).extend(inferred_rels)
+                        else:
+                            inf_finding = {"basic_info": {}, "relationships": inferred_rels}
+                            verified_findings.append(inf_finding)
+                            verified_findings_with_scores.append((inf_finding, 0.5))
+                
+                # Step 3: Save extracted entities
+                if extracted_entities:
+                    for ent in extracted_entities:
+                        if "page_id" not in ent:
+                            ent["page_id"] = page_id_str
+                    entity_id_map = store.save_entities(extracted_entities) or {}
+                    entities_count = len(entity_id_map)
+                
+                tq.update_progress(task_id, 0.4, f"Saved {entities_count} entities")
+                
+                # Step 4: Save relationships from findings
+                entity_name_to_id = {}
+                for (ent_name, ent_kind), ent_id in entity_id_map.items():
+                    entity_name_to_id[ent_name.lower()] = ent_id
+                
+                # Auto-create missing entities referenced by relationships
+                missing_entities_dict = {}
+                for finding, conf_score in verified_findings_with_scores:
+                    for rel in (finding.get("relationships") or []):
+                        if not isinstance(rel, dict):
+                            continue
+                        src = rel.get("source")
+                        tgt = rel.get("target")
+                        src_type = rel.get("source_type", "entity")
+                        tgt_type = rel.get("target_type", "entity")
+                        if isinstance(src, list):
+                            src = src[0] if src else None
+                        if isinstance(tgt, list):
+                            tgt = tgt[0] if tgt else None
+                        if isinstance(src_type, list):
+                            src_type = src_type[0] if src_type else "entity"
+                        if isinstance(tgt_type, list):
+                            tgt_type = tgt_type[0] if tgt_type else "entity"
+                        if src and not entity_name_to_id.get(src.lower()):
+                            key = (src, src_type)
+                            if key not in missing_entities_dict:
+                                missing_entities_dict[key] = {
+                                    "name": src, "kind": src_type,
+                                    "data": {"auto_created_from_relationship": True},
+                                    "page_id": page_id_str,
+                                }
+                        if tgt and not entity_name_to_id.get(tgt.lower()):
+                            key = (tgt, tgt_type)
+                            if key not in missing_entities_dict:
+                                missing_entities_dict[key] = {
+                                    "name": tgt, "kind": tgt_type,
+                                    "data": {"auto_created_from_relationship": True},
+                                    "page_id": page_id_str,
+                                }
+                
+                if missing_entities_dict:
+                    try:
+                        new_map = store.save_entities(list(missing_entities_dict.values())) or {}
+                        entity_id_map.update(new_map)
+                        for (n, k), eid in new_map.items():
+                            entity_name_to_id[n.lower()] = eid
+                        entities_count += len(new_map)
+                    except Exception as e:
+                        logger.warning(f"Failed to create missing entities for relationships: {e}")
+                
+                # Persist relationships
+                for finding, conf_score in verified_findings_with_scores:
+                    for rel in (finding.get("relationships") or []):
+                        if not isinstance(rel, dict):
+                            continue
+                        src = rel.get("source")
+                        tgt = rel.get("target")
+                        rel_type = rel.get("relation_type") or "related"
+                        desc = rel.get("description", "")
+                        if isinstance(src, list):
+                            src = src[0] if src else None
+                        if isinstance(tgt, list):
+                            tgt = tgt[0] if tgt else None
+                        if src and tgt:
+                            src_id = entity_name_to_id.get(src.lower())
+                            tgt_id = entity_name_to_id.get(tgt.lower())
+                            if src_id and tgt_id:
+                                try:
+                                    store.save_relationship(
+                                        from_id=src_id, to_id=tgt_id,
+                                        relation_type=rel_type,
+                                        meta={"description": desc, "confidence": conf_score, "page_id": page_id_str},
+                                    )
+                                    relationships_count += 1
+                                except Exception as e:
+                                    logger.debug(f"save_relationship failed: {e}")
+                
+                tq.update_progress(task_id, 0.5, f"Saved {relationships_count} relationships")
+                
+                # Step 5: Save intelligence records
+                finding_ids = []
+                for finding, conf_score in verified_findings_with_scores:
+                    try:
+                        intel_id = store.save_intelligence(
+                            finding=finding,
+                            confidence=conf_score,
+                            page_id=page_id_str,
+                            entity_id=None,
+                            entity_name=document.title,
+                            entity_type="topic",
+                        )
+                        if intel_id:
+                            # Link intel to extracted sub-entities for provenance
+                            f_ents = finding_to_entities.get(id(finding), [])
+                            for sub_ent in f_ents:
+                                sub_name = sub_ent.get("name")
+                                sub_kind = sub_ent.get("kind")
+                                if sub_name and sub_kind:
+                                    sub_id = entity_id_map.get((sub_name, sub_kind))
+                                    if sub_id:
+                                        try:
+                                            store.save_relationship(
+                                                from_id=intel_id, to_id=sub_id,
+                                                relation_type="mentions_entity",
+                                                meta={"confidence": conf_score, "page_id": page_id_str, "entity_type": sub_kind},
+                                            )
+                                        except Exception:
+                                            pass
+                        finding_ids.append((finding, intel_id, None))
+                        intel_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to save intelligence record: {e}")
+                        finding_ids.append((finding, None, None))
+                
+                tq.update_progress(task_id, 0.6, f"Saved {intel_count} intelligence records")
+                
+                # Step 6: Generate and store embeddings
+                if vec_store:
+                    try:
+                        tq.update_progress(task_id, 0.65, "Generating embeddings")
+                        summary = llm_extractor.summarize_page(text_content) if text_content else ""
+                        entries = llm_extractor.build_embeddings_for_page(
+                            url=document.url,
+                            metadata=document.metadata,
+                            summary=summary,
+                            text_content=text_content,
+                            findings_with_ids=finding_ids,
+                            page_type="local_file",
+                            entity_name=profile.name,
+                            entity_type=profile.entity_type,
+                            page_uuid=page_id_str,
+                        )
+                        if extracted_entities:
+                            entries.extend(
+                                llm_extractor.build_embeddings_for_entities(
+                                    entities=extracted_entities,
+                                    source_url=document.url,
+                                    entity_type=profile.entity_type,
+                                    entity_id_map=entity_id_map,
+                                    page_uuid=page_id_str,
+                                )
+                            )
+                        for entry in entries:
+                            vec_store.upsert(
+                                point_id=entry["id"],
+                                vector=entry["vector"],
+                                payload=entry["payload"],
+                            )
+                        logger.info(f"Stored {len(entries)} embeddings for local file: {document.title}")
+                    except Exception as e:
+                        logger.warning(f"Failed to generate embeddings for local file: {e}")
+            
+            except Exception as e:
+                logger.error(f"Intel extraction pipeline failed for {file_path}: {e}", exc_info=True)
+        elif not llm_extractor:
+            logger.warning("LLM extractor not available - skipping intel extraction for local file")
+        
+        tq.update_progress(task_id, 0.8, "Extracting links from content")
         
         # Extract URLs from content and store as Link records
         extracted_links = []
@@ -422,7 +671,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         tq.update_progress(task_id, 1.0, "Local file ingestion complete")
         
         return {
-            "page_id": str(page_id),
+            "page_id": page_id_str,
             "file_path": file_path,
             "stored_path": stored_path,
             "title": document.title,
@@ -433,6 +682,9 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
             "action": upsert_action,
             "links_extracted": len(extracted_links),
             "file_hash": file_hash,
+            "entities_extracted": entities_count,
+            "intel_extracted": intel_count,
+            "relationships_created": relationships_count,
         }
 
     tq.register_handler(TaskQueueService.TASK_AGENT_REFLECT, _handle_agent_reflect)
@@ -566,7 +818,8 @@ _agent_for_queue = _AgentService(
     priority_unknown_weight=getattr(settings, 'agent_priority_unknown_weight', 0.7),
     priority_relation_weight=getattr(settings, 'agent_priority_relation_weight', 0.3),
 )
-_register_task_handlers(task_queue, _agent_for_queue, store, gap_analyzer, adaptive_crawler)
+_register_task_handlers(task_queue, _agent_for_queue, store, gap_analyzer, adaptive_crawler,
+                        llm_extractor=llm, vec_store=vector_store)
 
 # Start the task queue worker
 task_queue.start_worker()
