@@ -332,29 +332,44 @@ class SQLAlchemyStore(PersistenceStore):
                 
                 # First try exact match
                 existing = (
-                    s.execute(select(Entity).where(Entity.name == name, Entity.kind == kind))
-                    .scalar_one_or_none()
+                    s.execute(
+                        select(Entity)
+                        .where(Entity.name == name, Entity.kind == kind)
+                        .order_by(
+                            Entity.last_seen.desc().nullslast(),
+                            Entity.updated_at.desc().nullslast(),
+                        )
+                        .limit(1)
+                    )
+                    .scalars()
+                    .first()
                 )
                 
                 # If no exact match, try name-only lookup for potential merge
                 # Use .first() since multiple entities may have the same name with different kinds
                 if not existing:
                     existing = (
-                        s.execute(select(Entity).where(func.lower(Entity.name) == name.lower()))
-                        .scalars()
-                        .first()
+                        s.execute(
+                            select(Entity)
+                            .where(func.lower(Entity.name) == name.lower())
+                            .order_by(
+                                Entity.last_seen.desc().nullslast(),
+                                Entity.updated_at.desc().nullslast(),
+                            )
+                            .limit(1)
+                        ).scalars().first()
                     )
                 
                 if existing:
                     # Merge data - keep existing values, add new ones
-                    merged_data = _as_dict(existing.data)
+                    merged_data = dict(_as_dict(existing.data))
                     for k, v in data.items():
                         if v and (k not in merged_data or not merged_data[k]):
                             merged_data[k] = v
                     existing.data = merged_data
                     
                     # Merge metadata
-                    merged_meta = _as_dict(existing.metadata_json)
+                    merged_meta = dict(_as_dict(existing.metadata_json))
                     for k, v in meta.items():
                         if v and k not in merged_meta:
                             merged_meta[k] = v
@@ -408,8 +423,17 @@ class SQLAlchemyStore(PersistenceStore):
                     if target_name:
                         # Look up target entity by name
                         target_entity = (
-                            s.execute(select(Entity).where(func.lower(Entity.name) == target_name.lower()))
-                            .scalar_one_or_none()
+                            s.execute(
+                                select(Entity)
+                                .where(func.lower(Entity.name) == target_name.lower())
+                                .order_by(
+                                    Entity.last_seen.desc().nullslast(),
+                                    Entity.updated_at.desc().nullslast(),
+                                )
+                                .limit(1)
+                            )
+                            .scalars()
+                            .first()
                         )
                         if target_entity:
                             self._upsert_relationship(s, eid, target_entity.id, suggested_rel_type)
