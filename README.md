@@ -363,11 +363,17 @@ flowchart TD
     J --> M
     K --> M
     L --> M
+    M --> N[LLM Intel Extraction<br/>Entity &amp; Relationship Discovery]
+    N --> O[Save Entities +<br/>Relationships + Intel]
+    O --> P[Generate Embeddings<br/>Vector Store]
 
     style A fill:#fff8e1
     style F fill:#e1f5ff
     style G fill:#fff4e1
     style M fill:#e1ffe1
+    style N fill:#f3e5f5
+    style O fill:#e1ffe1
+    style P fill:#e1f5ff
 ```
 
 **API Endpoints:**
