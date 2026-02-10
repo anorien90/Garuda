@@ -259,12 +259,25 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
             tq.update_progress(task_id, 1.0, "Crawl complete")
             return result
 
+    # Pre-compiled URL pattern for extracting links from local file content
+    import re as _re_mod
+    _URL_PATTERN = _re_mod.compile(
+        r'https?://[^\s<>"\')\],;]+', _re_mod.IGNORECASE
+    )
+
     def _handle_local_ingest(task_id, params):
-        """Handle local file ingestion tasks (insert or update)."""
+        """Handle local file ingestion tasks (insert or update).
+
+        Extracts content from the file, persists it as Page + PageContent,
+        extracts URLs found in the text as Link records, and stores complete
+        file metadata (hash, stored path) for change tracking.
+        """
         from ..sources.local_file_adapter import LocalFileAdapter
+        import hashlib as _hashlib
         
         file_path = params.get("file_path", "")
         event = params.get("event", "unknown")
+        stored_path = params.get("stored_path", file_path)
         
         tq.update_progress(task_id, 0.1, f"Processing local file: {os.path.basename(file_path)}")
         
@@ -274,7 +287,18 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         if not document:
             return {"error": "Failed to extract content from file", "file_path": file_path}
         
-        tq.update_progress(task_id, 0.5, "Content extracted, storing results")
+        tq.update_progress(task_id, 0.3, "Content extracted, storing results")
+        
+        # Calculate file hash for change tracking
+        file_hash = None
+        try:
+            hasher = _hashlib.sha256()
+            with open(file_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(8192), b''):
+                    hasher.update(chunk)
+            file_hash = hasher.hexdigest()
+        except (IOError, OSError) as e:
+            logger.warning(f"Failed to compute file hash for {file_path}: {e}")
         
         # Store or update the extracted content in the database
         import uuid as _uuid
@@ -282,14 +306,22 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         from ..database.models import Page, PageContent
         
         def _build_metadata_json():
-            return {
+            meta = {
                 "source": "local_file",
                 "event": event,
                 "file_type": document.metadata.get("file_type", ""),
                 "file_size_mb": document.metadata.get("file_size_mb", 0),
+                "file_size_bytes": document.metadata.get("file_size_bytes", 0),
                 "confidence": document.confidence,
                 "original_filename": params.get("original_filename", document.title),
+                "stored_path": stored_path,
+                "absolute_path": document.metadata.get("absolute_path", file_path),
             }
+            if file_hash:
+                meta["file_hash"] = file_hash
+            if document.metadata.get("mime_type"):
+                meta["mime_type"] = document.metadata["mime_type"]
+            return meta
         
         with store.Session() as session:
             # Check if this file was already ingested (upsert logic)
@@ -360,17 +392,47 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                 upsert_action = "inserted"
                 logger.info(f"Inserted new local file record: {document.url}")
         
+        tq.update_progress(task_id, 0.6, "Page stored, extracting links")
+        
+        # Extract URLs from content and store as Link records
+        extracted_links = []
+        if document.content:
+            seen_urls = set()
+            for match in _URL_PATTERN.finditer(document.content):
+                url = match.group(0).rstrip('.')
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    extracted_links.append({
+                        "href": url,
+                        "text": "",
+                        "score": 0.5,
+                        "reason": "extracted_from_local_file",
+                        "depth": 0,
+                    })
+        
+        if extracted_links:
+            try:
+                store.save_links(document.url, extracted_links)
+                logger.info(
+                    f"Saved {len(extracted_links)} links from local file: {document.title}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save links from local file: {e}")
+        
         tq.update_progress(task_id, 1.0, "Local file ingestion complete")
         
         return {
             "page_id": str(page_id),
             "file_path": file_path,
+            "stored_path": stored_path,
             "title": document.title,
             "content_length": len(document.content),
             "confidence": document.confidence,
             "source_type": document.source_type.value,
             "event": event,
             "action": upsert_action,
+            "links_extracted": len(extracted_links),
+            "file_hash": file_hash,
         }
 
     tq.register_handler(TaskQueueService.TASK_AGENT_REFLECT, _handle_agent_reflect)
@@ -513,6 +575,15 @@ task_queue.start_worker()
 if _directory_watcher:
     _directory_watcher.start()
     logger.info("Directory watcher started")
+    # Scan existing files so any files already in the watch directory are picked up
+    try:
+        scan_result = _directory_watcher.scan_existing()
+        logger.info(
+            f"Initial directory scan: queued={scan_result['queued']} "
+            f"skipped={scan_result['skipped']}"
+        )
+    except Exception as e:
+        logger.error(f"Failed initial directory scan: {e}")
 
 
 def main():

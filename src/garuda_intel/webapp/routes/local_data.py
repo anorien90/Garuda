@@ -94,6 +94,7 @@ def init_local_data_routes(api_key_required, settings, task_queue, directory_wat
                 "file_path": save_path,
                 "event": "upload",
                 "original_filename": uploaded_file.filename,
+                "stored_path": save_path,
             },
             priority=1,  # Uploads get slightly higher priority
         )
@@ -194,13 +195,32 @@ def init_local_data_routes(api_key_required, settings, task_queue, directory_wat
                 "supported_extensions": LocalFileAdapter.get_supported_extensions(),
             }), 400
         
+        # Copy file to uploads directory for persistence
+        db_path = settings.db_url.replace("sqlite:///", "")
+        base_dir = os.path.dirname(db_path) if "sqlite" in settings.db_url else "/app/data"
+        upload_dir = os.path.join(base_dir, "uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        import shutil
+        safe_name = os.path.basename(real_path)
+        stored_path = os.path.join(upload_dir, safe_name)
+        if os.path.exists(stored_path):
+            base_name, ext_part = os.path.splitext(safe_name)
+            counter = 1
+            while os.path.exists(stored_path):
+                stored_path = os.path.join(upload_dir, f"{base_name}_{counter}{ext_part}")
+                counter += 1
+        shutil.copy2(real_path, stored_path)
+        
         # Submit task
         from ...services.task_queue import TaskQueueService
         task_id = task_queue.submit(
             task_type=TaskQueueService.TASK_LOCAL_INGEST,
             params={
-                "file_path": real_path,
+                "file_path": stored_path,
                 "event": "manual_ingest",
+                "original_filename": os.path.basename(real_path),
+                "stored_path": stored_path,
             },
             priority=1,
         )

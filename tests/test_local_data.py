@@ -1,6 +1,7 @@
 """Tests for LocalFileAdapter and DirectoryWatcherService."""
 
 import os
+import re
 import time
 import tempfile
 import pytest
@@ -603,6 +604,107 @@ class TestDirectoryWatcherTaskQueueing:
         assert call_kwargs.kwargs["params"]["event"] == "new"
 
 
+class TestDirectoryWatcherFilePersistence:
+    """Tests for file persistence to storage directory."""
+
+    def test_persist_file_copies_to_storage(self, tmp_path):
+        """Test that watched files are copied to the storage directory."""
+        watch_dir = tmp_path / "watch"
+        storage_dir = tmp_path / "uploads"
+        watch_dir.mkdir()
+
+        test_file = watch_dir / "report.txt"
+        test_file.write_text("Important report content")
+
+        mock_tq = Mock()
+        mock_tq.submit = Mock(return_value="task-123")
+        watcher = DirectoryWatcherService(
+            watch_dir=str(watch_dir),
+            task_queue=mock_tq,
+            storage_dir=str(storage_dir),
+        )
+
+        stored = watcher._persist_file(str(test_file))
+        assert os.path.isfile(stored)
+        assert str(storage_dir) in stored
+        with open(stored) as f:
+            assert f.read() == "Important report content"
+
+    def test_persist_file_handles_duplicates(self, tmp_path):
+        """Test duplicate filenames in storage get a counter suffix."""
+        watch_dir = tmp_path / "watch"
+        storage_dir = tmp_path / "uploads"
+        watch_dir.mkdir()
+        storage_dir.mkdir()
+
+        # Create existing file in storage
+        (storage_dir / "data.txt").write_text("old")
+
+        test_file = watch_dir / "data.txt"
+        test_file.write_text("new content")
+
+        mock_tq = Mock()
+        watcher = DirectoryWatcherService(
+            watch_dir=str(watch_dir),
+            task_queue=mock_tq,
+            storage_dir=str(storage_dir),
+        )
+
+        stored = watcher._persist_file(str(test_file))
+        assert os.path.isfile(stored)
+        assert "data_1.txt" in stored
+
+    def test_scan_existing_persists_files(self, tmp_path):
+        """Test scan_existing copies files to storage and queues stored path."""
+        watch_dir = tmp_path / "watch"
+        storage_dir = tmp_path / "uploads"
+        watch_dir.mkdir()
+
+        (watch_dir / "doc.txt").write_text("Document content")
+
+        mock_tq = Mock()
+        mock_tq.submit = Mock(return_value="task-123")
+        watcher = DirectoryWatcherService(
+            watch_dir=str(watch_dir),
+            task_queue=mock_tq,
+            storage_dir=str(storage_dir),
+        )
+
+        result = watcher.scan_existing()
+        assert result["queued"] == 1
+
+        # The task should be submitted with the stored path
+        call_kwargs = mock_tq.submit.call_args
+        params = call_kwargs.kwargs["params"]
+        assert "stored_path" in params
+        assert str(storage_dir) in params["stored_path"]
+        assert os.path.isfile(params["stored_path"])
+
+    def test_storage_dir_defaults_to_sibling_uploads(self, tmp_path):
+        """Test storage directory defaults to a sibling 'uploads' directory."""
+        watch_dir = tmp_path / "watch"
+        watch_dir.mkdir()
+
+        mock_tq = Mock()
+        watcher = DirectoryWatcherService(
+            watch_dir=str(watch_dir),
+            task_queue=mock_tq,
+        )
+
+        assert watcher.storage_dir == os.path.join(str(tmp_path), "uploads")
+
+    def test_status_includes_storage_dir(self, tmp_path):
+        """Test status includes storage_dir field."""
+        mock_tq = Mock()
+        watcher = DirectoryWatcherService(
+            watch_dir=str(tmp_path),
+            task_queue=mock_tq,
+        )
+
+        status = watcher.get_status()
+        assert "storage_dir" in status
+
+
 class TestDirectoryWatcherStartStop:
     """Tests for start/stop lifecycle."""
 
@@ -671,3 +773,84 @@ class TestSourceTypeEnum:
         """Test LOCAL_FILE source type is available."""
         assert hasattr(SourceType, 'LOCAL_FILE')
         assert SourceType.LOCAL_FILE.value == "local_file"
+
+
+# ============================================================================
+# Link extraction from local file content
+# ============================================================================
+
+class TestLocalFileLinkExtraction:
+    """Tests for URL extraction from local file content."""
+
+    def test_extract_urls_from_text(self):
+        """Test that URLs are extracted from text content."""
+        content = (
+            "Visit https://example.com for details. "
+            "Also see http://test.org/page?q=1 and "
+            "https://another.site/path/to/resource.html for more."
+        )
+        url_pattern = re.compile(r'https?://[^\s<>"\')\],;]+', re.IGNORECASE)
+        seen = set()
+        links = []
+        for m in url_pattern.finditer(content):
+            url = m.group(0).rstrip('.')
+            if url not in seen:
+                seen.add(url)
+                links.append({"href": url})
+
+        assert len(links) == 3
+        hrefs = [l["href"] for l in links]
+        assert "https://example.com" in hrefs
+        assert "http://test.org/page?q=1" in hrefs
+        assert "https://another.site/path/to/resource.html" in hrefs
+
+    def test_no_duplicate_urls(self):
+        """Test that duplicate URLs are deduplicated."""
+        content = (
+            "https://example.com is mentioned here. "
+            "And https://example.com is mentioned again."
+        )
+        url_pattern = re.compile(r'https?://[^\s<>"\')\],;]+', re.IGNORECASE)
+        seen = set()
+        links = []
+        for m in url_pattern.finditer(content):
+            url = m.group(0).rstrip('.')
+            if url not in seen:
+                seen.add(url)
+                links.append({"href": url})
+
+        assert len(links) == 1
+
+    def test_no_urls_in_content(self):
+        """Test content with no URLs produces empty links."""
+        content = "This is plain text with no URLs at all."
+        url_pattern = re.compile(r'https?://[^\s<>"\')\],;]+', re.IGNORECASE)
+        links = list(url_pattern.finditer(content))
+        assert len(links) == 0
+
+
+class TestDirectoryWatcherPreservesSubdirs:
+    """Tests for subdirectory structure preservation in storage."""
+
+    def test_persist_preserves_subdirectory(self, tmp_path):
+        """Test that subdirectory structure from watch dir is preserved in storage."""
+        watch_dir = tmp_path / "watch"
+        storage_dir = tmp_path / "storage"
+        sub = watch_dir / "subdir"
+        sub.mkdir(parents=True)
+
+        test_file = sub / "nested.txt"
+        test_file.write_text("nested content")
+
+        mock_tq = Mock()
+        watcher = DirectoryWatcherService(
+            watch_dir=str(watch_dir),
+            task_queue=mock_tq,
+            storage_dir=str(storage_dir),
+        )
+
+        stored = watcher._persist_file(str(test_file))
+        assert "subdir" in stored
+        assert os.path.isfile(stored)
+        with open(stored) as f:
+            assert f.read() == "nested content"
