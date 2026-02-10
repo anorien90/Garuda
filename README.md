@@ -19,7 +19,9 @@
 
 🎬 **Multi-Modal Processing**: Extracts intelligence from text, images (OCR), videos (transcription), and audio files.
 
-🔧 **Production-Ready**: Web UI with 15 specialized panels, REST API, Chrome extension, and comprehensive CLI tools.
+📁 **Local Data Ingestion**: Upload files or watch directories to process local documents (PDF, text, media) through the same extraction pipeline.
+
+🔧 **Production-Ready**: Web UI with 16 specialized panels, REST API, Chrome extension, and comprehensive CLI tools.
 
 ### Primary Use Cases
 
@@ -70,7 +72,7 @@
 
 ## Key Features
 
-### Web UI - 15 Specialized Panels
+### Web UI - 16 Specialized Panels
 
 Modern Flask-based interface with comprehensive tabs:
 
@@ -81,6 +83,7 @@ Modern Flask-based interface with comprehensive tabs:
 - 🕸️ **Entities Graph**: Interactive relationship visualization with unique entities
 - 🛠️ **Entity Tools**: Deduplication, merging, and entity management
 - 🔍 **Intel**: Entity extraction results and intelligence viewer
+- 📁 **Local Data**: Upload files (PDF, text, media) or watch directories for local data ingestion
 - 🎬 **Media**: Image, video, and audio processing pipeline
 - 📄 **Pages**: Browse crawled pages with metadata and fingerprints
 - 📝 **Recorder Admin**: Manage recorded content and sessions
@@ -107,6 +110,15 @@ Modern Flask-based interface with comprehensive tabs:
 - **Audio Processing**: Speech-to-text for audio files
 - **Multiple Backends**: Configurable processing methods per media type
 - **Embedding Integration**: Convert media into embeddings integrated into the knowledge graph
+
+### Local Data Ingestion
+
+- **File Upload**: Upload PDF, text, images, and media files through the Web UI or API
+- **Directory Watching**: Automatically monitor a directory for new or modified files and queue them for processing
+- **Extraction Pipeline**: Local files are processed through the same intelligence extraction pipeline as web-crawled content
+- **Supported Formats**: PDF, TXT, MD, CSV, JSON, XML, HTML, YAML, images (PNG, JPG, etc.), audio (MP3, WAV, etc.), video (MP4, AVI, etc.)
+- **Task Queue Integration**: File ingestion is queued as async tasks with progress tracking
+- **Change Detection**: Hash-based change detection to avoid reprocessing unchanged files
 
 ### Additional Features
 
@@ -146,6 +158,13 @@ graph TB
         PROC[services - Media Processor]
     end
 
+    subgraph "Local Data Pipeline"
+        UPLOAD[File Upload / API]
+        WATCH[Directory Watcher]
+        LFADAPT[sources - LocalFileAdapter]
+        TQ[services - Task Queue]
+    end
+
     subgraph "Data Layer"
         DB[(database - SQLAlchemy ORM)]
         VEC[(vector - Qdrant)]
@@ -181,6 +200,12 @@ graph TB
     EXTR --> PROC
     PROC --> DB
 
+    UPLOAD --> TQ
+    WATCH --> TQ
+    TQ --> LFADAPT
+    LFADAPT --> EXTR
+    LFADAPT --> DB
+
     EXTR --> TEMP
     EXTR --> TYPES
     EXTR --> CACHE
@@ -192,6 +217,10 @@ graph TB
     style WEB fill:#fff4e1
     style DB fill:#ffe1e1
     style VEC fill:#ffe1e1
+    style UPLOAD fill:#fff8e1
+    style WATCH fill:#fff8e1
+    style LFADAPT fill:#fff8e1
+    style TQ fill:#fff8e1
 ```
 
 ### Processing Pipeline
@@ -209,10 +238,18 @@ flowchart LR
     H --> I[cache<br/>Cache Results]
     I --> J[Database +<br/>Vector Store]
 
+    K[Local File<br/>Upload / Path] --> L[LocalFileAdapter<br/>Text Extraction]
+    M[Directory<br/>Watcher] --> N[Task Queue<br/>local_ingest]
+    N --> L
+    L --> D
+
     style A fill:#e1ffe1
     style J fill:#ffe1e1
     style D fill:#fff4e1
     style F fill:#f0e1ff
+    style K fill:#fff8e1
+    style M fill:#fff8e1
+    style L fill:#fff8e1
 ```
 
 ### RAG Hybrid Search with Retry
@@ -279,6 +316,7 @@ Garuda includes a database-backed task queue that provides:
 | `agent_investigate` | Execute targeted crawls |
 | `agent_combined` | Combined reflect + investigate |
 | `agent_chat` | Deep RAG chat query |
+| `local_ingest` | Local file ingestion (PDF, text, media) |
 
 **API Endpoints:**
 - `GET /api/tasks/` — List tasks (filterable by status, type)
@@ -289,6 +327,55 @@ Garuda includes a database-backed task queue that provides:
 - `DELETE /api/tasks/<id>` — Delete a finished task
 
 All agent endpoints also support `"queued": true` in the request body to submit operations asynchronously via the task queue instead of executing synchronously.
+
+### Local Data Ingestion
+
+Garuda supports processing local files (PDF, text, images, media) through the same extraction pipeline used for web-crawled content. Two ingestion methods are available:
+
+#### File Upload
+
+Upload files via the Web UI or API. Files are saved and queued as `local_ingest` tasks for asynchronous processing.
+
+#### Directory Watching
+
+Automatically monitor a directory for new or changed files. The `DirectoryWatcherService` polls the configured directory, detects new and modified files using hash-based change detection, and queues them for processing via the task queue.
+
+```mermaid
+flowchart TD
+    A[Local File] --> B{Ingestion Method}
+    B -->|Upload| C[POST /api/local-data/upload]
+    B -->|Path| D[POST /api/local-data/ingest]
+    B -->|Watcher| E[DirectoryWatcherService]
+    
+    C --> F[Task Queue<br/>local_ingest]
+    D --> F
+    E --> F
+    
+    F --> G[LocalFileAdapter]
+    G --> H{File Type}
+    
+    H -->|PDF| I[PyPDF2<br/>Text Extraction]
+    H -->|Text/MD/CSV| J[Direct<br/>Text Read]
+    H -->|Image| K[Tesseract<br/>OCR]
+    H -->|Audio/Video| L[Speech<br/>Recognition]
+    
+    I --> M[Store as Page +<br/>PageContent]
+    J --> M
+    K --> M
+    L --> M
+
+    style A fill:#fff8e1
+    style F fill:#e1f5ff
+    style G fill:#fff4e1
+    style M fill:#e1ffe1
+```
+
+**API Endpoints:**
+- `POST /api/local-data/upload` — Upload a file (multipart/form-data)
+- `POST /api/local-data/ingest` — Ingest file from server path
+- `GET /api/local-data/supported-types` — List supported file extensions
+- `GET /api/local-data/watcher/status` — Directory watcher status
+- `POST /api/local-data/watcher/scan` — Trigger manual directory scan
 
 ### Data Model
 
@@ -447,6 +534,7 @@ Garuda/
         │   ├── adaptive_crawler.py  # Adaptive crawling service
         │   ├── agent_cli.py       # Agent CLI (garuda-agent)
         │   ├── agent_service.py   # Agent service logic
+        │   ├── directory_watcher.py # Directory watcher for local data
         │   ├── entity_gap_analyzer.py  # Gap analysis
         │   ├── inference_engine.py  # Inference engine
         │   ├── media_processor.py  # Base media processor
@@ -460,6 +548,7 @@ Garuda/
         ├── sources/               # Multi-source adapters
         │   ├── api_adapter.py     # API source adapter
         │   ├── base_adapter.py    # Base adapter interface
+        │   ├── local_file_adapter.py  # Local file adapter (PDF, text, media)
         │   └── pdf_adapter.py     # PDF source adapter
         ├── templates/             # Extraction templates
         │   ├── extraction.py      # Extraction templates
@@ -476,7 +565,7 @@ Garuda/
         │   └── base.py            # Base vector interface
         └── webapp/                # Flask Web Application
             ├── app.py             # Main Flask app (garuda-intel-webapp)
-            ├── routes/            # 15 route blueprints
+            ├── routes/            # 16 route blueprints
             │   ├── __init__.py
             │   ├── static.py      # Static file routes
             │   ├── recorder.py    # Recorder routes
@@ -487,6 +576,7 @@ Garuda/
             │   ├── entity_gaps.py    # Gap analysis routes
             │   ├── entity_deduplication.py  # Deduplication routes
             │   ├── entity_relations.py  # Entity relations
+            │   ├── local_data.py  # Local data upload & watcher routes
             │   ├── media.py       # Media routes
             │   ├── graph_search.py  # Graph search
             │   ├── relationship_confidence.py  # Confidence routes
@@ -510,7 +600,7 @@ Garuda/
             └── templates/         # Jinja2 templates
                 ├── base.html      # Base template
                 ├── index.html     # Main page
-                └── components/    # 15 tab components
+                └── components/    # 16 tab components
                     ├── agent-panel.html
                     ├── chat.html
                     ├── crawl.html
@@ -518,6 +608,7 @@ Garuda/
                     ├── entities-graph.html
                     ├── entity-tools.html
                     ├── intel.html
+                    ├── local_data.html
                     ├── media.html
                     ├── pages.html
                     ├── recorder-admin.html
@@ -716,6 +807,16 @@ Use these variables when running with `--profile exoscale` to use remote Ollama 
 | `GARUDA_USE_ADAPTIVE_MEDIA` | `false` | Enable adaptive media processing |
 | `GARUDA_MEDIA_PREFER_SPEED` | `false` | Optimize for processing speed |
 | `GARUDA_MEDIA_PREFER_QUALITY` | `true` | Optimize for extraction quality |
+
+#### Local Data Ingestion
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GARUDA_LOCAL_DATA_WATCH_DIR` | (none) | Directory to watch for local files |
+| `GARUDA_LOCAL_DATA_WATCH_ENABLED` | `false` | Enable automatic directory watching |
+| `GARUDA_LOCAL_DATA_WATCH_INTERVAL` | `5` | Poll interval in seconds for directory changes |
+| `GARUDA_LOCAL_DATA_WATCH_RECURSIVE` | `true` | Recursively watch subdirectories |
+| `GARUDA_LOCAL_DATA_MAX_FILE_SIZE_MB` | `100` | Maximum file size for upload/ingestion (MB) |
 
 #### Caching
 
