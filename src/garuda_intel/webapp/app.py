@@ -266,6 +266,12 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         r'https?://[^\s<>"\')\],;]+', _re_mod.IGNORECASE
     )
 
+    def _coerce_scalar(val, default=None):
+        """Coerce a list value to its first element (LLM may return lists)."""
+        if isinstance(val, list):
+            return val[0] if val else default
+        return val
+
     def _handle_local_ingest(task_id, params):
         """Handle local file ingestion tasks with full intel extraction pipeline.
 
@@ -434,7 +440,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                 )
                 
                 if raw_intel:
-                    # Normalise to list
+                    # Normalize to list
                     findings_list = raw_intel if isinstance(raw_intel, list) else [raw_intel]
                     for finding in findings_list:
                         if not isinstance(finding, dict):
@@ -495,18 +501,10 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                     for rel in (finding.get("relationships") or []):
                         if not isinstance(rel, dict):
                             continue
-                        src = rel.get("source")
-                        tgt = rel.get("target")
-                        src_type = rel.get("source_type", "entity")
-                        tgt_type = rel.get("target_type", "entity")
-                        if isinstance(src, list):
-                            src = src[0] if src else None
-                        if isinstance(tgt, list):
-                            tgt = tgt[0] if tgt else None
-                        if isinstance(src_type, list):
-                            src_type = src_type[0] if src_type else "entity"
-                        if isinstance(tgt_type, list):
-                            tgt_type = tgt_type[0] if tgt_type else "entity"
+                        src = _coerce_scalar(rel.get("source"))
+                        tgt = _coerce_scalar(rel.get("target"))
+                        src_type = _coerce_scalar(rel.get("source_type", "entity"), "entity")
+                        tgt_type = _coerce_scalar(rel.get("target_type", "entity"), "entity")
                         if src and not entity_name_to_id.get(src.lower()):
                             key = (src, src_type)
                             if key not in missing_entities_dict:
@@ -539,14 +537,10 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                     for rel in (finding.get("relationships") or []):
                         if not isinstance(rel, dict):
                             continue
-                        src = rel.get("source")
-                        tgt = rel.get("target")
+                        src = _coerce_scalar(rel.get("source"))
+                        tgt = _coerce_scalar(rel.get("target"))
                         rel_type = rel.get("relation_type") or "related"
                         desc = rel.get("description", "")
-                        if isinstance(src, list):
-                            src = src[0] if src else None
-                        if isinstance(tgt, list):
-                            tgt = tgt[0] if tgt else None
                         if src and tgt:
                             src_id = entity_name_to_id.get(src.lower())
                             tgt_id = entity_name_to_id.get(tgt.lower())

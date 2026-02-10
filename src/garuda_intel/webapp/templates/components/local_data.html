@@ -450,7 +450,12 @@ async function loadLocalTasks() {
                 <div class="text-xs text-slate-500 mt-1">${t.progress_message || ''} (${(t.progress * 100).toFixed(0)}%)</div>
               ` : ''}
               ${t.status === 'completed' && result.content_length ? `
-                <div class="text-xs text-slate-500 mt-1">Extracted ${result.content_length.toLocaleString()} chars | Confidence: ${(result.confidence * 100).toFixed(0)}%</div>
+                <div class="text-xs text-slate-500 mt-1">
+                  Extracted ${result.content_length.toLocaleString()} chars | Confidence: ${(result.confidence * 100).toFixed(0)}%
+                  ${result.entities_extracted ? ` | Entities: ${result.entities_extracted}` : ''}
+                  ${result.intel_extracted ? ` | Intel: ${result.intel_extracted}` : ''}
+                  ${result.relationships_created ? ` | Relations: ${result.relationships_created}` : ''}
+                </div>
               ` : ''}
               ${t.status === 'failed' && t.error ? `
                 <div class="text-xs text-red-600 dark:text-red-400 mt-1">${t.error}</div>
