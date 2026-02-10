@@ -12,6 +12,7 @@
     <button data-tab-btn="media" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">🎬 Media</button>
     <button data-tab-btn="recorder" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">📡 Recorder</button>
     <button data-tab-btn="settings" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">⚙️ Settings</button>
+    <button data-tab-btn="databases" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition text-cyan-700 dark:text-cyan-300">🗄️ Databases</button>
   </nav>
 
   <div class="mt-6">
@@ -29,7 +30,8 @@
             <strong>✨ Quality:</strong> Entity gap analysis, deduplication, and data quality tools<br>
             <strong>🎬 Media:</strong> Media processing (images, video, audio to text)<br>
             <strong>📡 Recorder:</strong> Page capture health monitoring<br>
-            <strong>⚙️ Settings:</strong> Application configuration
+            <strong>⚙️ Settings:</strong> Application configuration<br>
+            <strong>🗄️ Databases:</strong> Create, switch, merge, and search across separate databases
           </p>
         </div>
     </section>
@@ -49,5 +51,6 @@
     <section data-tab-panel="media" class="hidden">{% include "components/media.html" %}</section>
     <section data-tab-panel="recorder" class="hidden">{% include "components/recorder-admin.html" %}</section>
     <section data-tab-panel="settings" class="hidden">{% include "components/settings.html" %}</section>
+    <section data-tab-panel="databases" class="hidden">{% include "components/databases.html" %}</section>
   </div>
 {% endblock %}

@@ -37,6 +37,7 @@ from .routes import entity_gaps, entity_deduplication, entity_relations, media
 from .routes import graph_search, relationship_confidence, schema, agent
 from .routes import tasks as tasks_routes
 from .routes import local_data as local_data_routes
+from .routes import databases as databases_routes
 
 settings = Settings.from_env()
 
@@ -53,6 +54,14 @@ print(f"Embedding Model: {settings.embedding_model}")
 
 # Initialize core components
 store = SQLAlchemyStore(settings.db_url)
+
+# Multi-database manager
+from ..services.database_manager import DatabaseManager as _DatabaseManager
+_db_data_dir = os.path.dirname(settings.db_url.replace("sqlite:///", "")) or "/app/data"
+db_manager = _DatabaseManager(
+    data_dir=_db_data_dir,
+    qdrant_url=settings.qdrant_url,
+)
 llm = LLMIntelExtractor(
     ollama_url=settings.ollama_url,
     model=settings.ollama_model,
@@ -862,6 +871,22 @@ app.register_blueprint(
 # Register task queue routes and handlers
 app.register_blueprint(
     tasks_routes.init_task_routes(api_key_required, task_queue)
+)
+
+# Database management: switch callback updates app-level references
+def _on_db_switch(new_store, new_collection):
+    """Called when the active database changes so all modules use the new store."""
+    global store, vector_store
+    store = new_store
+    if vector_store and new_collection:
+        try:
+            vector_store.collection = new_collection
+            vector_store._ensure_collection()
+        except Exception as exc:
+            logger.warning("Could not update vector collection: %s", exc)
+
+app.register_blueprint(
+    databases_routes.init_database_routes(api_key_required, db_manager, _on_db_switch)
 )
 
 # Initialize directory watcher if configured

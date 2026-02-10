@@ -697,6 +697,30 @@ def create_parser() -> argparse.ArgumentParser:
     # init
     subparsers.add_parser("init", help="Initialize database tables")
     
+    # ==================== Multi-Database Commands ====================
+    
+    subparsers.add_parser("db-list", help="List all registered databases")
+    
+    db_create = subparsers.add_parser("db-create", help="Create a new database")
+    db_create.add_argument("name", help="Database name")
+    db_create.add_argument("--description", default="", help="Database description")
+    db_create.add_argument("--activate", action="store_true", help="Switch to the new database")
+    
+    db_switch = subparsers.add_parser("db-switch", help="Switch active database")
+    db_switch.add_argument("name", help="Database name to switch to")
+    
+    db_delete = subparsers.add_parser("db-delete", help="Delete a database")
+    db_delete.add_argument("name", help="Database name to delete")
+    db_delete.add_argument("--delete-files", action="store_true", help="Also delete db file and Qdrant collection")
+    
+    db_merge = subparsers.add_parser("db-merge", help="Merge source database into target")
+    db_merge.add_argument("source", help="Source database name")
+    db_merge.add_argument("target", help="Target database name")
+    
+    db_search = subparsers.add_parser("db-search", help="Global search across all databases")
+    db_search.add_argument("query", help="Search query")
+    db_search.add_argument("--limit", type=int, default=10, help="Results per database")
+    
     return parser
 
 
@@ -924,6 +948,75 @@ def cmd_rel_high_confidence(store: SQLAlchemyStore, args: argparse.Namespace) ->
         print(f"\nTotal: {len(results)} high-confidence relationships")
 
 
+# ============================================================================
+# Multi-Database Commands
+# ============================================================================
+
+def _get_db_manager(args):
+    """Create a DatabaseManager from CLI args."""
+    import os
+    from ..services.database_manager import DatabaseManager
+    data_dir = os.path.dirname(args.db_url.replace("sqlite:///", "")) or "/app/data"
+    qdrant_url = os.environ.get("GARUDA_QDRANT_URL") or os.environ.get("QDRANT_URL")
+    return DatabaseManager(data_dir=data_dir, qdrant_url=qdrant_url)
+
+
+def cmd_db_list(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    mgr = _get_db_manager(args)
+    dbs = mgr.list_databases()
+    print(f"\n{'Name':<20} {'Active':<8} {'Collection':<25} {'Description'}")
+    print("-" * 80)
+    for db in dbs:
+        active = "✓" if db.get("is_active") else ""
+        print(f"{db['name']:<20} {active:<8} {db.get('qdrant_collection', ''):<25} {db.get('description', '')}")
+    print(f"\nTotal: {len(dbs)} databases")
+
+
+def cmd_db_create(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    mgr = _get_db_manager(args)
+    info = mgr.create_database(args.name, description=args.description, set_active=args.activate)
+    print(f"Created database: {info['name']}")
+    print(f"  Path: {info['db_path']}")
+    print(f"  Qdrant collection: {info['qdrant_collection']}")
+    if args.activate:
+        print("  (set as active)")
+
+
+def cmd_db_switch(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    mgr = _get_db_manager(args)
+    _, collection = mgr.switch_database(args.name)
+    print(f"Switched to database: {args.name} (collection: {collection})")
+
+
+def cmd_db_delete(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    mgr = _get_db_manager(args)
+    mgr.delete_database(args.name, delete_files=args.delete_files)
+    print(f"Deleted database: {args.name}")
+
+
+def cmd_db_merge(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    mgr = _get_db_manager(args)
+    stats = mgr.merge_databases(args.source, args.target)
+    print(f"Merge {args.source} → {args.target} complete:")
+    for k, v in stats.items():
+        print(f"  {k}: {v}")
+
+
+def cmd_db_search(store: SQLAlchemyStore, args: argparse.Namespace) -> None:
+    mgr = _get_db_manager(args)
+    results = mgr.global_search(args.query, limit_per_db=args.limit)
+    if not results:
+        print("No results found.")
+        return
+    for db_name, hits in results.items():
+        print(f"\n📂 {db_name}:")
+        for hit in hits:
+            if hit["type"] == "entity":
+                print(f"  [entity] {hit['name']} ({hit.get('kind', '')})")
+            else:
+                print(f"  [intel]  {hit.get('entity_name', '?')} ({hit.get('entity_type', '')}) conf={hit.get('confidence', 0):.2f}")
+
+
 def main() -> None:
     """Main entry point for the database CLI."""
     parser = create_parser()
@@ -956,6 +1049,12 @@ def main() -> None:
         "rel-high-confidence": cmd_rel_high_confidence,
         "stats": cmd_stats,
         "init": cmd_init_db,
+        "db-list": cmd_db_list,
+        "db-create": cmd_db_create,
+        "db-switch": cmd_db_switch,
+        "db-delete": cmd_db_delete,
+        "db-merge": cmd_db_merge,
+        "db-search": cmd_db_search,
     }
     
     handler = commands.get(args.command)

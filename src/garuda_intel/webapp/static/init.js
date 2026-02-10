@@ -10,6 +10,7 @@ import { loadPages } from './actions/pages.js';
 import { recorderSearch, recorderRefreshHealth, recorderMark } from './actions/recorder.js';
 import { runCrawl, runIntelligentCrawl, runUnifiedCrawl } from './actions/crawl.js';
 import { analyzeEntityGaps, analyzeAllGaps } from './actions/gaps.js';
+import { initDatabases } from './actions/databases.js';
 import { bindDelegatedEvents } from './events.js';
 import { initEntitiesGraph } from './entities-graph.js';
 
@@ -71,6 +72,8 @@ export function init() {
   if (btnAnalyzeAllGaps) btnAnalyzeAllGaps.onclick = analyzeAllGaps;
 
   initEntitiesGraph();
+
+  initDatabases();
 
   bindDelegatedEvents();
   refreshStatus();
