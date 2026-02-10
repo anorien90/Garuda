@@ -371,7 +371,8 @@ class LocalFileAdapter(SourceAdapter):
                         text = page.extract_text()
                         if text:
                             text_parts.append(f"[Page {page_num + 1}]\n{text}\n")
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Text extraction failed for page {page_num + 1}: {e}")
                         text_parts.append(f"[Page {page_num + 1}]\n[Text extraction failed]\n")
                     
                     # Extract embedded images from this page
@@ -515,8 +516,9 @@ class LocalFileAdapter(SourceAdapter):
         for line in lines:
             stripped = line.strip()
             if '|' in stripped and stripped.count('|') >= 2:
-                # Skip separator lines like |---|---|
-                if not re.match(r'^[\s|:-]+$', stripped):
+                # Skip Markdown table separator lines like |---|---| or | :--- | ---: |
+                # Must have pipes and primarily dashes/colons/spaces between them
+                if not re.match(r'^\|?[\s:-]+\|[\s|:-]+\|?$', stripped):
                     cells = [c.strip() for c in stripped.split('|') if c.strip()]
                     if cells:
                         pipe_rows.append(cells)
