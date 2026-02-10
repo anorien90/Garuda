@@ -336,13 +336,17 @@ class LocalFileAdapter(SourceAdapter):
             raise FetchError(f"No extraction handler for file type: {file_type}")
     
     def _extract_pdf_content(self, path: str) -> str:
-        """Extract text from PDF file.
+        """Extract text and images from PDF file.
+        
+        Extracts text from all pages and attempts to extract embedded images.
+        Extracted images are saved to a subdirectory alongside the PDF for
+        further processing by the pipeline.
         
         Args:
             path: PDF file path
             
         Returns:
-            Extracted text
+            Extracted text including image references
             
         Raises:
             FetchError: If PDF processing not available or fails
@@ -356,77 +360,352 @@ class LocalFileAdapter(SourceAdapter):
             with open(path, "rb") as f:
                 reader = self.PyPDF2.PdfReader(f)
                 text_parts = []
+                extracted_images = []
                 
                 for page_num, page in enumerate(reader.pages):
+                    # Extract text from every page - never skip
                     try:
                         text = page.extract_text()
                         if text:
                             text_parts.append(f"[Page {page_num + 1}]\n{text}\n")
                     except Exception:
-                        # Skip pages that fail to extract
-                        continue
+                        text_parts.append(f"[Page {page_num + 1}]\n[Text extraction failed]\n")
+                    
+                    # Extract embedded images from this page
+                    try:
+                        images = self._extract_images_from_pdf_page(
+                            page, page_num, path
+                        )
+                        if images:
+                            extracted_images.extend(images)
+                            for img_info in images:
+                                text_parts.append(
+                                    f"[Embedded Image: {img_info['filename']} "
+                                    f"from Page {page_num + 1} - "
+                                    f"{img_info.get('width', '?')}x{img_info.get('height', '?')}]"
+                                )
+                                if img_info.get("ocr_text"):
+                                    text_parts.append(f"Image OCR: {img_info['ocr_text']}")
+                    except Exception as e:
+                        # Don't fail the whole PDF if image extraction fails
+                        pass
+                
+                # Extract table data from pages
+                try:
+                    table_content = self._extract_tables_from_text(
+                        "\n".join(text_parts)
+                    )
+                    if table_content:
+                        text_parts.append(f"\n[Extracted Table Data]\n{table_content}")
+                except Exception:
+                    pass
+                
+                # Store extracted image paths in metadata for pipeline processing
+                if extracted_images:
+                    text_parts.append(
+                        f"\n[PDF contains {len(extracted_images)} embedded image(s)]"
+                    )
                 
                 return "\n".join(text_parts)
                 
         except Exception as e:
             raise FetchError(f"Failed to extract PDF content: {str(e)}")
     
+    def _extract_images_from_pdf_page(
+        self, page, page_num: int, pdf_path: str
+    ) -> list:
+        """Extract embedded images from a PDF page.
+        
+        Saves extracted images to a subdirectory next to the PDF file.
+        Optionally performs OCR on extracted images.
+        
+        Args:
+            page: PyPDF2 page object
+            page_num: Page number (0-indexed)
+            pdf_path: Path to the source PDF file
+            
+        Returns:
+            List of dicts with image info (filename, path, dimensions, ocr_text)
+        """
+        extracted = []
+        
+        if not hasattr(page, 'images'):
+            return extracted
+        
+        # Create output directory for extracted images
+        pdf_dir = os.path.dirname(os.path.abspath(pdf_path))
+        pdf_basename = os.path.splitext(os.path.basename(pdf_path))[0]
+        img_dir = os.path.join(pdf_dir, f"{pdf_basename}_images")
+        
+        try:
+            for img_idx, image in enumerate(page.images):
+                try:
+                    img_filename = f"page{page_num + 1}_img{img_idx + 1}"
+                    # Determine extension from image name or default to png
+                    if hasattr(image, 'name') and '.' in image.name:
+                        ext = os.path.splitext(image.name)[1]
+                        img_filename += ext
+                    else:
+                        img_filename += ".png"
+                    
+                    os.makedirs(img_dir, exist_ok=True)
+                    img_path = os.path.join(img_dir, img_filename)
+                    
+                    # Save the image data
+                    with open(img_path, "wb") as img_file:
+                        img_file.write(image.data)
+                    
+                    img_info = {
+                        "filename": img_filename,
+                        "path": img_path,
+                        "page_num": page_num + 1,
+                        "source_pdf": pdf_path,
+                    }
+                    
+                    # Get image dimensions and OCR if PIL is available
+                    if self.PIL_Image:
+                        try:
+                            pil_img = self.PIL_Image.open(img_path)
+                            w, h = pil_img.size
+                            img_info["width"] = w
+                            img_info["height"] = h
+                            
+                            # OCR the image if available
+                            if self.has_ocr_support:
+                                try:
+                                    ocr_text = self.pytesseract.image_to_string(pil_img)
+                                    if ocr_text and ocr_text.strip():
+                                        img_info["ocr_text"] = ocr_text.strip()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    
+                    extracted.append(img_info)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        
+        return extracted
+    
+    def _extract_tables_from_text(self, text: str) -> str:
+        """Extract and normalize table-like data from text content.
+        
+        Detects common table patterns in text (CSV-like rows, aligned columns,
+        pipe-delimited tables) and extracts them in a structured format.
+        
+        Args:
+            text: Text content that may contain table data
+            
+        Returns:
+            Extracted table data as structured text, or empty string
+        """
+        import re
+        
+        tables_found = []
+        lines = text.split('\n')
+        
+        # Pattern 1: Pipe-delimited tables (Markdown style)
+        pipe_rows = []
+        for line in lines:
+            stripped = line.strip()
+            if '|' in stripped and stripped.count('|') >= 2:
+                # Skip separator lines like |---|---|
+                if not re.match(r'^[\s|:-]+$', stripped):
+                    cells = [c.strip() for c in stripped.split('|') if c.strip()]
+                    if cells:
+                        pipe_rows.append(cells)
+            elif pipe_rows and len(pipe_rows) >= 2:
+                # End of table
+                tables_found.append(self._format_table_rows(pipe_rows))
+                pipe_rows = []
+        if pipe_rows and len(pipe_rows) >= 2:
+            tables_found.append(self._format_table_rows(pipe_rows))
+        
+        # Pattern 2: Tab-delimited data
+        tab_rows = []
+        for line in lines:
+            if '\t' in line:
+                cells = [c.strip() for c in line.split('\t') if c.strip()]
+                if len(cells) >= 2:
+                    tab_rows.append(cells)
+            elif tab_rows and len(tab_rows) >= 2:
+                tables_found.append(self._format_table_rows(tab_rows))
+                tab_rows = []
+        if tab_rows and len(tab_rows) >= 2:
+            tables_found.append(self._format_table_rows(tab_rows))
+        
+        return "\n\n".join(tables_found)
+    
+    def _format_table_rows(self, rows: list) -> str:
+        """Format table rows into a readable text representation.
+        
+        Args:
+            rows: List of row data, each row being a list of cell values
+            
+        Returns:
+            Formatted table string
+        """
+        if not rows:
+            return ""
+        
+        # Use first row as header if available
+        header = rows[0]
+        data_rows = rows[1:] if len(rows) > 1 else []
+        
+        parts = [f"Table ({len(rows)} rows, {len(header)} columns):"]
+        parts.append(f"Headers: {' | '.join(str(h) for h in header)}")
+        
+        for i, row in enumerate(data_rows):
+            row_data = []
+            for j, cell in enumerate(row):
+                col_name = header[j] if j < len(header) else f"Col{j+1}"
+                row_data.append(f"{col_name}: {cell}")
+            parts.append(f"Row {i+1}: {' | '.join(row_data)}")
+        
+        return "\n".join(parts)
+    
     def _extract_text_content(self, path: str) -> str:
-        """Extract content from text file.
+        """Extract content from text file with table data detection.
+        
+        For CSV files, additionally extracts structured table data.
+        For other text files, reads as plain text.
         
         Args:
             path: Text file path
             
         Returns:
-            File content as string
+            File content as string, with table data extraction for CSV files
             
         Raises:
             FetchError: If reading fails
         """
         try:
+            _, ext = os.path.splitext(path)
+            ext = ext.lower()
+            
             # Try different encodings
+            raw_content = None
             encodings = ['utf-8', 'utf-16', 'latin-1', 'ascii']
             
             for encoding in encodings:
                 try:
                     with open(path, 'r', encoding=encoding) as f:
-                        return f.read()
+                        raw_content = f.read()
+                    break
                 except UnicodeDecodeError:
                     continue
             
-            # If all encodings fail, read as binary and decode with errors='ignore'
-            with open(path, 'rb') as f:
-                return f.read().decode('utf-8', errors='ignore')
+            # If all encodings fail, read as binary
+            if raw_content is None:
+                with open(path, 'rb') as f:
+                    raw_content = f.read().decode('utf-8', errors='ignore')
+            
+            # For CSV files, also extract structured table data
+            if ext == '.csv' and raw_content:
+                try:
+                    table_data = self._extract_csv_structured(path, raw_content)
+                    if table_data:
+                        return f"{raw_content}\n\n[Structured Table Data]\n{table_data}"
+                except Exception:
+                    pass
+            
+            return raw_content
                 
         except Exception as e:
             raise FetchError(f"Failed to read text file: {str(e)}")
     
+    def _extract_csv_structured(self, path: str, raw_content: str) -> str:
+        """Extract structured data from CSV files.
+        
+        Parses CSV content into structured key-value format for better
+        intelligence extraction by the LLM pipeline.
+        
+        Args:
+            path: CSV file path
+            raw_content: Raw CSV text content
+            
+        Returns:
+            Structured text representation of CSV data
+        """
+        import csv
+        from io import StringIO
+        
+        try:
+            reader = csv.reader(StringIO(raw_content))
+            rows = list(reader)
+            
+            if len(rows) < 2:
+                return ""
+            
+            headers = rows[0]
+            parts = [f"CSV Table ({len(rows) - 1} data rows, {len(headers)} columns):"]
+            parts.append(f"Columns: {' | '.join(headers)}")
+            
+            for i, row in enumerate(rows[1:]):
+                row_data = []
+                for j, cell in enumerate(row):
+                    if cell.strip():
+                        col_name = headers[j] if j < len(headers) else f"Col{j+1}"
+                        row_data.append(f"{col_name}: {cell.strip()}")
+                if row_data:
+                    parts.append(f"Row {i+1}: {' | '.join(row_data)}")
+            
+            return "\n".join(parts)
+        except Exception:
+            return ""
+    
     def _extract_image_content(self, path: str) -> str:
-        """Extract text from image using OCR.
+        """Extract text and metadata from image using OCR and image analysis.
+        
+        Extracts OCR text and basic image metadata. When processed through
+        the full pipeline, descriptions and keywords will be added via
+        Image2Text models.
         
         Args:
             path: Image file path
             
         Returns:
-            Extracted text via OCR
+            Extracted text and metadata via OCR
             
         Raises:
             FetchError: If OCR not available or fails
         """
-        if not self.has_ocr_support:
-            return f"[Image file: {os.path.basename(path)}]\nOCR not available. Install pytesseract and Pillow: pip install pytesseract Pillow"
+        parts = []
+        filename = os.path.basename(path)
+        parts.append(f"[Image file: {filename}]")
         
+        image = None
+        
+        # Extract image metadata
         try:
-            image = self.PIL_Image.open(path)
-            text = self.pytesseract.image_to_string(image)
-            
-            if not text.strip():
-                return f"[Image file: {os.path.basename(path)}]\nNo text detected via OCR"
-            
-            return f"[Image file: {os.path.basename(path)}]\nOCR extracted text:\n{text}"
-            
+            if self.PIL_Image:
+                image = self.PIL_Image.open(path)
+                width, height = image.size
+                fmt = image.format or "unknown"
+                mode = image.mode
+                parts.append(f"Format: {fmt} | Dimensions: {width}x{height} | Mode: {mode}")
         except Exception as e:
-            return f"[Image file: {os.path.basename(path)}]\nOCR failed: {str(e)}"
+            parts.append(f"Image metadata extraction failed: {str(e)}")
+        
+        # OCR text extraction
+        if self.has_ocr_support:
+            try:
+                # Reuse image if already opened, otherwise open it
+                if image is None:
+                    image = self.PIL_Image.open(path)
+                text = self.pytesseract.image_to_string(image)
+                if text and text.strip():
+                    parts.append(f"OCR extracted text:\n{text.strip()}")
+                else:
+                    parts.append("OCR: No text detected")
+            except Exception as e:
+                parts.append(f"OCR failed: {str(e)}")
+        else:
+            parts.append("OCR not available. Install pytesseract and Pillow: pip install pytesseract Pillow")
+        
+        return "\n".join(parts)
     
     def _extract_media_content(self, path: str) -> str:
         """Extract text from audio/video using speech recognition.
@@ -484,6 +763,19 @@ class LocalFileAdapter(SourceAdapter):
         mime_type, _ = mimetypes.guess_type(path)
         if mime_type:
             metadata["mime_type"] = mime_type
+        
+        # For PDFs, check if extracted images exist
+        if file_type in self.PDF_EXTENSIONS:
+            pdf_basename = os.path.splitext(os.path.basename(path))[0]
+            img_dir = os.path.join(os.path.dirname(os.path.abspath(path)), f"{pdf_basename}_images")
+            if os.path.isdir(img_dir):
+                image_files = [f for f in os.listdir(img_dir) 
+                              if os.path.isfile(os.path.join(img_dir, f))]
+                metadata["extracted_images_dir"] = img_dir
+                metadata["extracted_images_count"] = len(image_files)
+                metadata["extracted_image_paths"] = [
+                    os.path.join(img_dir, f) for f in image_files
+                ]
         
         return metadata
     
