@@ -98,6 +98,14 @@ export function renderChat(payload, targetEl) {
     metaBadges.push(pill(`Entity: ${payload.entity}`));
   }
 
+  // Task planner badges
+  if (payload.total_plan_changes > 0) {
+    metaBadges.push(pill(`🧩 Plan changes: ${payload.total_plan_changes}`, 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-200'));
+  }
+  if (payload.total_steps_executed > 0) {
+    metaBadges.push(pill(`📝 Steps: ${payload.total_steps_executed}`, 'bg-violet-100 dark:bg-violet-900/30 text-violet-800 dark:text-violet-200'));
+  }
+
   const liveUrls = Array.isArray(payload.live_urls) ? payload.live_urls : [];
   
   // Paraphrased queries section
@@ -116,12 +124,36 @@ export function renderChat(payload, targetEl) {
     `;
   }
 
+  // Plan steps section (task planner)
+  let planStepsSection = '';
+  const planSteps = Array.isArray(payload.plan_steps) ? payload.plan_steps : [];
+  if (planSteps.length > 0) {
+    const stepsList = planSteps.map(s => {
+      const statusIcon = s.status === 'completed' ? '✅' : s.status === 'failed' ? '❌' : s.status === 'skipped' ? '⏭️' : '⏳';
+      return `<li class="text-xs text-slate-700 dark:text-slate-300">${statusIcon} <strong>${s.tool}</strong>: ${s.description || ''} <span class="text-slate-400">(${s.status})</span></li>`;
+    }).join('');
+    planStepsSection = collapsible(
+      `🧩 Plan Steps (${planSteps.length})`,
+      `<ul class="list-none space-y-1 ml-2">${stepsList}</ul>`
+    );
+  }
+
+  // Memory keys section
+  let memorySection = '';
+  const memoryKeys = Array.isArray(payload.memory_keys) ? payload.memory_keys : [];
+  if (memoryKeys.length > 0) {
+    const keysList = memoryKeys.map(k => `<span class="inline-block bg-slate-200 dark:bg-slate-700 rounded px-1.5 py-0.5 text-xs mr-1 mb-1">${k}</span>`).join('');
+    memorySection = `<div class="text-xs text-slate-500 mt-1">🗃️ Memory: ${keysList}</div>`;
+  }
+
   const div = document.createElement('div');
   div.className = 'space-y-4';
   div.innerHTML = `
     <div class="flex flex-wrap gap-2">${metaBadges.join(' ')}</div>
 
     ${paraphrasedSection}
+    ${planStepsSection}
+    ${memorySection}
 
     <div class="prose prose-sm dark:prose-invert max-w-none bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg border border-slate-100 dark:border-slate-800">
         <p>${answer.replace(/\n/g, '<br>')}</p>

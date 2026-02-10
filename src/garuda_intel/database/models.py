@@ -829,3 +829,150 @@ class Task(BasicDataEntry):
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
+
+
+class ChatPlan(BasicDataEntry):
+    """Tracks a multi-step execution plan for a chat request.
+
+    Each user question may spawn one or more plans.  A plan records the
+    original prompt, a generalized task description (for pattern matching),
+    and the working memory accumulated during execution.
+    """
+    __tablename__ = "chat_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    session_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    original_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    generalized_task: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    plan_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    memory_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", index=True
+    )  # active, completed, failed, exhausted
+    plan_version: Mapped[int] = mapped_column(Integer, default=1)
+    max_plan_changes: Mapped[int] = mapped_column(Integer, default=15)
+    cycle_number: Mapped[int] = mapped_column(Integer, default=1)
+    total_steps_executed: Mapped[int] = mapped_column(Integer, default=0)
+    final_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sources_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index('ix_chat_plan_session', 'session_id'),
+        Index('ix_chat_plan_status', 'status'),
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "chat_plan",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "session_id": self.session_id,
+            "original_prompt": self.original_prompt,
+            "generalized_task": self.generalized_task,
+            "plan": self.plan_json,
+            "memory": self.memory_json,
+            "status": self.status,
+            "plan_version": self.plan_version,
+            "max_plan_changes": self.max_plan_changes,
+            "cycle_number": self.cycle_number,
+            "total_steps_executed": self.total_steps_executed,
+            "final_answer": self.final_answer,
+            "sources": self.sources_json,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
+class ChatPlanStep(BasicDataEntry):
+    """A single step within a ChatPlan execution."""
+    __tablename__ = "chat_plan_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("chat_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    step_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    tool_input: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    tool_output: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # pending, running, completed, failed, skipped
+    plan_version: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    plan: Mapped["ChatPlan"] = relationship(
+        "ChatPlan", foreign_keys=[plan_id], back_populates="steps"
+    )
+
+    __table_args__ = (
+        Index('ix_chat_plan_step_plan', 'plan_id', 'step_index'),
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "chat_plan_step",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "plan_id": str(self.plan_id),
+            "step_index": self.step_index,
+            "tool_name": self.tool_name,
+            "tool_input": self.tool_input,
+            "tool_output": self.tool_output,
+            "status": self.status,
+            "plan_version": self.plan_version,
+            "error": self.error,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
+ChatPlan.steps = relationship(
+    "ChatPlanStep",
+    back_populates="plan",
+    foreign_keys="ChatPlanStep.plan_id",
+    cascade="all, delete-orphan",
+    order_by="ChatPlanStep.step_index",
+)
+
+
+class StepPattern(BasicDataEntry):
+    """Tracks successful step/plan patterns for reuse.
+
+    A pattern captures a generalized task description with its embedding,
+    the sequence of tool calls that led to a successful answer, and a
+    reward score that increases when the pattern is reused successfully.
+    """
+    __tablename__ = "step_patterns"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    generalized_task: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_sequence: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    reward_score: Mapped[float] = mapped_column(Float, default=1.0)
+    times_used: Mapped[int] = mapped_column(Integer, default=1)
+    times_succeeded: Mapped[int] = mapped_column(Integer, default=1)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index('ix_step_pattern_reward', 'reward_score'),
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "step_pattern",
+        "inherit_condition": id == BasicDataEntry.id,
+    }

@@ -76,6 +76,12 @@ class Settings:
     chat_min_high_quality_hits: int = 2  # Minimum high-quality RAG hits before considering sufficient
     chat_extract_related_entities: bool = True  # Extract related entities during chat crawl
     
+    # Dynamic task planner settings
+    chat_max_plan_changes_per_cycle: int = 15  # Max plan revisions per cycle
+    chat_max_cycles: int = 2  # Number of cycles (total plan changes = per_cycle * cycles = 30)
+    chat_max_total_steps: int = 100  # Safety limit on total steps executed
+    chat_pattern_reuse_threshold: float = 0.75  # Similarity threshold for pattern matching
+    
     # LLM timeout settings (in seconds) - default 15 minutes for long operations
     llm_summarize_timeout: int = 900  # 15 minutes
     llm_extract_timeout: int = 900  # 15 minutes
@@ -162,6 +168,11 @@ class Settings:
             chat_rag_quality_threshold=float(os.environ.get("GARUDA_CHAT_RAG_QUALITY_THRESHOLD", "0.7")),
             chat_min_high_quality_hits=int(os.environ.get("GARUDA_CHAT_MIN_HIGH_QUALITY_HITS", "2")),
             chat_extract_related_entities=_as_bool(os.environ.get("GARUDA_CHAT_EXTRACT_RELATED_ENTITIES"), True),
+            # Dynamic task planner settings
+            chat_max_plan_changes_per_cycle=int(os.environ.get("GARUDA_CHAT_MAX_PLAN_CHANGES_PER_CYCLE", "15")),
+            chat_max_cycles=int(os.environ.get("GARUDA_CHAT_MAX_CYCLES", "2")),
+            chat_max_total_steps=int(os.environ.get("GARUDA_CHAT_MAX_TOTAL_STEPS", "100")),
+            chat_pattern_reuse_threshold=float(os.environ.get("GARUDA_CHAT_PATTERN_REUSE_THRESHOLD", "0.75")),
             # LLM timeout settings
             llm_summarize_timeout=int(os.environ.get("GARUDA_LLM_SUMMARIZE_TIMEOUT", "900")),
             llm_extract_timeout=int(os.environ.get("GARUDA_LLM_EXTRACT_TIMEOUT", "900")),
