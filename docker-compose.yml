@@ -16,6 +16,7 @@ services:
       - "8080:8080"
     volumes:
       - ./data/garuda/:/app/data/:rw
+      - ./data/watch/:/app/watch/:ro
     depends_on:
       - qdrant
     deploy:
