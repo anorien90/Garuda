@@ -373,7 +373,7 @@ class LocalFileAdapter(SourceAdapter):
                             text_parts.append(f"[Page {page_num + 1}]\n{text}\n")
                     except Exception as e:
                         logger.debug(f"Text extraction failed for page {page_num + 1}: {e}")
-                        text_parts.append(f"[Page {page_num + 1}]\n[Text extraction failed]\n")
+                        text_parts.append(f"[Page {page_num + 1}]\n[Text extraction failed: {type(e).__name__}]\n")
                     
                     # Extract embedded images from this page
                     try:

@@ -702,9 +702,10 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                     
                     # Create MediaItem for the extracted image
                     with store.Session() as session:
-                        existing = session.query(MediaItem).filter(
-                            MediaItem.url == img_url
-                        ).first()
+                        from sqlalchemy import select as _select
+                        existing = session.execute(
+                            _select(MediaItem).where(MediaItem.url == img_url)
+                        ).scalar_one_or_none()
                         
                         if not existing:
                             media_id = _uuid.uuid4()

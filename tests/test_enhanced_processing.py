@@ -216,13 +216,11 @@ class TestComprehensiveImageProcessing:
         processor.ocr_available = True
         processor.image2text_available = True
         
-        # The method selection should prefer comprehensive
-        # We can test the logic without actually processing
-        method = None
-        can_use_comprehensive = processor.ocr_available and processor.image2text_available
-        use_comprehensive = method == "comprehensive" or (method is None and can_use_comprehensive)
-        
-        assert use_comprehensive is True
+        # Verify comprehensive processing is called by checking that
+        # _process_image_comprehensive is invoked instead of individual methods
+        with patch.object(processor, '_process_image_comprehensive', return_value={"processed": True}) as mock_comprehensive:
+            processor.process_image("/tmp/test.png", "test://url")
+            mock_comprehensive.assert_called_once()
 
     def test_fallback_to_tesseract_when_no_ai(self):
         """Test fallback to tesseract when AI is not available."""

@@ -142,10 +142,10 @@ class MediaProcessor:
             method = method or self.image_method
         
         # Check if comprehensive processing should be used
+        # Comprehensive mode is used when both OCR and AI are available and
+        # no specific single method was explicitly requested
         can_use_comprehensive = self.ocr_available and self.image2text_available
-        use_comprehensive = method == "comprehensive" or (method is None and can_use_comprehensive)
-        
-        if use_comprehensive:
+        if method == "comprehensive" or (can_use_comprehensive and method in (None, self.image_method)):
             return self._process_image_comprehensive(image_path, url)
         elif method == "image2text" and self.image2text_available:
             return self._process_image_with_ai(image_path, url)
@@ -316,8 +316,6 @@ class MediaProcessor:
             if self.llm and description:
                 try:
                     if hasattr(self.llm, 'extract_keywords_from_image'):
-                        # Use specialized method if available
-                        # Note: image_path is provided to support future vision-based keyword extraction
                         kw = self.llm.extract_keywords_from_image(image_path, description)
                         if kw and isinstance(kw, list):
                             keywords = kw

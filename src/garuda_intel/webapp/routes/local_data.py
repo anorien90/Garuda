@@ -270,11 +270,11 @@ def init_local_data_routes(api_key_required, settings, task_queue, directory_wat
                 stmt = select(Page).where(Page.page_type == page_type)
                 
                 if q:
-                    like = f"%{q.lower()}%"
+                    like = f"%{q}%"
                     stmt = stmt.where(
                         or_(
-                            func.lower(Page.url).ilike(like),
-                            func.lower(Page.title).ilike(like),
+                            Page.url.ilike(like),
+                            Page.title.ilike(like),
                         )
                     )
                 
