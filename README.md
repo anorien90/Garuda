@@ -54,6 +54,7 @@
   - [GPU Support](#gpu-support)
   - [Data Volumes](#data-volumes)
 - [CLI Tools](#cli-tools)
+- [Multi-Database Management](#multi-database-management-1)
 - [Quickstart](#quickstart)
   - [Using Docker](#using-docker)
   - [Using Local Installation](#using-local-installation)
@@ -92,6 +93,7 @@ Modern Flask-based interface with comprehensive tabs:
 - 🧠 **Semantic**: Vector search with embedding visualization
 - ⚙️ **Settings**: System configuration and preferences
 - 📊 **Status**: System health, statistics, and monitoring
+- 🗄️ **Databases**: Create, switch, merge databases and global cross-database search
 
 ### Core Intelligence Capabilities
 
@@ -129,6 +131,15 @@ Modern Flask-based interface with comprehensive tabs:
 - **Modular & Extensible**: Python modules organized for easy development and customization
 - **Strong Security**: API-key protected endpoints, CORS configuration, local LLM/vector options
 - **Persistent Task Queue**: Database-backed async task queue with sequential LLM processing, progress tracking, and task cancellation
+
+### Multi-Database Management
+
+- **Separate Databases**: Create isolated databases for different research domains (e.g., "cybersecurity", "competitive-intel")
+- **Each database has its own**: Entities, relationships, pages, intelligence, and Qdrant vector collection
+- **Instant Switching**: Switch the active database from the Web UI or API — the entire app context updates
+- **Database Merging**: Merge all data (SQL rows + Qdrant vectors) from one database into another
+- **Global Search**: Search entities and intelligence across **all** databases simultaneously
+- **CLI Support**: Full database management via `garuda-db db-list`, `db-create`, `db-switch`, `db-merge`, `db-search`
 
 ---
 
@@ -1180,6 +1191,64 @@ garuda-intel-web
 # Entry point
 # garuda_intel.webapp.app:main
 ```
+
+---
+
+## Multi-Database Management
+
+Garuda supports creating and managing **multiple isolated databases**, each with its own entities, relationships, intelligence, and Qdrant vector collection. This makes it easy to separate different fields of research.
+
+### Web UI
+
+The **🗄️ Databases** tab provides:
+- **Active database indicator** in the header showing which database is currently selected
+- **Create new databases** with a name and optional description
+- **Switch** between databases instantly
+- **Merge** a source database into a target (copies all SQL data + Qdrant vectors)
+- **Global search** across all databases simultaneously
+- **Delete** databases (with optional file/collection cleanup)
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/databases/` | List all registered databases |
+| `GET` | `/api/databases/active` | Get the active database info |
+| `POST` | `/api/databases/create` | Create a new database (`{"name": "...", "description": "...", "set_active": false}`) |
+| `POST` | `/api/databases/switch` | Switch active database (`{"name": "..."}`) |
+| `POST` | `/api/databases/merge` | Merge source → target (`{"source": "...", "target": "..."}`) |
+| `DELETE` | `/api/databases/<name>?delete_files=true` | Delete a database |
+| `GET` | `/api/databases/search?q=...&limit=10` | Global search across all databases |
+
+### CLI Commands
+
+```bash
+# List all databases
+garuda-db db-list
+
+# Create a new database
+garuda-db db-create cybersecurity --description "Threat intelligence"
+
+# Switch active database
+garuda-db db-switch cybersecurity
+
+# Merge source into target
+garuda-db db-merge cybersecurity default
+
+# Global search across all databases
+garuda-db db-search "Microsoft"
+
+# Delete a database (with files)
+garuda-db db-delete old_research --delete-files
+```
+
+### How It Works
+
+1. A **JSON registry** (`databases.json`) in the data directory tracks all databases
+2. Each database gets its own **SQLite file** (e.g., `cybersecurity.db`) and **Qdrant collection** (`garuda_cybersecurity`)
+3. Switching databases updates the app's store and vector collection references
+4. Merging copies all rows using SQLAlchemy `session.merge()` (upserts) and scrolls/upserts Qdrant vectors
+5. Global search opens temporary connections to each database file and queries entities/intelligence
 
 ---
 
