@@ -6,6 +6,7 @@
     <button data-tab-btn="agent" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition text-purple-700 dark:text-purple-300">🤖 Agent</button>
     <button data-tab-btn="crawl" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">🌐 Crawler</button>
     <button data-tab-btn="data" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">📄 Data</button>
+    <button data-tab-btn="local-data" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition text-amber-700 dark:text-amber-300">📁 Local Data</button>
     <button data-tab-btn="entities-graph" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">🕸️ Graph</button>
     <button data-tab-btn="data-quality" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">✨ Quality</button>
     <button data-tab-btn="media" class="tab-btn px-4 py-2 text-sm font-bold rounded-lg transition">🎬 Media</button>
@@ -23,6 +24,7 @@
             <strong>🤖 Agent:</strong> Intelligent data exploration, entity merging, and multidimensional search<br>
             <strong>🌐 Crawler:</strong> Intelligent web crawling with entity-awareness<br>
             <strong>📄 Data:</strong> Browse pages and recorded content<br>
+            <strong>📁 Local Data:</strong> Upload files (PDF, text, media) or watch directories for local data ingestion<br>
             <strong>🕸️ Graph:</strong> Interactive entity relationship visualization<br>
             <strong>✨ Quality:</strong> Entity gap analysis, deduplication, and data quality tools<br>
             <strong>🎬 Media:</strong> Media processing (images, video, audio to text)<br>
@@ -41,6 +43,7 @@
         {% include "components/pages.html" %}
         {% include "components/recorder-search.html" %}
     </section>
+    <section data-tab-panel="local-data" class="hidden space-y-6">{% include "components/local_data.html" %}</section>
     <section data-tab-panel="entities-graph" class="hidden">{% include "components/entities-graph.html" %}</section>
     <section data-tab-panel="data-quality" class="hidden">{% include "components/data-quality.html" %}</section>
     <section data-tab-panel="media" class="hidden">{% include "components/media.html" %}</section>
