@@ -131,7 +131,7 @@ async function switchDatabase(name) {
 }
 
 async function deleteDatabase(name) {
-  if (!confirm(`Delete database "${name}"? This also deletes the file and vector collection.`)) return;
+  if (!confirm(`Delete database "${name}" and its file and vector collection?`)) return;
   try {
     await fetchWithAPIKey(`/api/databases/${encodeURIComponent(name)}?delete_files=true`, {
       method: 'DELETE',
