@@ -9,7 +9,7 @@ import logging
 import json
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .media_downloader import MediaDownloader
@@ -21,6 +21,14 @@ from .adaptive_media_processor import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Configuration for keyword extraction
+DEFAULT_KEYWORD_COUNT = "5-10"
+KEYWORD_EXTRACTION_PROMPT_TEMPLATE = (
+    "Extract {count} descriptive keywords from this image description. "
+    "Return ONLY a comma-separated list of keywords, nothing else.\n\n"
+    "Description: {description}"
+)
 
 
 class MediaProcessor:
@@ -104,7 +112,7 @@ class MediaProcessor:
         Args:
             image_path: Local path to image file
             url: Original URL of the image
-            method: Processing method - "tesseract", "image2text", or None (use default/adaptive)
+            method: Processing method - "tesseract", "image2text", "comprehensive", or None (use default/adaptive)
             width: Image width in pixels (for adaptive processing)
             height: Image height in pixels (for adaptive processing)
             
@@ -133,13 +141,21 @@ class MediaProcessor:
             # Use specified method or default
             method = method or self.image_method
         
-        if method == "image2text" and self.image2text_available:
+        # Check if comprehensive processing should be used
+        # Comprehensive mode is used when both OCR and AI are available and
+        # no specific single method was explicitly requested
+        can_use_comprehensive = self.ocr_available and self.image2text_available
+        if method == "comprehensive" or (can_use_comprehensive and method in (None, self.image_method)):
+            return self._process_image_comprehensive(image_path, url)
+        elif method == "image2text" and self.image2text_available:
             return self._process_image_with_ai(image_path, url)
         elif method == "tesseract" and self.ocr_available:
             return self._process_image_with_tesseract(image_path, url)
         else:
-            # Fallback: try tesseract first, then AI
-            if self.ocr_available:
+            # Fallback: try comprehensive first, then individual methods
+            if can_use_comprehensive:
+                return self._process_image_comprehensive(image_path, url)
+            elif self.ocr_available:
                 return self._process_image_with_tesseract(image_path, url)
             elif self.image2text_available:
                 return self._process_image_with_ai(image_path, url)
@@ -185,7 +201,7 @@ class MediaProcessor:
                 "height": height,
                 "metadata_json": metadata,
                 "processed": True,
-                "processed_at": datetime.utcnow(),
+                "processed_at": datetime.now(timezone.utc),
             }
             
         except Exception as e:
@@ -232,11 +248,117 @@ class MediaProcessor:
                 "height": height,
                 "metadata_json": metadata,
                 "processed": True,
-                "processed_at": datetime.utcnow(),
+                "processed_at": datetime.now(timezone.utc),
             }
             
         except Exception as e:
             logger.error(f"Error processing image with AI {url}: {e}")
+            return {
+                "extracted_text": None,
+                "processed": False,
+                "processing_error": str(e),
+            }
+
+    def _process_image_comprehensive(self, image_path: str, url: str) -> Dict[str, Any]:
+        """Extract text, description, and keywords from image using all available methods.
+        
+        Combines OCR text extraction with AI-based description and keyword generation
+        for maximum content extraction from images.
+        
+        Args:
+            image_path: Local path to image file
+            url: Original URL of the image
+            
+        Returns:
+            Dict with extracted_text, description, keywords, metadata, and processing status
+        """
+        try:
+            from PIL import Image
+            
+            img = Image.open(image_path)
+            width, height = img.size
+            metadata = {
+                "format": img.format,
+                "mode": img.mode,
+                "width": width,
+                "height": height,
+                "method": "comprehensive",
+            }
+            
+            text_parts = []
+            description = None
+            keywords = []
+            
+            # Step 1: OCR text extraction
+            if self.ocr_available:
+                try:
+                    import pytesseract
+                    ocr_text = pytesseract.image_to_string(img)
+                    if ocr_text and ocr_text.strip():
+                        text_parts.append(f"OCR Text:\n{ocr_text.strip()}")
+                        metadata["ocr_text"] = ocr_text.strip()
+                except Exception as e:
+                    logger.warning(f"OCR failed for {url}: {e}")
+            
+            # Step 2: AI description
+            if self.image2text_available and self.llm:
+                try:
+                    if hasattr(self.llm, 'image_to_text'):
+                        ai_text = self.llm.image_to_text(image_path)
+                        if ai_text and ai_text.strip():
+                            description = ai_text.strip()
+                            text_parts.append(f"Description:\n{description}")
+                            metadata["description"] = description
+                except Exception as e:
+                    logger.warning(f"Image2Text failed for {url}: {e}")
+            
+            # Step 3: Keyword extraction via LLM
+            if self.llm and description:
+                try:
+                    if hasattr(self.llm, 'extract_keywords_from_image'):
+                        kw = self.llm.extract_keywords_from_image(image_path, description)
+                        if kw and isinstance(kw, list):
+                            keywords = kw
+                    elif hasattr(self.llm, 'generate') or hasattr(self.llm, 'chat'):
+                        # Fallback: Use public LLM interface to extract keywords from the description
+                        kw_prompt = KEYWORD_EXTRACTION_PROMPT_TEMPLATE.format(
+                            count=DEFAULT_KEYWORD_COUNT,
+                            description=description
+                        )
+                        kw_response = None
+                        if hasattr(self.llm, 'generate'):
+                            kw_response = self.llm.generate(kw_prompt)
+                        elif hasattr(self.llm, 'chat'):
+                            kw_response = self.llm.chat(kw_prompt)
+                        
+                        if kw_response and isinstance(kw_response, str):
+                            keywords = [k.strip() for k in kw_response.split(",") if k.strip()]
+                        elif kw_response:
+                            logger.warning(f"Unexpected keyword response type for {url}: {type(kw_response)}")
+                    else:
+                        logger.warning(f"LLM does not support keyword extraction methods for {url}")
+                    
+                    if keywords:
+                        text_parts.append(f"Keywords: {', '.join(keywords)}")
+                        metadata["keywords"] = keywords
+                except Exception as e:
+                    logger.warning(f"Keyword extraction failed for {url}: {e}")
+            
+            combined_text = "\n\n".join(text_parts) if text_parts else None
+            
+            return {
+                "extracted_text": combined_text,
+                "description": description,
+                "keywords": keywords,
+                "width": width,
+                "height": height,
+                "metadata_json": metadata,
+                "processed": True,
+                "processed_at": datetime.now(timezone.utc),
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in comprehensive image processing {url}: {e}")
             return {
                 "extracted_text": None,
                 "processed": False,
@@ -439,7 +561,7 @@ class MediaProcessor:
                 return {
                     "extracted_text": text,
                     "processed": True,
-                    "processed_at": datetime.utcnow(),
+                    "processed_at": datetime.now(timezone.utc),
                     "metadata_json": metadata,
                     "duration": duration,
                     "width": width,
@@ -495,7 +617,7 @@ class MediaProcessor:
             return {
                 "extracted_text": text,
                 "processed": True,
-                "processed_at": datetime.utcnow(),
+                "processed_at": datetime.now(timezone.utc),
                 "metadata_json": metadata,
                 "duration": duration,
                 "width": width,
@@ -575,7 +697,7 @@ class MediaProcessor:
                 return {
                     "extracted_text": text,
                     "processed": True,
-                    "processed_at": datetime.utcnow(),
+                    "processed_at": datetime.now(timezone.utc),
                     "metadata_json": metadata,
                 }
             except sr.UnknownValueError:

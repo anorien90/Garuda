@@ -124,6 +124,49 @@
       <p class="text-sm text-slate-500 italic">Click "Refresh Tasks" to load ingestion tasks...</p>
     </div>
   </div>
+
+  <!-- File Browser -->
+  <div class="card p-6">
+    <h2 class="text-xl font-bold mb-4">📂 Browse Files</h2>
+    <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">
+      Browse uploaded and processed files. View content, edit metadata, and manage relationships.
+    </p>
+
+    <div class="flex gap-2 mb-4 flex-wrap">
+      <input type="text" id="file-search-input"
+             class="flex-1 min-w-[200px] px-3 py-2 border rounded-lg text-sm bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700"
+             placeholder="Search files by name or content...">
+      <button onclick="window.loadFiles()" class="btn-primary px-3 py-1.5 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-500">
+        🔍 Search
+      </button>
+      <button onclick="window.loadFiles()" class="btn-secondary px-3 py-1.5 rounded-lg border text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800">
+        Refresh
+      </button>
+    </div>
+
+    <div id="file-browser-container" class="space-y-2">
+      <p class="text-sm text-slate-500 italic">Loading files...</p>
+    </div>
+
+    <div id="file-browser-pagination" class="flex justify-between items-center mt-4 hidden">
+      <span id="file-browser-info" class="text-xs text-slate-500"></span>
+      <div class="flex gap-2">
+        <button onclick="window.loadFilesPrev()" id="files-prev-btn" class="px-3 py-1 rounded border text-sm disabled:opacity-50" disabled>← Prev</button>
+        <button onclick="window.loadFilesNext()" id="files-next-btn" class="px-3 py-1 rounded border text-sm disabled:opacity-50" disabled>Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- File Detail Modal -->
+  <div id="file-detail-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-slate-900 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+      <div class="sticky top-0 bg-white dark:bg-slate-900 border-b p-4 flex justify-between items-center">
+        <h3 id="file-detail-title" class="text-lg font-bold truncate"></h3>
+        <button onclick="window.closeFileDetail()" class="text-slate-400 hover:text-red-500 text-2xl">&times;</button>
+      </div>
+      <div id="file-detail-content" class="p-6 space-y-4"></div>
+    </div>
+  </div>
 </div>
 
 <script type="module">
@@ -475,10 +518,335 @@ window.loadWatcherStatus = loadWatcherStatus;
 window.triggerManualScan = triggerManualScan;
 window.loadLocalTasks = loadLocalTasks;
 
+// ============================================================================
+// File Browser
+// ============================================================================
+
+let filesOffset = 0;
+const filesLimit = 20;
+let filesTotalCount = 0;
+
+async function loadFiles(resetOffset = true) {
+  if (resetOffset) filesOffset = 0;
+  const container = document.getElementById('file-browser-container');
+  const q = document.getElementById('file-search-input')?.value || '';
+
+  container.innerHTML = '<p class="text-sm text-slate-500 italic">Loading files...</p>';
+
+  try {
+    const params = new URLSearchParams({
+      limit: filesLimit,
+      offset: filesOffset,
+    });
+    if (q) params.append('q', q);
+
+    const data = await fetchJSON(`/api/local-data/files?${params}`);
+    const files = data.files || [];
+    filesTotalCount = data.total || 0;
+
+    if (files.length === 0) {
+      container.innerHTML = '<p class="text-sm text-slate-500 italic">No files found. Upload files above to get started.</p>';
+      document.getElementById('file-browser-pagination').classList.add('hidden');
+      return;
+    }
+
+    container.innerHTML = files.map(f => {
+      const ext = (f.file_type || f.url?.split('.').pop() || '').replace('.', '');
+      const icon = getFileIcon(f.original_filename || f.title || '');
+      const sizeMb = f.file_size_mb ? `${f.file_size_mb} MB` : '';
+      const tags = f.metadata?.tags || [];
+
+      return `
+        <div class="p-3 border rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition cursor-pointer"
+             onclick="window.openFileDetail('${f.id}')">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-center gap-3 flex-1 min-w-0">
+              <span class="text-2xl">${icon}</span>
+              <div class="min-w-0 flex-1">
+                <div class="font-medium text-sm truncate">${f.original_filename || f.title || 'Untitled'}</div>
+                <div class="text-xs text-slate-500 flex gap-3 flex-wrap mt-0.5">
+                  ${sizeMb ? `<span>${sizeMb}</span>` : ''}
+                  ${f.content_length ? `<span>${f.content_length.toLocaleString()} chars</span>` : ''}
+                  ${f.extracted_images_count ? `<span>🖼️ ${f.extracted_images_count} images</span>` : ''}
+                  ${f.score ? `<span>Score: ${(f.score * 100).toFixed(0)}%</span>` : ''}
+                </div>
+                ${tags.length ? `<div class="flex gap-1 mt-1">${tags.map(t => `<span class="text-xs px-1.5 py-0.5 bg-brand-100 dark:bg-brand-900/30 text-brand-800 dark:text-brand-200 rounded">${t}</span>`).join('')}</div>` : ''}
+              </div>
+            </div>
+            <div class="text-xs text-slate-400 whitespace-nowrap">${f.last_fetch_at ? new Date(f.last_fetch_at).toLocaleDateString() : ''}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    // Update pagination
+    const pagination = document.getElementById('file-browser-pagination');
+    pagination.classList.remove('hidden');
+    document.getElementById('file-browser-info').textContent =
+      `Showing ${filesOffset + 1}-${Math.min(filesOffset + filesLimit, filesTotalCount)} of ${filesTotalCount}`;
+    document.getElementById('files-prev-btn').disabled = filesOffset === 0;
+    document.getElementById('files-next-btn').disabled = filesOffset + filesLimit >= filesTotalCount;
+
+  } catch (error) {
+    container.innerHTML = `<p class="text-sm text-red-500">Error: ${error.message}</p>`;
+  }
+}
+
+function loadFilesNext() {
+  filesOffset += filesLimit;
+  loadFiles(false);
+}
+
+function loadFilesPrev() {
+  filesOffset = Math.max(0, filesOffset - filesLimit);
+  loadFiles(false);
+}
+
+async function openFileDetail(fileId) {
+  const modal = document.getElementById('file-detail-modal');
+  const titleEl = document.getElementById('file-detail-title');
+  const contentEl = document.getElementById('file-detail-content');
+
+  modal.classList.remove('hidden');
+  titleEl.textContent = 'Loading...';
+  contentEl.innerHTML = '<p class="text-sm text-slate-500">Loading file details...</p>';
+
+  try {
+    const file = await fetchJSON(`/api/local-data/files/${fileId}`);
+
+    titleEl.textContent = file.original_filename || file.title || 'File Detail';
+
+    const meta = file.metadata || {};
+    const tags = meta.tags || [];
+    const notes = meta.notes || '';
+    const intel = file.intelligence || [];
+    const rels = file.relationships || [];
+    const media = file.media_items || [];
+
+    contentEl.innerHTML = `
+      <!-- File Info -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="p-2 bg-slate-50 dark:bg-slate-800 rounded border text-center">
+          <div class="text-xs text-slate-500">Type</div>
+          <div class="font-semibold text-sm">${meta.file_type || 'unknown'}</div>
+        </div>
+        <div class="p-2 bg-slate-50 dark:bg-slate-800 rounded border text-center">
+          <div class="text-xs text-slate-500">Size</div>
+          <div class="font-semibold text-sm">${meta.file_size_mb ? meta.file_size_mb + ' MB' : '-'}</div>
+        </div>
+        <div class="p-2 bg-slate-50 dark:bg-slate-800 rounded border text-center">
+          <div class="text-xs text-slate-500">Content</div>
+          <div class="font-semibold text-sm">${file.content_length ? file.content_length.toLocaleString() + ' chars' : '-'}</div>
+        </div>
+        <div class="p-2 bg-slate-50 dark:bg-slate-800 rounded border text-center">
+          <div class="text-xs text-slate-500">Confidence</div>
+          <div class="font-semibold text-sm">${meta.confidence ? (meta.confidence * 100).toFixed(0) + '%' : '-'}</div>
+        </div>
+      </div>
+
+      <!-- Edit Metadata -->
+      <div class="border rounded-lg p-4">
+        <h4 class="font-semibold mb-3">✏️ Edit Metadata</h4>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-medium mb-1">Title</label>
+            <input type="text" id="edit-file-title" value="${escapeHtml(file.title || '')}"
+                   class="w-full px-3 py-1.5 border rounded text-sm bg-white dark:bg-slate-900">
+          </div>
+          <div>
+            <label class="block text-xs font-medium mb-1">Tags (comma-separated)</label>
+            <input type="text" id="edit-file-tags" value="${tags.join(', ')}"
+                   class="w-full px-3 py-1.5 border rounded text-sm bg-white dark:bg-slate-900"
+                   placeholder="tag1, tag2, tag3">
+          </div>
+          <div>
+            <label class="block text-xs font-medium mb-1">Notes</label>
+            <textarea id="edit-file-notes" rows="2"
+                      class="w-full px-3 py-1.5 border rounded text-sm bg-white dark:bg-slate-900"
+                      placeholder="Add notes about this file...">${notes}</textarea>
+          </div>
+          <button onclick="window.saveFileMetadata('${fileId}')"
+                  class="px-4 py-1.5 rounded bg-brand-600 text-white text-sm font-medium hover:bg-brand-500">
+            💾 Save Metadata
+          </button>
+          <span id="save-meta-status" class="text-xs text-green-600 ml-2 hidden">✓ Saved</span>
+        </div>
+      </div>
+
+      <!-- Content Preview -->
+      ${file.content_preview ? `
+      <div class="border rounded-lg p-4">
+        <h4 class="font-semibold mb-2">📄 Content Preview</h4>
+        <pre class="text-xs text-slate-600 dark:text-slate-400 whitespace-pre-wrap max-h-60 overflow-y-auto bg-slate-50 dark:bg-slate-800 p-3 rounded">${escapeHtml(file.content_preview)}</pre>
+      </div>` : ''}
+
+      <!-- Intelligence Records -->
+      ${intel.length ? `
+      <div class="border rounded-lg p-4">
+        <h4 class="font-semibold mb-2">🧠 Intelligence (${intel.length})</h4>
+        <div class="space-y-2 max-h-48 overflow-y-auto">
+          ${intel.map(i => `
+            <div class="p-2 bg-slate-50 dark:bg-slate-800 rounded text-xs">
+              <div class="flex justify-between">
+                <span class="font-medium">${i.entity_name || 'Unknown'}</span>
+                <span class="text-slate-500">${i.entity_type || ''} | ${i.confidence ? (i.confidence * 100).toFixed(0) + '%' : ''}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>` : ''}
+
+      <!-- Relationships -->
+      ${rels.length ? `
+      <div class="border rounded-lg p-4">
+        <h4 class="font-semibold mb-2">🔗 Relationships (${rels.length})</h4>
+        <div class="space-y-2 max-h-48 overflow-y-auto">
+          ${rels.map(r => `
+            <div class="p-2 bg-slate-50 dark:bg-slate-800 rounded text-xs flex justify-between">
+              <span class="font-medium">${r.relation_type}</span>
+              <span class="text-slate-500">${r.direction} → ${r.direction === 'outgoing' ? (r.target_id || '').substring(0, 8) : (r.source_id || '').substring(0, 8)}...</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>` : ''}
+
+      <!-- Extracted Media -->
+      ${media.length ? `
+      <div class="border rounded-lg p-4">
+        <h4 class="font-semibold mb-2">🖼️ Extracted Images (${media.length})</h4>
+        <div class="space-y-2 max-h-48 overflow-y-auto">
+          ${media.map(m => `
+            <div class="p-2 bg-slate-50 dark:bg-slate-800 rounded text-xs">
+              <div class="flex justify-between">
+                <span class="font-medium">${m.url.split('/').pop()}</span>
+                <span class="${m.processed ? 'text-green-600' : 'text-yellow-600'}">${m.processed ? '✓ Processed' : '⏳ Pending'}</span>
+              </div>
+              ${m.extracted_text ? `<div class="text-slate-500 mt-1 truncate">${m.extracted_text}</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      </div>` : ''}
+
+      <!-- Add Relationship -->
+      <div class="border rounded-lg p-4">
+        <h4 class="font-semibold mb-2">➕ Add Relationship</h4>
+        <div class="flex gap-2">
+          <input type="text" id="add-rel-target" placeholder="Target entity/file UUID"
+                 class="flex-1 px-3 py-1.5 border rounded text-sm bg-white dark:bg-slate-900">
+          <select id="add-rel-type" class="px-3 py-1.5 border rounded text-sm">
+            <option value="related_to">Related To</option>
+            <option value="derived_from">Derived From</option>
+            <option value="references">References</option>
+            <option value="contains">Contains</option>
+          </select>
+          <button onclick="window.addFileRelation('${fileId}')"
+                  class="px-4 py-1.5 rounded bg-brand-600 text-white text-sm font-medium hover:bg-brand-500">
+            Add
+          </button>
+        </div>
+        <div id="add-rel-status" class="text-xs mt-1 hidden"></div>
+      </div>
+
+      <!-- Download -->
+      <div class="flex gap-2">
+        <a href="/api/local-data/files/${fileId}/download" target="_blank"
+           class="px-4 py-1.5 rounded border text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1">
+          ⬇️ Download Original File
+        </a>
+      </div>
+    `;
+  } catch (error) {
+    contentEl.innerHTML = `<p class="text-sm text-red-500">Error loading file: ${error.message}</p>`;
+  }
+}
+
+function closeFileDetail() {
+  document.getElementById('file-detail-modal').classList.add('hidden');
+}
+
+async function saveFileMetadata(fileId) {
+  const title = document.getElementById('edit-file-title')?.value || '';
+  const tagsStr = document.getElementById('edit-file-tags')?.value || '';
+  const notes = document.getElementById('edit-file-notes')?.value || '';
+  const status = document.getElementById('save-meta-status');
+
+  const tags = tagsStr.split(',').map(t => t.trim()).filter(Boolean);
+
+  try {
+    await fetchJSON(`/api/local-data/files/${fileId}/metadata`, {
+      method: 'PUT',
+      body: JSON.stringify({ title, tags, notes }),
+    });
+    status.classList.remove('hidden');
+    status.textContent = '✓ Saved';
+    status.className = 'text-xs text-green-600 ml-2';
+    setTimeout(() => status.classList.add('hidden'), 3000);
+    loadFiles(false);
+  } catch (error) {
+    status.classList.remove('hidden');
+    status.textContent = '✗ ' + error.message;
+    status.className = 'text-xs text-red-600 ml-2';
+  }
+}
+
+async function addFileRelation(fileId) {
+  const targetId = document.getElementById('add-rel-target')?.value?.trim();
+  const relType = document.getElementById('add-rel-type')?.value || 'related_to';
+  const status = document.getElementById('add-rel-status');
+
+  if (!targetId) {
+    status.classList.remove('hidden');
+    status.textContent = 'Please enter a target UUID';
+    status.className = 'text-xs text-red-600 mt-1';
+    return;
+  }
+
+  try {
+    await fetchJSON(`/api/local-data/files/${fileId}/relations`, {
+      method: 'POST',
+      body: JSON.stringify({ target_id: targetId, relation_type: relType }),
+    });
+    status.classList.remove('hidden');
+    status.textContent = '✓ Relationship added';
+    status.className = 'text-xs text-green-600 mt-1';
+    document.getElementById('add-rel-target').value = '';
+    setTimeout(() => { status.classList.add('hidden'); openFileDetail(fileId); }, 1000);
+  } catch (error) {
+    status.classList.remove('hidden');
+    status.textContent = '✗ ' + error.message;
+    status.className = 'text-xs text-red-600 mt-1';
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Expose to global scope
+window.loadFiles = loadFiles;
+window.loadFilesNext = loadFilesNext;
+window.loadFilesPrev = loadFilesPrev;
+window.openFileDetail = openFileDetail;
+window.closeFileDetail = closeFileDetail;
+window.saveFileMetadata = saveFileMetadata;
+window.addFileRelation = addFileRelation;
+
+// Handle search on Enter key
+document.getElementById('file-search-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') loadFiles();
+});
+
+// Close modal on backdrop click
+document.getElementById('file-detail-modal')?.addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeFileDetail();
+});
+
 // Auto-load on page init
 document.addEventListener('DOMContentLoaded', () => {
   loadSupportedTypes();
   loadWatcherStatus();
   loadLocalTasks();
+  loadFiles();
 });
 </script>
