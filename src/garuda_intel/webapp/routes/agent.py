@@ -230,10 +230,12 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         Async chat with deep RAG search (embedding + graph + SQL).
         
         Both embedding and graph search modes are always enabled automatically.
+        When use_planner is true (default), uses the dynamic task planner.
         
         Request body (JSON):
             question: User question (required)
             entity: Optional entity context
+            use_planner: Use dynamic task planner (default: true)
             queued: If true, submit to task queue (default: false)
         
         Returns:
@@ -249,6 +251,7 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             return jsonify({"error": "question required"}), 400
         
         entity = body.get("entity")
+        use_planner = body.get("use_planner", True)
         
         # Support queued execution
         if body.get("queued"):
@@ -258,14 +261,38 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
                 task_id = tq.submit(TaskQueueService.TASK_AGENT_CHAT, {
                     "question": question,
                     "entity": entity,
+                    "use_planner": use_planner,
                 }, priority=5)  # Higher priority for chat
                 return jsonify({"task_id": task_id, "status": "pending", "message": "Chat task queued"}), 202
         
         emit_event("agent", "chat started", payload={
-            "mode": "deep_rag",
+            "mode": "task_planner" if use_planner else "deep_rag",
             "question": question[:100],
             "entity": entity,
         })
+        
+        # --- Dynamic task planner path ---
+        if use_planner:
+            try:
+                from ...services.task_planner import TaskPlanner
+                planner = TaskPlanner(
+                    store=store,
+                    llm=llm,
+                    vector_store=vector_store,
+                    settings=settings,
+                )
+                result = planner.run(
+                    question=question,
+                    entity=entity or "",
+                )
+                emit_event("agent", "task planner chat completed", payload={
+                    "plan_id": result.get("plan_id"),
+                    "steps": result.get("total_steps_executed"),
+                })
+                return jsonify(result)
+            except Exception as e:
+                logger.warning(f"Task planner failed, falling back to legacy: {e}")
+                emit_event("agent", f"Task planner error – legacy fallback: {e}", level="warning")
         
         try:
             # Run async function in event loop

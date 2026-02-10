@@ -80,9 +80,7 @@ class TaskPlanner:
             settings, "chat_max_plan_changes_per_cycle", DEFAULT_MAX_PLAN_CHANGES_PER_CYCLE
         )
         self.max_cycles = getattr(settings, "chat_max_cycles", DEFAULT_MAX_CYCLES)
-        self.max_total_steps = getattr(
-            settings, "chat_max_total_steps", DEFAULT_MAX_TOTAL_STEPS
-        )
+        self.max_total_steps = getattr(settings, "chat_max_total_steps", DEFAULT_MAX_TOTAL_STEPS)
         self.pattern_reuse_threshold = getattr(
             settings, "chat_pattern_reuse_threshold", DEFAULT_PATTERN_REUSE_THRESHOLD
         )
@@ -108,7 +106,7 @@ class TaskPlanner:
         all_context: List[Dict[str, Any]] = []
 
         # Persist the plan row
-        plan_row = self._create_plan_row(plan_id, question, session_id)
+        self._create_plan_row(plan_id, question, session_id)
 
         total_plan_changes = 0
         total_steps = 0
@@ -134,11 +132,18 @@ class TaskPlanner:
                     plan_changes_this_cycle += 1
                     total_plan_changes += 1
                     current_plan = self._tool_create_plan(
-                        question, entity, memory, plan_steps_log,
+                        question,
+                        entity,
+                        memory,
+                        plan_steps_log,
                         existing_pattern=existing_pattern if plan_changes_this_cycle == 1 else None,
                     )
-                    plan_row = self._update_plan_row(
-                        plan_id, current_plan, memory, plan_changes_this_cycle, cycle,
+                    self._update_plan_row(
+                        plan_id,
+                        current_plan,
+                        memory,
+                        plan_changes_this_cycle,
+                        cycle,
                     )
                     if not current_plan:
                         break
@@ -150,7 +155,13 @@ class TaskPlanner:
 
                 total_steps += 1
                 step_result = self._execute_step(
-                    step, question, entity, memory, top_k, plan_id, total_steps,
+                    step,
+                    question,
+                    entity,
+                    memory,
+                    top_k,
+                    plan_id,
+                    total_steps,
                 )
                 plan_steps_log.append(step_result)
 
@@ -169,7 +180,10 @@ class TaskPlanner:
 
                 # -- 4. Evaluate entire plan --
                 plan_done, answer_candidate = self._tool_evaluate_plan(
-                    question, memory, plan_steps_log, current_plan,
+                    question,
+                    memory,
+                    plan_steps_log,
+                    current_plan,
                 )
                 if plan_done and answer_candidate:
                     final_answer = answer_candidate
@@ -199,7 +213,7 @@ class TaskPlanner:
             memory=memory,
             total_plan_changes=total_plan_changes,
             total_steps=total_steps,
-            cycle_count=min(cycle, self.max_cycles) if 'cycle' in dir() else 1,
+            cycle_count=min(cycle, self.max_cycles) if "cycle" in dir() else 1,
             plan_id=plan_id,
         )
 
@@ -224,10 +238,14 @@ class TaskPlanner:
             "- get_memory_data(key): Retrieve data from working memory\n"
         )
 
-        memory_summary = json.dumps(
-            {k: (str(v)[:200] if isinstance(v, str) else v) for k, v in memory.items()},
-            ensure_ascii=False,
-        ) if memory else "{}"
+        memory_summary = (
+            json.dumps(
+                {k: (str(v)[:200] if isinstance(v, str) else v) for k, v in memory.items()},
+                ensure_ascii=False,
+            )
+            if memory
+            else "{}"
+        )
 
         history_summary = ""
         if history:
@@ -283,14 +301,35 @@ Return JSON array:
 
         # Fallback minimal plan
         return [
-            {"tool": "search_local_data", "input": {"query": question}, "status": "pending", "step_index": 0, "description": "Search local knowledge base"},
-            {"tool": "crawl_external_data", "input": {"query": question, "entity": entity}, "status": "pending", "step_index": 1, "description": "Crawl web for data"},
-            {"tool": "reflect_findings", "input": {"data_key": "search_results"}, "status": "pending", "step_index": 2, "description": "Reflect on gathered data"},
+            {
+                "tool": "search_local_data",
+                "input": {"query": question},
+                "status": "pending",
+                "step_index": 0,
+                "description": "Search local knowledge base",
+            },
+            {
+                "tool": "crawl_external_data",
+                "input": {"query": question, "entity": entity},
+                "status": "pending",
+                "step_index": 1,
+                "description": "Crawl web for data",
+            },
+            {
+                "tool": "reflect_findings",
+                "input": {"data_key": "search_results"},
+                "status": "pending",
+                "step_index": 2,
+                "description": "Reflect on gathered data",
+            },
         ]
 
     # -- search_local_data --
     def _tool_search_local(
-        self, query: str, top_k: int, entity: str,
+        self,
+        query: str,
+        top_k: int,
+        entity: str,
     ) -> Dict[str, Any]:
         """Search local RAG + SQL + graph data."""
         hits: List[Dict[str, Any]] = []
@@ -332,21 +371,30 @@ Return JSON array:
         for h in hits:
             url = h.get("url", "")
             if url:
-                if url not in seen or float(h.get("score", 0) or 0) > float(seen[url].get("score", 0) or 0):
+                if url not in seen or float(h.get("score", 0) or 0) > float(
+                    seen[url].get("score", 0) or 0
+                ):
                     seen[url] = h
             else:
                 no_url.append(h)
         merged = sorted(seen.values(), key=lambda x: float(x.get("score", 0) or 0), reverse=True)
-        merged = merged[:top_k] + no_url[:top_k // 4]
+        merged = merged[:top_k] + no_url[: top_k // 4]
 
         return {"hits": merged, "sources": sources, "count": len(merged)}
 
     # -- crawl_external_data --
     def _tool_crawl_external(
-        self, query: str, entity: str,
+        self,
+        query: str,
+        entity: str,
     ) -> Dict[str, Any]:
         """Execute a web crawl cycle for the given query."""
-        from ..search import IntelligentExplorer, EntityProfile, EntityType, collect_candidates_simple
+        from ..search import (
+            IntelligentExplorer,
+            EntityProfile,
+            EntityType,
+            collect_candidates_simple,
+        )
 
         collect_fn = self._collect_candidates or collect_candidates_simple
         search_queries = self.llm.generate_seed_queries(query, entity)
@@ -388,7 +436,10 @@ Return JSON array:
 
     # -- reflect_findings --
     def _tool_reflect(
-        self, data_key: str, memory: Dict[str, Any], question: str,
+        self,
+        data_key: str,
+        memory: Dict[str, Any],
+        question: str,
     ) -> Dict[str, Any]:
         """Reflect on data in memory and evaluate quality."""
         data = memory.get(data_key, memory)
@@ -415,7 +466,12 @@ Return JSON: {{"sufficient": true/false, "summary": "...", "missing": ["..."], "
                 return result
         except Exception as e:
             logger.warning("Reflect failed: %s", e)
-        return {"sufficient": False, "summary": "", "missing": [], "next_action": "crawl_external_data"}
+        return {
+            "sufficient": False,
+            "summary": "",
+            "missing": [],
+            "next_action": "crawl_external_data",
+        }
 
     # -- store_memory_data / get_memory_data --
     @staticmethod
@@ -431,7 +487,10 @@ Return JSON: {{"sufficient": true/false, "summary": "...", "missing": ["..."], "
 
     # -- eval_step_from_plan --
     def _tool_eval_step(
-        self, step_result: Dict[str, Any], question: str, memory: Dict[str, Any],
+        self,
+        step_result: Dict[str, Any],
+        question: str,
+        memory: Dict[str, Any],
     ) -> bool:
         """Evaluate a single step outcome – returns True if acceptable."""
         status = step_result.get("status", "failed")
@@ -582,7 +641,9 @@ If more data is needed, return:
         completed = datetime.now(timezone.utc)
 
         # Persist step row
-        self._persist_step(plan_id, step_index, tool, tool_input, output, step["status"], error, started, completed)
+        self._persist_step(
+            plan_id, step_index, tool, tool_input, output, step["status"], error, started, completed
+        )
 
         return {
             "step_index": step_index,
@@ -683,9 +744,13 @@ Instructions:
             if not vec:
                 return None
             results = self.vector_store.search(
-                vec, top_k=3,
-                query_filter={"must": [{"key": "kind", "match": {"value": "step_pattern"}}]}
-                if hasattr(self.vector_store, 'search') else None,
+                vec,
+                top_k=3,
+                query_filter=(
+                    {"must": [{"key": "kind", "match": {"value": "step_pattern"}}]}
+                    if hasattr(self.vector_store, "search")
+                    else None
+                ),
             )
             for r in results:
                 if r.score >= self.pattern_reuse_threshold:
@@ -700,14 +765,15 @@ Instructions:
         return None
 
     def _maybe_store_pattern(
-        self, question: str, history: List[Dict[str, Any]], answer: str,
+        self,
+        question: str,
+        history: List[Dict[str, Any]],
+        answer: str,
     ) -> None:
         """Store the tool sequence as a pattern if the result looks successful."""
         if not answer or "could not" in answer.lower() or "insufficient" in answer.lower():
             return
-        completed_steps = [
-            h for h in history if h.get("status") == "completed"
-        ]
+        completed_steps = [h for h in history if h.get("status") == "completed"]
         if len(completed_steps) < 2:
             return
 
@@ -733,23 +799,26 @@ Instructions:
                     )
                     session.add(pattern)
                     session.commit()
-                    pattern_id = str(pattern.id)
 
             # Store embedding in Qdrant
             if self.vector_store:
                 vec = self.llm.embed_text(generalized)
                 if vec:
                     point_id = str(uuid.uuid4())
-                    self.vector_store.upsert([{
-                        "id": point_id,
-                        "vector": vec,
-                        "payload": {
-                            "kind": "step_pattern",
-                            "generalized_task": generalized,
-                            "tool_sequence": tool_sequence,
-                            "reward_score": 1.0,
-                        },
-                    }])
+                    self.vector_store.upsert(
+                        [
+                            {
+                                "id": point_id,
+                                "vector": vec,
+                                "payload": {
+                                    "kind": "step_pattern",
+                                    "generalized_task": generalized,
+                                    "tool_sequence": tool_sequence,
+                                    "reward_score": 1.0,
+                                },
+                            }
+                        ]
+                    )
         except Exception as e:
             logger.warning("Pattern storage failed (non-critical): %s", e)
 
@@ -776,7 +845,10 @@ Return ONLY the generalised task description as a plain string (no JSON).
     # Persistence helpers
     # -----------------------------------------------------------------------
     def _create_plan_row(
-        self, plan_id: str, question: str, session_id: Optional[str],
+        self,
+        plan_id: str,
+        question: str,
+        session_id: Optional[str],
     ) -> Optional[ChatPlan]:
         try:
             if hasattr(self.store, "Session"):
@@ -890,9 +962,7 @@ Return ONLY the generalised task description as a plain string (no JSON).
         plan_id: str,
     ) -> Dict[str, Any]:
         """Build the response dict, backward-compatible with existing /api/chat."""
-        online_triggered = any(
-            s.get("tool_name") == "crawl_external_data" for s in plan_steps_log
-        )
+        online_triggered = any(s.get("tool_name") == "crawl_external_data" for s in plan_steps_log)
         live_urls = []
         for s in plan_steps_log:
             if s.get("tool_name") == "crawl_external_data":
@@ -917,7 +987,9 @@ Return ONLY the generalised task description as a plain string (no JSON).
                 "step": s.get("step_index"),
                 "tool": s.get("tool_name"),
                 "status": s.get("status"),
-                "description": s.get("input", {}).get("query", s.get("input", {}).get("data_key", "")),
+                "description": s.get("input", {}).get(
+                    "query", s.get("input", {}).get("data_key", "")
+                ),
             }
             for s in plan_steps_log
         ]
