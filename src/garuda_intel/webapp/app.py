@@ -355,7 +355,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                 ).first()
                 
                 if existing_content:
-                    existing_content.text = document.content[:50000] if document.content else ""
+                    existing_content.text = document.content or ""
                     existing_content.metadata_json = _build_metadata_json()
                     existing_content.fetch_ts = _dt.utcnow()
                 else:
@@ -364,7 +364,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                         entry_type="page_content",
                         page_id=page_id,
                         page_url=document.url,
-                        text=document.content[:50000] if document.content else "",
+                        text=document.content or "",
                         metadata_json=_build_metadata_json(),
                         fetch_ts=_dt.utcnow(),
                     )
@@ -395,7 +395,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                     entry_type="page_content",
                     page_id=page_id,
                     page_url=document.url,
-                    text=document.content[:50000] if document.content else "",
+                    text=document.content or "",
                     metadata_json=_build_metadata_json(),
                     fetch_ts=_dt.utcnow(),
                 )
@@ -662,6 +662,89 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
             except Exception as e:
                 logger.warning(f"Failed to save links from local file: {e}")
         
+        # Queue web crawl tasks for discovered URLs
+        crawl_tasks_queued = 0
+        if extracted_links:
+            tq.update_progress(task_id, 0.85, f"Queuing crawl tasks for {len(extracted_links)} URLs")
+            for link in extracted_links:
+                try:
+                    link_url = link.get("href", "")
+                    if link_url and link_url.startswith(("http://", "https://")):
+                        crawl_task_id = tq.submit(
+                            task_type=TaskQueueService.TASK_CRAWL,
+                            params={
+                                "url": link_url,
+                                "source": "local_file_extraction",
+                                "source_file": document.title,
+                                "source_page_id": page_id_str,
+                                "depth": 1,
+                                "max_pages": 1,
+                            },
+                            priority=0,
+                        )
+                        crawl_tasks_queued += 1
+                except Exception as e:
+                    logger.debug(f"Failed to queue crawl for URL: {e}")
+            if crawl_tasks_queued:
+                logger.info(f"Queued {crawl_tasks_queued} crawl tasks from local file: {document.title}")
+        
+        # Process extracted images from PDFs and relate them to the source file
+        extracted_images_count = 0
+        if document.metadata.get("extracted_image_paths"):
+            tq.update_progress(task_id, 0.9, "Processing extracted PDF images")
+            from ..database.models import MediaItem
+            
+            for img_path in document.metadata["extracted_image_paths"]:
+                try:
+                    if not os.path.isfile(img_path):
+                        continue
+                    img_url = f"file://{os.path.abspath(img_path)}"
+                    
+                    # Create MediaItem for the extracted image
+                    with store.Session() as session:
+                        existing = session.query(MediaItem).filter(
+                            MediaItem.url == img_url
+                        ).first()
+                        
+                        if not existing:
+                            media_id = _uuid.uuid4()
+                            media_item = MediaItem(
+                                id=media_id,
+                                entry_type="media_item",
+                                url=img_url,
+                                media_type="image",
+                                source_page_id=page_id,
+                                processed=False,
+                                metadata_json={
+                                    "source_pdf": os.path.basename(file_path),
+                                    "source_page_id": page_id_str,
+                                    "extracted_from": "pdf",
+                                    "local_path": img_path,
+                                },
+                            )
+                            session.add(media_item)
+                            session.commit()
+                            extracted_images_count += 1
+                            
+                            # Create relationship: source PDF -> extracted image
+                            try:
+                                store.save_relationship(
+                                    from_id=page_id_str,
+                                    to_id=str(media_id),
+                                    relation_type="contains_image",
+                                    meta={
+                                        "source": "pdf_image_extraction",
+                                        "image_path": img_path,
+                                    },
+                                )
+                            except Exception:
+                                pass
+                except Exception as e:
+                    logger.debug(f"Failed to process extracted PDF image: {e}")
+            
+            if extracted_images_count:
+                logger.info(f"Created {extracted_images_count} media items from PDF images")
+        
         tq.update_progress(task_id, 1.0, "Local file ingestion complete")
         
         return {
@@ -675,6 +758,8 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
             "event": event,
             "action": upsert_action,
             "links_extracted": len(extracted_links),
+            "crawl_tasks_queued": crawl_tasks_queued,
+            "extracted_images": extracted_images_count,
             "file_hash": file_hash,
             "entities_extracted": entities_count,
             "intel_extracted": intel_count,
@@ -796,7 +881,7 @@ if settings.local_data_watch_enabled and settings.local_data_watch_dir:
 # Register local data routes
 app.register_blueprint(
     local_data_routes.init_local_data_routes(
-        api_key_required, settings, task_queue, _directory_watcher
+        api_key_required, settings, task_queue, _directory_watcher, store
     )
 )
 
