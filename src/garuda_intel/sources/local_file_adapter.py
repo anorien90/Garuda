@@ -43,7 +43,8 @@ class LocalFileAdapter(SourceAdapter):
     PDF_EXTENSIONS = [".pdf"]
     TEXT_EXTENSIONS = [
         ".txt", ".md", ".csv", ".json", ".xml", ".html", ".htm",
-        ".log", ".rst", ".yaml", ".yml"
+        ".log", ".rst", ".yaml", ".yml", ".py", ".ini", ".cfg", ".toml",
+        ".sh", ".bat", ".ps1", ".sql", ".r", ".rb", ".js", ".ts", ".css"
     ]
     IMAGE_EXTENSIONS = [
         ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif"
