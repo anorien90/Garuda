@@ -357,7 +357,9 @@ class SQLAlchemyStore(PersistenceStore):
                                 Entity.updated_at.desc().nullslast(),
                             )
                             .limit(1)
-                        ).scalars().first()
+                        )
+                        .scalars()
+                        .first()
                     )
                 
                 if existing:
