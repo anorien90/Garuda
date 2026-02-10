@@ -1,6 +1,7 @@
 """Tests for LocalFileAdapter and DirectoryWatcherService."""
 
 import os
+import re
 import time
 import tempfile
 import pytest
@@ -783,7 +784,6 @@ class TestLocalFileLinkExtraction:
 
     def test_extract_urls_from_text(self):
         """Test that URLs are extracted from text content."""
-        import re
         content = (
             "Visit https://example.com for details. "
             "Also see http://test.org/page?q=1 and "
@@ -806,7 +806,6 @@ class TestLocalFileLinkExtraction:
 
     def test_no_duplicate_urls(self):
         """Test that duplicate URLs are deduplicated."""
-        import re
         content = (
             "https://example.com is mentioned here. "
             "And https://example.com is mentioned again."
@@ -824,7 +823,6 @@ class TestLocalFileLinkExtraction:
 
     def test_no_urls_in_content(self):
         """Test content with no URLs produces empty links."""
-        import re
         content = "This is plain text with no URLs at all."
         url_pattern = re.compile(r'https?://[^\s<>"\')\],;]+', re.IGNORECASE)
         links = list(url_pattern.finditer(content))

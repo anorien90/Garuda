@@ -259,6 +259,12 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
             tq.update_progress(task_id, 1.0, "Crawl complete")
             return result
 
+    # Pre-compiled URL pattern for extracting links from local file content
+    import re as _re_mod
+    _URL_PATTERN = _re_mod.compile(
+        r'https?://[^\s<>"\')\],;]+', _re_mod.IGNORECASE
+    )
+
     def _handle_local_ingest(task_id, params):
         """Handle local file ingestion tasks (insert or update).
 
@@ -268,7 +274,6 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         """
         from ..sources.local_file_adapter import LocalFileAdapter
         import hashlib as _hashlib
-        import re as _re
         
         file_path = params.get("file_path", "")
         event = params.get("event", "unknown")
@@ -292,8 +297,8 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                 for chunk in iter(lambda: f.read(8192), b''):
                     hasher.update(chunk)
             file_hash = hasher.hexdigest()
-        except Exception:
-            pass
+        except (IOError, OSError) as e:
+            logger.warning(f"Failed to compute file hash for {file_path}: {e}")
         
         # Store or update the extracted content in the database
         import uuid as _uuid
@@ -392,11 +397,8 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         # Extract URLs from content and store as Link records
         extracted_links = []
         if document.content:
-            url_pattern = _re.compile(
-                r'https?://[^\s<>"\')\],;]+', _re.IGNORECASE
-            )
             seen_urls = set()
-            for match in url_pattern.finditer(document.content):
+            for match in _URL_PATTERN.finditer(document.content):
                 url = match.group(0).rstrip('.')
                 if url not in seen_urls:
                     seen_urls.add(url)
