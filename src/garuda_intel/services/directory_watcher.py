@@ -49,6 +49,7 @@ class DirectoryWatcherService:
         task_queue: 'TaskQueueService',
         poll_interval: float = 5.0,
         recursive: bool = True,
+        storage_dir: Optional[str] = None,
     ):
         """
         Initialize the directory watcher service.
@@ -58,11 +59,19 @@ class DirectoryWatcherService:
             task_queue: TaskQueueService instance for queueing tasks
             poll_interval: Seconds between directory scans
             recursive: If True, scan subdirectories recursively
+            storage_dir: Directory to persist copies of watched files. If None,
+                         a sibling ``uploads`` directory is created next to watch_dir.
         """
         self.watch_dir = os.path.realpath(watch_dir)
         self.task_queue = task_queue
         self.poll_interval = poll_interval
         self.recursive = recursive
+        
+        # Storage directory for persisted copies
+        if storage_dir:
+            self.storage_dir = os.path.realpath(storage_dir)
+        else:
+            self.storage_dir = os.path.join(os.path.dirname(self.watch_dir), "uploads")
         
         # Internal state
         self._file_states: Dict[str, Dict[str, Any]] = {}
@@ -83,9 +92,12 @@ class DirectoryWatcherService:
             except OSError as e:
                 raise ValueError(f"Watch directory does not exist and cannot be created: {self.watch_dir} ({e})")
         
+        # Auto-create storage directory
+        os.makedirs(self.storage_dir, exist_ok=True)
+        
         logger.info(
             f"DirectoryWatcher initialized: dir={self.watch_dir} "
-            f"poll={poll_interval}s recursive={recursive}"
+            f"storage={self.storage_dir} poll={poll_interval}s recursive={recursive}"
         )
     
     def start(self):
@@ -194,6 +206,7 @@ class DirectoryWatcherService:
         return {
             "running": self._running,
             "watch_dir": self.watch_dir,
+            "storage_dir": self.storage_dir,
             "recursive": self.recursive,
             "poll_interval": self.poll_interval,
             "tracked_files": tracked_count,
@@ -456,26 +469,67 @@ class DirectoryWatcherService:
             logger.warning(f"Debounce check failed for {filepath}: {e}")
             return False
     
+    def _persist_file(self, filepath: str) -> str:
+        """
+        Copy a watched file to the persistent storage directory.
+        
+        Preserves the relative directory structure from the watch directory.
+        Handles duplicate filenames by appending a counter.
+        
+        Args:
+            filepath: Absolute path to the source file
+            
+        Returns:
+            Absolute path to the persisted copy in storage_dir
+        """
+        import shutil
+        
+        # Compute relative path from watch dir to preserve subdirectory structure
+        rel_path = os.path.relpath(filepath, self.watch_dir)
+        dest_path = os.path.join(self.storage_dir, rel_path)
+        
+        # Create parent directories in storage
+        dest_dir = os.path.dirname(dest_path)
+        os.makedirs(dest_dir, exist_ok=True)
+        
+        # Handle duplicate filenames
+        if os.path.exists(dest_path):
+            base, ext = os.path.splitext(dest_path)
+            counter = 1
+            while os.path.exists(dest_path):
+                dest_path = f"{base}_{counter}{ext}"
+                counter += 1
+        
+        shutil.copy2(filepath, dest_path)
+        logger.info(f"Persisted watched file to storage: {filepath} -> {dest_path}")
+        return dest_path
+    
     def _queue_file(self, filepath: str, event: str):
         """
-        Queue a file for processing via task queue.
+        Persist a file to storage and queue it for processing via task queue.
         
         Args:
             filepath: Path to file
             event: Event type ("new" or "modified")
         """
         try:
+            # Persist file to storage directory so it survives watch dir changes
+            stored_path = self._persist_file(filepath)
+            
             task_id = self.task_queue.submit(
                 task_type=self.TASK_LOCAL_INGEST,
                 params={
-                    "file_path": filepath,
+                    "file_path": stored_path,
                     "event": event,
+                    "original_filename": os.path.basename(filepath),
+                    "stored_path": stored_path,
+                    "watch_path": filepath,
                 },
                 priority=0,
             )
             logger.info(
                 f"Queued file for processing: {filepath} "
-                f"(event={event}, task_id={task_id})"
+                f"(event={event}, task_id={task_id}, stored={stored_path})"
             )
         except Exception as e:
             logger.error(
