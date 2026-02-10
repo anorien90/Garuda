@@ -281,6 +281,16 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         from datetime import datetime as _dt
         from ..database.models import Page, PageContent
         
+        def _build_metadata_json():
+            return {
+                "source": "local_file",
+                "event": event,
+                "file_type": document.metadata.get("file_type", ""),
+                "file_size_mb": document.metadata.get("file_size_mb", 0),
+                "confidence": document.confidence,
+                "original_filename": params.get("original_filename", document.title),
+            }
+        
         with store.Session() as session:
             # Check if this file was already ingested (upsert logic)
             existing_page = session.query(Page).filter(
@@ -302,31 +312,16 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                 
                 if existing_content:
                     existing_content.text = document.content[:50000] if document.content else ""
-                    existing_content.metadata_json = {
-                        "source": "local_file",
-                        "event": event,
-                        "file_type": document.metadata.get("file_type", ""),
-                        "file_size_mb": document.metadata.get("file_size_mb", 0),
-                        "confidence": document.confidence,
-                        "original_filename": params.get("original_filename", document.title),
-                    }
+                    existing_content.metadata_json = _build_metadata_json()
                     existing_content.fetch_ts = _dt.utcnow()
                 else:
-                    content_id = _uuid.uuid4()
                     page_content = PageContent(
-                        id=content_id,
+                        id=_uuid.uuid4(),
                         entry_type="page_content",
                         page_id=page_id,
                         page_url=document.url,
                         text=document.content[:50000] if document.content else "",
-                        metadata_json={
-                            "source": "local_file",
-                            "event": event,
-                            "file_type": document.metadata.get("file_type", ""),
-                            "file_size_mb": document.metadata.get("file_size_mb", 0),
-                            "confidence": document.confidence,
-                            "original_filename": params.get("original_filename", document.title),
-                        },
+                        metadata_json=_build_metadata_json(),
                         fetch_ts=_dt.utcnow(),
                     )
                     session.add(page_content)
@@ -337,7 +332,6 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
             else:
                 # Insert new page and content
                 page_id = _uuid.uuid4()
-                content_id = _uuid.uuid4()
                 page = Page(
                     id=page_id,
                     entry_type="page",
@@ -353,19 +347,12 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
                 session.flush()
                 
                 page_content = PageContent(
-                    id=content_id,
+                    id=_uuid.uuid4(),
                     entry_type="page_content",
                     page_id=page_id,
                     page_url=document.url,
                     text=document.content[:50000] if document.content else "",
-                    metadata_json={
-                        "source": "local_file",
-                        "event": event,
-                        "file_type": document.metadata.get("file_type", ""),
-                        "file_size_mb": document.metadata.get("file_size_mb", 0),
-                        "confidence": document.confidence,
-                        "original_filename": params.get("original_filename", document.title),
-                    },
+                    metadata_json=_build_metadata_json(),
                     fetch_ts=_dt.utcnow(),
                 )
                 session.add(page_content)
