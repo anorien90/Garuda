@@ -122,7 +122,10 @@ class IntelExtractor:
         Merges chunk-level findings into a single aggregated result.
         """
         cleaned_text = self.text_processor.clean_text(text)
-        cleaned_text = self.text_processor.pretrim_irrelevant_sections(cleaned_text, profile.name)
+        # Only pretrim when NOT in comprehensive mode; comprehensive extraction
+        # needs the full document context to discover all entities and relationships.
+        if not self.enable_comprehensive_extraction:
+            cleaned_text = self.text_processor.pretrim_irrelevant_sections(cleaned_text, profile.name)
 
         # Use semantic chunking if enabled, otherwise use simple chunking
         if self.use_semantic_chunking and self.semantic_chunker:

@@ -375,3 +375,100 @@ This section covers business topics.
         
         assert len(chunks) > 0
         assert len(chunks) < 500  # Should create reasonable number of chunks
+
+    def test_full_content_preserved_in_chunks(self, chunker):
+        """Test that all content from the original text appears in the chunks."""
+        text = (
+            "Johann III. Ohnegnade was born in 1374 in Le Quesnoy. "
+            "He was the Bishop of Liège from 1389 to 1418. "
+            "During his reign he faced many political challenges. "
+            "He was known for his diplomatic skills and alliances. "
+            "He died on 6 January 1425 in a small village. "
+            "His legacy influenced the region for decades. "
+            "Scholars have debated his contributions extensively. "
+            "Modern historians consider him a pivotal figure. "
+            "The archives contain numerous documents about his rule. "
+            "Several churches were built under his patronage."
+        )
+
+        chunks = chunker.chunk_by_topic(text, max_chunk_size=200, min_chunk_size=50)
+
+        combined = " ".join(c.text for c in chunks)
+        # Every sentence from the original must be present in the combined output
+        for sentence in text.split(". "):
+            key = sentence.rstrip(".")
+            assert key in combined, f"Content lost: {key!r}"
+
+    def test_small_sections_merged_not_dropped(self, chunker):
+        """Test that sections below min_chunk_size are merged, not dropped."""
+        text = (
+            "Short bit. Another tiny piece. "
+            "This is a significantly longer paragraph that contains enough words "
+            "to qualify as a proper chunk by itself and should survive filtering."
+        )
+
+        chunks = chunker.chunk_by_topic(text, max_chunk_size=1500, min_chunk_size=100)
+        combined = " ".join(c.text for c in chunks)
+
+        assert "Short bit" in combined, "Small section should be merged, not dropped"
+        assert "Another tiny piece" in combined, "Small section should be merged, not dropped"
+
+    def test_ocr_text_not_truncated(self, chunker):
+        """Test that OCR-style text (no newlines) is fully preserved."""
+        text = (
+            "[Image file: text_capture.png] Format: PNG | Dimensions: 951x1084 | "
+            "Mode: RGBA OCR extracted text: Johann III. Ohnegnade "
+            "(als Elekt von Luttich Johann VI.; * 1374 in Le Quesnoy; "
+            "t 6. Januar 1425) war ein Bischof von Luttich. "
+            "Er wurde 1389 zum Bischof gewahlt und regierte bis 1418. "
+            "Wahrend seiner Amtszeit stand er vor vielen politischen Herausforderungen."
+        )
+
+        chunks = chunker.chunk_by_topic(text, max_chunk_size=4000, min_chunk_size=50)
+        combined = " ".join(c.text for c in chunks)
+
+        assert "Herausforderungen" in combined, "End of OCR text should not be cut off"
+        assert "Johann III" in combined
+
+
+class TestTextProcessorParagraphPreservation:
+    """Test that TextProcessor.clean_text preserves paragraph structure."""
+
+    def test_clean_text_preserves_paragraphs(self):
+        """Paragraph boundaries should survive clean_text."""
+        from garuda_intel.extractor.text_processor import TextProcessor
+        tp = TextProcessor()
+
+        text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph."
+        cleaned = tp.clean_text(text)
+
+        assert "\n\n" in cleaned, "Double-newline paragraph breaks should be preserved"
+        assert "First paragraph" in cleaned
+        assert "Third paragraph" in cleaned
+
+    def test_clean_text_html_preserves_paragraphs(self):
+        """HTML cleaning should produce paragraph breaks from block elements."""
+        from garuda_intel.extractor.text_processor import TextProcessor
+        tp = TextProcessor()
+
+        html = "<p>Paragraph one.</p><p>Paragraph two.</p><p>Paragraph three.</p>"
+        cleaned = tp.clean_text(html)
+
+        assert "Paragraph one" in cleaned
+        assert "Paragraph three" in cleaned
+
+    def test_clean_text_preserves_all_content(self):
+        """clean_text must not drop any meaningful content."""
+        from garuda_intel.extractor.text_processor import TextProcessor
+        tp = TextProcessor()
+
+        text = (
+            "Johann III. Ohnegnade was born in 1374.\n\n"
+            "He served as Bishop of Liège.\n\n"
+            "His legacy endured for centuries."
+        )
+        cleaned = tp.clean_text(text)
+
+        assert "Johann III" in cleaned
+        assert "Bishop of Liège" in cleaned
+        assert "legacy endured" in cleaned

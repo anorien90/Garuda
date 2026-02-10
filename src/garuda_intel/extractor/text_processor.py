@@ -19,6 +19,7 @@ class TextProcessor:
     def clean_text(self, html_or_text: str) -> str:
         """
         Basic HTML boilerplate cleanup + prompt/instruction stripping; normalizes whitespace.
+        Preserves paragraph boundaries (double newlines) for downstream semantic chunking.
         """
         if not html_or_text:
             return ""
@@ -32,7 +33,7 @@ class TextProcessor:
                 for sel in ["nav", "footer", "header", "form"]:
                     for tag in soup.select(sel):
                         tag.extract()
-                text = soup.get_text(separator=" ")
+                text = soup.get_text(separator="\n")
             except Exception:
                 text = html_or_text
         else:
@@ -40,8 +41,15 @@ class TextProcessor:
 
         # Remove instruction/prompt-like content and metadata noise
         text = self.strip_prompty_lines(text)
-        # Collapse whitespace
-        text = re.sub(r"\s+", " ", text).strip()
+        # Normalize paragraph breaks: 2+ newlines become double-newline
+        text = re.sub(r"\n{2,}", "\n\n", text)
+        # Collapse runs of whitespace within lines (spaces/tabs) but keep newlines
+        text = re.sub(r"[^\S\n]+", " ", text)
+        # Strip leading/trailing whitespace per line and remove blank-only lines
+        lines = [line.strip() for line in text.split("\n")]
+        text = "\n".join(lines).strip()
+        # Collapse 3+ consecutive newlines back to double-newline
+        text = re.sub(r"\n{3,}", "\n\n", text)
         return text
 
     def split_sentences(self, text: str) -> List[str]:

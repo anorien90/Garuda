@@ -144,8 +144,29 @@ class SemanticChunker:
                         ))
                         chunk_start += len(subsection)
                 else:
-                    # Each section becomes its own chunk
-                    if len(section_text.strip()) >= min_chunk_size:
+                    # Section is small enough: merge with previous chunk if under
+                    # min_chunk_size to avoid losing content, otherwise add as own chunk.
+                    stripped = section_text.strip()
+                    if len(stripped) < min_chunk_size:
+                        # Merge with the last chunk to preserve content
+                        if chunks:
+                            prev = chunks[-1]
+                            merged = prev.text + " " + section_text
+                            chunks[-1] = TextChunk(
+                                text=merged,
+                                start_index=prev.start_index,
+                                end_index=chunk_start + len(section_text),
+                                topic_context=prev.topic_context,
+                            )
+                        else:
+                            # No previous chunk yet; start a new one
+                            chunks.append(TextChunk(
+                                text=section_text,
+                                start_index=chunk_start,
+                                end_index=chunk_start + len(section_text),
+                                topic_context=None,
+                            ))
+                    else:
                         chunks.append(TextChunk(
                             text=section_text,
                             start_index=chunk_start,
