@@ -1,0 +1,40 @@
+runpod_gpus = [
+    {'id': 'NVIDIA A100 80GB PCIe', 'displayName': 'A100 80GB', 'memoryInGb': 80},
+    {'id': 'NVIDIA A100-SXM4-80GB', 'displayName': 'A100 SXM 80GB', 'memoryInGb': 80},
+    {'id': 'NVIDIA A30', 'displayName': 'A30', 'memoryInGb': 24},
+    {'id': 'NVIDIA A40', 'displayName': 'A40', 'memoryInGb': 48},
+    {'id': 'NVIDIA GeForce RTX 3070', 'displayName': 'RTX 3070', 'memoryInGb': 8},
+    {'id': 'NVIDIA GeForce RTX 3080', 'displayName': 'RTX 3080', 'memoryInGb': 10},
+    {'id': 'NVIDIA GeForce RTX 3080 Ti', 'displayName': 'RTX 3080 Ti', 'memoryInGb': 12},
+    {'id': 'NVIDIA GeForce RTX 3090', 'displayName': 'RTX 3090', 'memoryInGb': 24},
+    {'id': 'NVIDIA GeForce RTX 3090 Ti', 'displayName': 'RTX 3090 Ti', 'memoryInGb': 24},
+    {'id': 'NVIDIA GeForce RTX 4070 Ti', 'displayName': 'RTX 4070 Ti', 'memoryInGb': 12},
+    {'id': 'NVIDIA GeForce RTX 4080', 'displayName': 'RTX 4080', 'memoryInGb': 16},
+    {'id': 'NVIDIA GeForce RTX 4090', 'displayName': 'RTX 4090', 'memoryInGb': 24},
+    {'id': 'NVIDIA H100 80GB HBM3', 'displayName': 'H100 80GB SXM5', 'memoryInGb': 80},
+    {'id': 'NVIDIA H100 PCIe', 'displayName': 'H100 80GB PCIe', 'memoryInGb': 80},
+    {'id': 'NVIDIA L4', 'displayName': 'L4', 'memoryInGb': 24},
+    {'id': 'NVIDIA L40', 'displayName': 'L40', 'memoryInGb': 48},
+    {'id': 'NVIDIA RTX 4000 Ada Generation', 'displayName': 'RTX 4000 Ada', 'memoryInGb': 20},
+    {'id': 'NVIDIA RTX 4000 SFF Ada Generation', 'displayName': 'RTX 4000 Ada SFF', 'memoryInGb': 20},
+    {'id': 'NVIDIA RTX 5000 Ada Generation', 'displayName': 'RTX 5000 Ada', 'memoryInGb': 32},
+    {'id': 'NVIDIA RTX 6000 Ada Generation', 'displayName': 'RTX 6000 Ada', 'memoryInGb': 48},
+    {'id': 'NVIDIA RTX A2000', 'displayName': 'RTX A2000', 'memoryInGb': 6},
+    {'id': 'NVIDIA RTX A4000', 'displayName': 'RTX A4000', 'memoryInGb': 16},
+    {'id': 'NVIDIA RTX A4500', 'displayName': 'RTX A4500', 'memoryInGb': 20},
+    {'id': 'NVIDIA RTX A5000', 'displayName': 'RTX A5000', 'memoryInGb': 24},
+    {'id': 'NVIDIA RTX A6000', 'displayName': 'RTX A6000', 'memoryInGb': 48},
+    {'id': 'Tesla V100-FHHL-16GB', 'displayName': 'V100 FHHL', 'memoryInGb': 16},
+    {'id': 'Tesla V100-PCIE-16GB', 'displayName': 'Tesla V100', 'memoryInGb': 16},
+    {'id': 'Tesla V100-SXM2-16GB', 'displayName': 'V100 SXM2', 'memoryInGb': 16},
+    {'id': 'unknown', 'displayName': 'unknown', 'memoryInGb': 0}
+]
+
+example_response_default_image = {
+    'id': 'tdbq29a2pd1h4l',
+    'desiredStatus': 'RUNNING',
+    'imageName': 'ashleykza/kohya:1.12.1',
+    'env': ['PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAjiu228cu87fhiOszGQ0Qa3psxU+ojQSvoEvroh2Fnt christoph@bumpli.de\n'],
+    'machineId': 'pgyzoskv1zha',
+    'machine': {'podHostId': 'tdbq29a2pd1h4l-6441132a'}
+}
