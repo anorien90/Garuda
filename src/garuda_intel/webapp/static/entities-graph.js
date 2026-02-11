@@ -344,8 +344,10 @@ function _updateGraphHighlights() {
  */
 function renderLegend() {
   if (!els.entitiesGraphLegend) return;
-  const nodeKinds = discoverNodeKinds(filteredNodes);
-  const edgeKinds = discoverEdgeKinds(filteredLinks);
+  const nodes = filteredNodes.length > 0 ? filteredNodes : currentNodes;
+  const links = filteredLinks.length > 0 ? filteredLinks : currentLinks;
+  const nodeKinds = discoverNodeKinds(nodes);
+  const edgeKinds = discoverEdgeKinds(links);
 
   const nodeItems = [...nodeKinds].map(k => {
     const c = COLORS[k] || COLORS.unknown;
@@ -1385,8 +1387,11 @@ function renderSelectionPanel() {
 
 async function deleteSelectedNodes() {
   if (selectedNodes.size === 0) return;
-  const names = [...selectedNodes.values()].map(n => n.label || n.id).join(', ');
-  if (!confirm(`Delete ${selectedNodes.size} selected node(s)?\n${names}\nThis cannot be undone.`)) return;
+  const allNames = [...selectedNodes.values()].map(n => n.label || n.id);
+  const displayNames = allNames.length > 5
+    ? allNames.slice(0, 5).join(', ') + ` …and ${allNames.length - 5} more`
+    : allNames.join(', ');
+  if (!confirm(`Delete ${selectedNodes.size} selected node(s)?\n${displayNames}\nThis cannot be undone.`)) return;
   const base = val('base-url') || '';
   for (const [id] of selectedNodes) {
     try {
@@ -1568,8 +1573,12 @@ function _initRectangleSelection() {
     if (graphInstance && graphInstance.screen2GraphCoords) {
       const topLeft = graphInstance.screen2GraphCoords(selRect.x1, selRect.y1);
       const bottomRight = graphInstance.screen2GraphCoords(selRect.x2, selRect.y2);
+      const minX = Math.min(topLeft.x, bottomRight.x);
+      const maxX = Math.max(topLeft.x, bottomRight.x);
+      const minY = Math.min(topLeft.y, bottomRight.y);
+      const maxY = Math.max(topLeft.y, bottomRight.y);
       for (const n of filteredNodes) {
-        if (n.x >= topLeft.x && n.x <= bottomRight.x && n.y >= topLeft.y && n.y <= bottomRight.y) {
+        if (n.x >= minX && n.x <= maxX && n.y >= minY && n.y <= maxY) {
           selectedNodes.set(n.id, n);
         }
       }
@@ -1711,7 +1720,13 @@ export async function initEntitiesGraph() {
       selModeBtn.classList.toggle('border-blue-500', selectionMode);
       selModeBtn.classList.toggle('bg-blue-50', selectionMode);
       selModeBtn.classList.toggle('dark:bg-blue-900/30', selectionMode);
-      selModeBtn.textContent = selectionMode ? '⬚ Select ✓' : '⬚ Select';
+      if (selectionMode && use3D) {
+        selModeBtn.textContent = '⬚ Select (click only)';
+        selModeBtn.title = 'Rectangle selection is not available in 3D mode. Click nodes to select.';
+      } else {
+        selModeBtn.textContent = selectionMode ? '⬚ Select ✓' : '⬚ Select';
+        selModeBtn.title = 'Toggle rectangle selection mode';
+      }
     });
   }
 
