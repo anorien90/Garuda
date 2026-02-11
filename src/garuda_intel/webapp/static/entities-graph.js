@@ -269,7 +269,7 @@ function renderFilterBar() {
     const state = inBL ? 'blacklist' : inWL ? 'whitelist' : 'default';
     html += _filterPill(kind, color, state, 'node', isPre, inResult);
   }
-  html += '<input type="text" id="entities-graph-node-filter-search" placeholder="+ add type…" class="ml-1 w-24 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px]" list="entities-graph-node-kind-datalist">';
+  html += '<input type="text" id="entities-graph-node-filter-search" placeholder="+ add type…" aria-label="Add node type filter" class="ml-1 w-24 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px]" list="entities-graph-node-kind-datalist">';
   html += '<datalist id="entities-graph-node-kind-datalist">' + [...allDbNodeKinds].map(k => `<option value="${escapeHtml(k)}">`).join('') + '</datalist>';
 
   // Edge kind pills
@@ -282,7 +282,7 @@ function renderFilterBar() {
     const state = inBL ? 'blacklist' : inWL ? 'whitelist' : 'default';
     html += _filterPill(kind, color, state, 'edge', false, inResult);
   }
-  html += '<input type="text" id="entities-graph-edge-filter-search" placeholder="+ add type…" class="ml-1 w-24 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px]" list="entities-graph-edge-kind-datalist">';
+  html += '<input type="text" id="entities-graph-edge-filter-search" placeholder="+ add type…" aria-label="Add edge type filter" class="ml-1 w-24 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px]" list="entities-graph-edge-kind-datalist">';
   html += '<datalist id="entities-graph-edge-kind-datalist">' + [...allDbEdgeKinds].map(k => `<option value="${escapeHtml(k)}">`).join('') + '</datalist>';
 
   bar.innerHTML = html;
@@ -1265,6 +1265,9 @@ function _wireEditButtons(node) {
 
     if (!nameDisplay || !kindDisplay || !editForm || !nameInput || !kindInput || !saveBtn || !cancelBtn) return;
 
+    const originalName = node.label || node.id;
+    const originalKind = node.kind || node.type || 'entity';
+
     editBtn.onclick = () => {
       nameDisplay.classList.add('hidden');
       editForm.classList.remove('hidden');
@@ -1275,9 +1278,8 @@ function _wireEditButtons(node) {
       nameDisplay.classList.remove('hidden');
       editForm.classList.add('hidden');
       editBtn.classList.remove('hidden');
-      nameInput.value = node.label || node.id;
-      const currentKind = node.kind || node.type || 'entity';
-      kindInput.value = currentKind;
+      nameInput.value = originalName;
+      kindInput.value = originalKind;
     };
 
     saveBtn.onclick = () => {
@@ -1285,7 +1287,7 @@ function _wireEditButtons(node) {
       const newKind = kindInput.value;
       
       if (!newName) {
-        alert('Entity name is required and cannot be empty.');
+        alert('Entity name cannot be empty.');
         return;
       }
 
