@@ -1341,13 +1341,21 @@ async function fetchGraph() {
 
 /**
  * Get entity types that should be sent as pre-request filters to the API.
- * These are node kinds that are whitelisted AND marked as pre-request.
+ * These are node kinds marked as pre-request that are also whitelisted,
+ * or all pre-request kinds when the whitelist is empty (all types allowed).
  */
 function _getPreRequestTypes() {
   const types = [];
-  for (const kind of nodeWhitelist) {
-    if (preRequestNodeFilters.has(kind)) {
+  if (nodeWhitelist.size === 0) {
+    // No whitelist = all types allowed; send any pre-request filters directly
+    for (const kind of preRequestNodeFilters) {
       types.push(kind);
+    }
+  } else {
+    for (const kind of nodeWhitelist) {
+      if (preRequestNodeFilters.has(kind)) {
+        types.push(kind);
+      }
     }
   }
   return types;
@@ -1551,6 +1559,7 @@ async function _saveRelation() {
 
   const base = val('base-url') || '';
   let savedCount = 0;
+  const failedSrcs = [];
   for (const src of addRelationSourceNodes) {
     try {
       const res = await fetch(`${base}/api/relationships/record`, {
@@ -1563,7 +1572,11 @@ async function _saveRelation() {
         }),
       });
       if (res.ok) savedCount++;
-    } catch (e) { console.warn('Save relation failed', e); }
+      else failedSrcs.push(src.label || src.id);
+    } catch (e) {
+      console.warn('Save relation failed', e);
+      failedSrcs.push(src.label || src.id);
+    }
   }
 
   // Keep panel open for next target selection, reset target but keep sources and relation type
@@ -1573,11 +1586,15 @@ async function _saveRelation() {
   _clearRelationTargetResults();
   _updateRelationSaveBtn();
 
-  // Show confirmation
+  // Show confirmation using textContent for safe parts and controlled HTML for formatting
   const srcLabel = document.getElementById('entities-graph-relation-source-label');
   if (srcLabel) {
-    srcLabel.innerHTML = `From: ${addRelationSourceNodes.map(n => escapeHtml(n.label || n.id)).join(', ')}
-      <span class="text-green-600 ml-1">✓ ${savedCount} saved — select next target or close</span>`;
+    const fromText = `From: ${addRelationSourceNodes.map(n => escapeHtml(n.label || n.id)).join(', ')}`;
+    const safeSavedCount = parseInt(savedCount, 10) || 0;
+    const statusMsg = failedSrcs.length > 0
+      ? `<span class="text-amber-600 ml-1">✓ ${safeSavedCount} saved, ${failedSrcs.length} failed — select next target or close</span>`
+      : `<span class="text-green-600 ml-1">✓ ${safeSavedCount} saved — select next target or close</span>`;
+    srcLabel.innerHTML = `${fromText} ${statusMsg}`;
   }
 
   // Reload graph data in background
