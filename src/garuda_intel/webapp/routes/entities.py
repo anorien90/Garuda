@@ -535,8 +535,10 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                                 # Get confidence from metadata_json since Relationship doesn't have a confidence attribute
                                 rel_meta = rel.metadata_json or {}
                                 relationships.append({
+                                    "id": str(rel.id),
                                     "direction": "outgoing",
                                     "type": rel.relation_type,
+                                    "target_id": str(rel.target_id),
                                     "target_name": target.name,
                                     "target_kind": target.kind,
                                     "confidence": rel_meta.get("confidence"),
@@ -547,8 +549,10 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                                 # Get confidence from metadata_json since Relationship doesn't have a confidence attribute
                                 rel_meta = rel.metadata_json or {}
                                 relationships.append({
+                                    "id": str(rel.id),
                                     "direction": "incoming",
                                     "type": rel.relation_type,
+                                    "source_id": str(rel.source_id),
                                     "source_name": source.name,
                                     "source_kind": source.kind,
                                     "confidence": rel_meta.get("confidence"),
@@ -679,6 +683,83 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
         except Exception as e:
             emit_event("entity_crawl", f"failed: {e}", level="error")
             logger.exception("Entity crawl failed")
+            return jsonify({"error": str(e)}), 500
+
+    # ------------------------------------------------------------------
+    # Delete entity (and its relationships)
+    # ------------------------------------------------------------------
+    @bp.delete("/<entity_id>")
+    @api_key_required
+    def api_delete_entity(entity_id):
+        """Delete an entity and all its relationships.
+
+        Returns deleted entity name and counts of removed relationships.
+        """
+        try:
+            uuid_module.UUID(entity_id)
+        except (ValueError, AttributeError):
+            return jsonify({"error": "Invalid entity UUID"}), 400
+
+        try:
+            with store.Session() as session:
+                entity = session.query(db_models.Entity).filter_by(id=entity_id).first()
+                if not entity:
+                    return jsonify({"error": "Entity not found"}), 404
+
+                name = entity.name
+
+                # Delete relationships where this entity is source or target
+                rel_del = 0
+                for rel in list(entity.outgoing_relationships) + list(entity.incoming_relationships):
+                    session.delete(rel)
+                    rel_del += 1
+
+                # Delete intelligence records tied to this entity
+                intel_del = (
+                    session.query(db_models.Intelligence)
+                    .filter(db_models.Intelligence.entity_name == entity.name)
+                    .delete(synchronize_session="fetch")
+                )
+
+                session.delete(entity)
+                session.commit()
+
+            emit_event("entity_delete", f"deleted entity {name}", payload={"id": entity_id, "relationships_removed": rel_del, "intelligence_removed": intel_del})
+            return jsonify({
+                "status": "deleted",
+                "id": entity_id,
+                "name": name,
+                "relationships_removed": rel_del,
+                "intelligence_removed": intel_del,
+            })
+        except Exception as e:
+            logger.exception("Entity delete failed for %s", entity_id)
+            return jsonify({"error": str(e)}), 500
+
+    # ------------------------------------------------------------------
+    # Delete a single relationship
+    # ------------------------------------------------------------------
+    @bp.delete("/<entity_id>/relationships/<relationship_id>")
+    @api_key_required
+    def api_delete_relationship(entity_id, relationship_id):
+        """Delete a single relationship by its UUID."""
+        try:
+            uuid_module.UUID(relationship_id)
+        except (ValueError, AttributeError):
+            return jsonify({"error": "Invalid relationship UUID"}), 400
+
+        try:
+            with store.Session() as session:
+                rel = session.query(db_models.Relationship).filter_by(id=relationship_id).first()
+                if not rel:
+                    return jsonify({"error": "Relationship not found"}), 404
+                session.delete(rel)
+                session.commit()
+
+            emit_event("relationship_delete", f"deleted relationship {relationship_id}")
+            return jsonify({"status": "deleted", "id": relationship_id})
+        except Exception as e:
+            logger.exception("Relationship delete failed for %s", relationship_id)
             return jsonify({"error": str(e)}), 500
     
     return bp

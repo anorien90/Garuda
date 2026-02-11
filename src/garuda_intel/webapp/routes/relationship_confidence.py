@@ -24,7 +24,9 @@ def init_relationship_confidence_routes(api_key_required, store):
         store: SQLAlchemy store instance
     """
     
-    manager = RelationshipConfidenceManager(store.Session, logger)
+    def _manager():
+        """Create a manager bound to the *current* store.Session."""
+        return RelationshipConfidenceManager(store.Session, logger)
     
     @bp_rel_confidence.post("/record")
     @api_key_required
@@ -61,7 +63,7 @@ def init_relationship_confidence_routes(api_key_required, store):
         })
         
         try:
-            result = manager.record_relationship(
+            result = _manager().record_relationship(
                 source_id=source_id,
                 target_id=target_id,
                 relation_type=relation_type,
@@ -106,7 +108,7 @@ def init_relationship_confidence_routes(api_key_required, store):
         })
         
         try:
-            results = manager.get_high_confidence_relationships(
+            results = _manager().get_high_confidence_relationships(
                 min_confidence=min_confidence,
                 min_occurrences=min_occurrences,
                 limit=limit,

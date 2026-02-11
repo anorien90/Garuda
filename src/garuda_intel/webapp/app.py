@@ -52,8 +52,32 @@ print(f"Qdrant Vector Store: {settings.qdrant_url} Collection: {settings.qdrant_
 print(f"Ollama LLM: {settings.ollama_url} Model: {settings.ollama_model}")
 print(f"Embedding Model: {settings.embedding_model}")
 
+# ---------------------------------------------------------------------------
+# StoreProxy – transparent wrapper so all closure-captured references
+# automatically pick up database switches without touching any route code.
+# ---------------------------------------------------------------------------
+class _StoreProxy:
+    """Delegate every attribute access to the *current* underlying store."""
+
+    def __init__(self, initial):
+        object.__setattr__(self, '_target', initial)
+
+    def _swap(self, new_store):
+        object.__setattr__(self, '_target', new_store)
+
+    # Attribute access is forwarded to the current target ----------------
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, '_target'), name)
+
+    def __setattr__(self, name, value):
+        if name == '_target':
+            object.__setattr__(self, name, value)
+        else:
+            setattr(object.__getattribute__(self, '_target'), name, value)
+
 # Initialize core components
-store = SQLAlchemyStore(settings.db_url)
+_real_store = SQLAlchemyStore(settings.db_url)
+store = _StoreProxy(_real_store)
 
 # Multi-database manager
 from ..services.database_manager import DatabaseManager as _DatabaseManager
@@ -875,9 +899,13 @@ app.register_blueprint(
 
 # Database management: switch callback updates app-level references
 def _on_db_switch(new_store, new_collection):
-    """Called when the active database changes so all modules use the new store."""
-    global store, vector_store
-    store = new_store
+    """Called when the active database changes so all modules use the new store.
+
+    Because *store* is a ``_StoreProxy``, swapping the internal target makes
+    every closure that captured ``store`` (in all blueprints) transparently
+    start using the new database – no re-registration needed.
+    """
+    store._swap(new_store)
     if vector_store and new_collection:
         try:
             vector_store.collection = new_collection
