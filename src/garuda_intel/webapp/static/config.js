@@ -69,7 +69,6 @@ export const els = {
 
   entitiesGraphForm: document.getElementById('entities-graph-form'),
   entitiesGraphQuery: document.getElementById('entities-graph-query'),
-  entitiesGraphType: document.getElementById('entities-graph-type'),
   entitiesGraphMinScore: document.getElementById('entities-graph-min-score'),
   entitiesGraphLimit: document.getElementById('entities-graph-limit'),
   entitiesGraphLoad: document.getElementById('entities-graph-load'),

@@ -12,12 +12,6 @@
   <!-- Advanced options (hidden by default) -->
   <div id="entities-graph-advanced" class="hidden flex flex-wrap items-center gap-3 px-1 py-1.5 text-xs">
     <label class="inline-flex items-center gap-1 text-slate-700 dark:text-slate-200">
-      Type
-      <select id="entities-graph-type" class="rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-xs">
-        <option value="">Any</option><option value="person">Person</option><option value="org">Organization</option><option value="location">Location</option><option value="product">Product</option>
-      </select>
-    </label>
-    <label class="inline-flex items-center gap-1 text-slate-700 dark:text-slate-200">
       Min Score
       <input id="entities-graph-min-score" type="number" min="0" max="1" step="0.05" value="0.2" class="w-16 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-xs">
     </label>
@@ -33,6 +27,7 @@
         <option value="0">0</option><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="99">∞</option>
       </select>
     </label>
+    <span class="text-[10px] text-slate-400 ml-2">Filters: click=whitelist/blacklist, right-click=pre-request ⬆</span>
   </div>
 
   <!-- Filter pills (whitelist / blacklist) populated dynamically -->
@@ -76,6 +71,7 @@
         <input id="entities-graph-relation-type-input" type="text" placeholder="Relation type…" list="entities-graph-relation-type-list" class="w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs">
         <datalist id="entities-graph-relation-type-list"></datalist>
         <button id="entities-graph-relation-save" type="button" class="w-full px-2 py-1 rounded bg-green-600 text-white text-xs font-semibold hover:bg-green-500 disabled:opacity-40" disabled>Save Relation</button>
+        <div class="text-[10px] text-slate-400 italic">After saving, pick another target to continue connecting.</div>
       </div>
 
       <!-- Details panel -->

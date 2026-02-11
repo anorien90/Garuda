@@ -65,6 +65,13 @@ let nodeBlacklist = new Set();
 let edgeWhitelist = new Set();
 let edgeBlacklist = new Set();
 
+// --- Pre-request filter mode: filters marked as pre-request affect the API query ---
+let preRequestNodeFilters = new Set(); // node kinds that are pre-request filters
+
+// --- All known entity/edge kinds from the database schema ---
+let allDbNodeKinds = new Set();
+let allDbEdgeKinds = new Set();
+
 // --- Node selection state ---
 let selectedNodes = new Map(); // id -> node
 let selectionMode = false;
@@ -122,6 +129,14 @@ async function fetchSchema() {
     }
     if (schemaCache.colors?.edges) {
       EDGE_COLORS = { ...EDGE_COLORS, ...schemaCache.colors.edges };
+    }
+
+    // Populate all known entity/edge kinds from the schema
+    if (schemaCache.kinds) {
+      allDbNodeKinds = new Set(Object.keys(schemaCache.kinds));
+    }
+    if (schemaCache.relations) {
+      allDbEdgeKinds = new Set(Object.keys(schemaCache.relations));
     }
     
     return schemaCache;
@@ -193,35 +208,45 @@ function discoverRelationTypes(links) {
 
 /**
  * Render colorized filter pills for node and edge types.
+ * Shows all kinds from the database (not just current result set).
+ * Kinds present in the current data are shown normally; db-only kinds are shown dimmer.
  * Whitelist empty = all allowed. Click cycles: allowed → blacklisted → removed (allowed again).
+ * Right-click toggles pre-request mode (filter affects API query).
  */
 function renderFilterBar() {
   const bar = document.getElementById('entities-graph-filter-bar');
   if (!bar) return;
 
-  const nodeKinds = discoverNodeKinds(currentNodes);
-  const edgeKinds = discoverEdgeKinds(currentLinks);
+  const resultNodeKinds = discoverNodeKinds(currentNodes);
+  const resultEdgeKinds = discoverEdgeKinds(currentLinks);
+
+  // Merge result kinds with all database kinds
+  const allNodeKinds = new Set([...resultNodeKinds, ...allDbNodeKinds]);
+  const allEdgeKinds = new Set([...resultEdgeKinds, ...allDbEdgeKinds]);
 
   let html = '';
 
   // Node kind pills
   html += '<span class="text-[10px] text-slate-400 uppercase mr-1">Nodes:</span>';
-  for (const kind of nodeKinds) {
+  for (const kind of allNodeKinds) {
     const color = COLORS[kind] || COLORS.unknown;
     const inWL = nodeWhitelist.has(kind);
     const inBL = nodeBlacklist.has(kind);
+    const isPre = preRequestNodeFilters.has(kind);
+    const inResult = resultNodeKinds.has(kind);
     const state = inBL ? 'blacklist' : inWL ? 'whitelist' : 'default';
-    html += _filterPill(kind, color, state, 'node');
+    html += _filterPill(kind, color, state, 'node', isPre, inResult);
   }
 
   // Edge kind pills
   html += '<span class="text-[10px] text-slate-400 uppercase ml-3 mr-1">Edges:</span>';
-  for (const kind of edgeKinds) {
+  for (const kind of allEdgeKinds) {
     const color = EDGE_COLORS[kind] || EDGE_COLORS.default;
     const inWL = edgeWhitelist.has(kind);
     const inBL = edgeBlacklist.has(kind);
+    const inResult = resultEdgeKinds.has(kind);
     const state = inBL ? 'blacklist' : inWL ? 'whitelist' : 'default';
-    html += _filterPill(kind, color, state, 'edge');
+    html += _filterPill(kind, color, state, 'edge', false, inResult);
   }
 
   bar.innerHTML = html;
@@ -233,15 +258,16 @@ function renderFilterBar() {
   });
 }
 
-function _filterPill(kind, color, state, group) {
-  const opacity = state === 'blacklist' ? '0.3' : '1';
+function _filterPill(kind, color, state, group, isPre = false, inResult = true) {
+  const opacity = state === 'blacklist' ? '0.3' : inResult ? '1' : '0.55';
   const strike = state === 'blacklist' ? 'line-through' : 'none';
   const border = state === 'whitelist' ? `2px solid ${color}` : state === 'blacklist' ? '2px solid #ef4444' : `1.5px solid ${color}`;
+  const preIcon = isPre ? '<span class="text-[9px]" title="Pre-request filter (affects API query)">⬆</span>' : '';
   return `<button type="button" data-filter-kind="${escapeHtml(kind)}" data-filter-group="${group}" data-filter-state="${state}"
-    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] cursor-pointer transition-all hover:shadow-sm"
+    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] cursor-pointer transition-all hover:shadow-sm${!inResult ? ' italic' : ''}"
     style="border:${border};opacity:${opacity};text-decoration:${strike}"
-    title="Left-click: toggle whitelist/blacklist. Right-click: remove filter.">
-    <span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(kind)}</button>`;
+    title="Left-click: toggle whitelist/blacklist. Right-click: toggle pre/post filter.${!inResult ? ' (not in current results)' : ''}">
+    ${preIcon}<span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(kind)}</button>`;
 }
 
 function _onFilterPillClick(e) {
@@ -271,16 +297,42 @@ function _onFilterPillRightClick(e) {
   e.preventDefault();
   const kind = e.currentTarget.dataset.filterKind;
   const group = e.currentTarget.dataset.filterGroup;
-  const [wl, bl] = group === 'node' ? [nodeWhitelist, nodeBlacklist] : [edgeWhitelist, edgeBlacklist];
-  wl.delete(kind);
-  bl.delete(kind);
+  if (group === 'node') {
+    // Right-click toggles pre-request mode for node filters
+    if (preRequestNodeFilters.has(kind)) {
+      preRequestNodeFilters.delete(kind);
+    } else {
+      preRequestNodeFilters.add(kind);
+    }
+  } else {
+    // For edges, right-click removes filter (reset to default)
+    const [wl, bl] = [edgeWhitelist, edgeBlacklist];
+    wl.delete(kind);
+    bl.delete(kind);
+  }
   _applyAndRerender();
 }
 
+// Track the last pre-request filter state to detect changes
+let _lastPreRequestState = '';
+
 async function _applyAndRerender() {
+  // Check if pre-request filters changed – if so, reload from API
+  const currentPreState = JSON.stringify([...nodeWhitelist].filter(k => preRequestNodeFilters.has(k)).sort());
+  if (currentPreState !== _lastPreRequestState) {
+    _lastPreRequestState = currentPreState;
+    try {
+      const data = await fetchGraph();
+      currentNodes = data.nodes || [];
+      currentLinks = data.links || [];
+    } catch (e) {
+      console.warn('Failed to reload graph with pre-request filters:', e);
+    }
+  }
   applyFilters(currentNodes, currentLinks);
   renderFilterBar();
   renderRelationFilterBar();
+  renderLegend();
   await renderGraph();
 }
 
@@ -1270,7 +1322,9 @@ function shouldAnimateLink(l) {
 async function fetchGraph() {
   const base = val('base-url') || '';
   const q = encodeURIComponent(els.entitiesGraphQuery?.value || '');
-  const type = encodeURIComponent(els.entitiesGraphType?.value || '');
+  // Build pre-request type filter from whitelisted + pre-request node filters
+  const preTypes = _getPreRequestTypes();
+  const type = encodeURIComponent(preTypes.join(','));
   const min = encodeURIComponent(els.entitiesGraphMinScore?.value || 0);
   const limit = encodeURIComponent(els.entitiesGraphLimit?.value || 100);
   const nodeTypes = encodeURIComponent(getNodeTypeFilters().join(','));
@@ -1283,6 +1337,28 @@ async function fetchGraph() {
   });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   return res.json();
+}
+
+/**
+ * Get entity types that should be sent as pre-request filters to the API.
+ * These are node kinds marked as pre-request that are also whitelisted,
+ * or all pre-request kinds when the whitelist is empty (all types allowed).
+ */
+function _getPreRequestTypes() {
+  const types = [];
+  if (nodeWhitelist.size === 0) {
+    // No whitelist = all types allowed; send any pre-request filters directly
+    for (const kind of preRequestNodeFilters) {
+      types.push(kind);
+    }
+  } else {
+    for (const kind of nodeWhitelist) {
+      if (preRequestNodeFilters.has(kind)) {
+        types.push(kind);
+      }
+    }
+  }
+  return types;
 }
 
 function clearGraphCanvas() {
@@ -1482,9 +1558,11 @@ async function _saveRelation() {
   if (!addRelationTargetNode || !relType || addRelationSourceNodes.length === 0) return;
 
   const base = val('base-url') || '';
+  let savedCount = 0;
+  const failedSrcs = [];
   for (const src of addRelationSourceNodes) {
     try {
-      await fetch(`${base}/api/relationships/record`, {
+      const res = await fetch(`${base}/api/relationships/record`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
         body: JSON.stringify({
@@ -1493,12 +1571,44 @@ async function _saveRelation() {
           relation_type: relType,
         }),
       });
-    } catch (e) { console.warn('Save relation failed', e); }
+      if (res.ok) savedCount++;
+      else failedSrcs.push(src.label || src.id);
+    } catch (e) {
+      console.warn('Save relation failed', e);
+      failedSrcs.push(src.label || src.id);
+    }
   }
 
-  // Close panel and reload
-  _closeRelationPanel();
-  loadAndRender();
+  // Keep panel open for next target selection, reset target but keep sources and relation type
+  addRelationTargetNode = null;
+  const targetSearch = document.getElementById('entities-graph-relation-target-search');
+  if (targetSearch) targetSearch.value = '';
+  _clearRelationTargetResults();
+  _updateRelationSaveBtn();
+
+  // Show confirmation using textContent for safe parts and controlled HTML for formatting
+  const srcLabel = document.getElementById('entities-graph-relation-source-label');
+  if (srcLabel) {
+    const fromText = `From: ${addRelationSourceNodes.map(n => escapeHtml(n.label || n.id)).join(', ')}`;
+    const safeSavedCount = parseInt(savedCount, 10) || 0;
+    const statusMsg = failedSrcs.length > 0
+      ? `<span class="text-amber-600 ml-1">✓ ${safeSavedCount} saved, ${failedSrcs.length} failed — select next target or close</span>`
+      : `<span class="text-green-600 ml-1">✓ ${safeSavedCount} saved — select next target or close</span>`;
+    srcLabel.innerHTML = `${fromText} ${statusMsg}`;
+  }
+
+  // Reload graph data in background
+  try {
+    await fetchSchema();
+    const data = await fetchGraph();
+    currentNodes = data.nodes || [];
+    currentLinks = data.links || [];
+    applyFilters(currentNodes, currentLinks);
+    renderFilterBar();
+    renderRelationFilterBar();
+    renderLegend();
+    await renderGraph();
+  } catch (e) { console.warn('Graph reload failed', e); }
 }
 
 function _closeRelationPanel() {
@@ -1667,6 +1777,8 @@ async function loadAndRender(ev) {
     const data = await fetchGraph();
     currentNodes = data.nodes || [];
     currentLinks = data.links || [];
+    // Sync pre-request state tracker
+    _lastPreRequestState = JSON.stringify([...nodeWhitelist].filter(k => preRequestNodeFilters.has(k)).sort());
     applyFilters(currentNodes, currentLinks);
     renderFilterBar();
     renderRelationFilterBar();
@@ -1759,8 +1871,10 @@ export async function initEntitiesGraph() {
       const nodeId = btn.dataset.nodeId || '';
       const nodeType = btn.dataset.nodeType || '';
       if (els.entitiesGraphQuery) els.entitiesGraphQuery.value = nodeId;
-      if (els.entitiesGraphType && nodeType && nodeType !== 'unknown') {
-        els.entitiesGraphType.value = nodeType;
+      // Use the filter pill system: whitelist the node type if known
+      if (nodeType && nodeType !== 'unknown') {
+        nodeWhitelist.clear();
+        nodeWhitelist.add(nodeType);
       }
       loadAndRender();
     });
