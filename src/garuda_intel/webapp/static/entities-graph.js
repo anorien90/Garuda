@@ -269,6 +269,8 @@ function renderFilterBar() {
     const state = inBL ? 'blacklist' : inWL ? 'whitelist' : 'default';
     html += _filterPill(kind, color, state, 'node', isPre, inResult);
   }
+  html += '<input type="text" id="entities-graph-node-filter-search" placeholder="+ add type…" class="ml-1 w-24 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px]" list="entities-graph-node-kind-datalist">';
+  html += '<datalist id="entities-graph-node-kind-datalist">' + [...allDbNodeKinds].map(k => `<option value="${escapeHtml(k)}">`).join('') + '</datalist>';
 
   // Edge kind pills
   html += '<span class="text-[10px] text-slate-400 uppercase ml-3 mr-1">Edges:</span>';
@@ -280,10 +282,8 @@ function renderFilterBar() {
     const state = inBL ? 'blacklist' : inWL ? 'whitelist' : 'default';
     html += _filterPill(kind, color, state, 'edge', false, inResult);
   }
-
-  // Add search inputs
-  html += '<input type="text" id="entities-graph-node-filter-search" placeholder="+ node type" class="ml-2 w-24 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px]">';
-  html += '<input type="text" id="entities-graph-edge-filter-search" placeholder="+ edge type" class="ml-2 w-24 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px]">';
+  html += '<input type="text" id="entities-graph-edge-filter-search" placeholder="+ add type…" class="ml-1 w-24 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px]" list="entities-graph-edge-kind-datalist">';
+  html += '<datalist id="entities-graph-edge-kind-datalist">' + [...allDbEdgeKinds].map(k => `<option value="${escapeHtml(k)}">`).join('') + '</datalist>';
 
   bar.innerHTML = html;
 
@@ -295,12 +295,12 @@ function renderFilterBar() {
     el.addEventListener('click', _onFilterPillDelete);
   });
 
-  // Wire search inputs
-  document.getElementById('entities-graph-node-filter-search')?.addEventListener('input', (e) => {
-    _onFilterSearch(e.target.value, 'node');
+  // Wire search inputs (trigger on Enter key)
+  document.getElementById('entities-graph-node-filter-search')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); _onFilterSearch(e.target.value, 'node'); e.target.value = ''; }
   });
-  document.getElementById('entities-graph-edge-filter-search')?.addEventListener('input', (e) => {
-    _onFilterSearch(e.target.value, 'edge');
+  document.getElementById('entities-graph-edge-filter-search')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); _onFilterSearch(e.target.value, 'edge'); e.target.value = ''; }
   });
 }
 
@@ -315,11 +315,14 @@ function _filterPill(kind, color, state, group, isPre = false, inResult = true) 
     ? '2px solid #ef4444' 
     : `1.5px solid ${color}`;
   const preIcon = isPre ? '<span class="text-[9px]" title="Pre-request filter (affects API query)">⬆</span>' : '';
+  const backdropStyle = isPre 
+    ? `background:${colorToRgba(color, 0.12)};backdrop-filter:blur(2px);box-shadow:0 0 8px ${colorToRgba(color, 0.25)};` 
+    : '';
   return `<span class="inline-flex items-center gap-0.5${!inResult ? ' italic' : ''}" style="opacity:${opacity}">
     <button type="button" data-filter-kind="${escapeHtml(kind)}" data-filter-group="${group}" data-filter-state="${state}"
       class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] cursor-pointer transition-all hover:shadow-sm"
-      style="border:${border};text-decoration:${strike}"
-      title="Click to cycle: default → blacklist → whitelist → pre-request → default.${!inResult ? ' (not in current results)' : ''}">
+      style="border:${border};text-decoration:${strike};${backdropStyle}"
+      title="Click to cycle: default → blacklist → whitelist${group === 'node' ? ' → pre-request' : ''} → default.${!inResult ? ' (not in current results)' : ''}">
       ${preIcon}<span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(kind)}</button>
     <button type="button" data-filter-delete="${escapeHtml(kind)}" data-filter-group="${group}" class="text-[10px] text-slate-400 hover:text-red-500" title="Remove this filter type">✕</button>
   </span>`;
@@ -389,21 +392,16 @@ function _onFilterPillDelete(e) {
 
 function _onFilterSearch(query, group) {
   if (!query.trim()) return;
+  const kind = query.trim().toLowerCase();
   
-  const allKinds = group === 'node' ? allDbNodeKinds : allDbEdgeKinds;
-  
-  // For now, just add the exact query as a new kind if it doesn't exist
-  if (!allKinds.has(query.trim().toLowerCase())) {
-    const kind = query.trim().toLowerCase();
-    if (group === 'node') {
-      allDbNodeKinds.add(kind);
-      nodeWhitelist.add(kind);
-    } else {
-      allDbEdgeKinds.add(kind);
-      edgeWhitelist.add(kind);
-    }
-    _applyAndRerender();
+  if (group === 'node') {
+    allDbNodeKinds.add(kind);
+    nodeWhitelist.add(kind);
+  } else {
+    allDbEdgeKinds.add(kind);
+    edgeWhitelist.add(kind);
   }
+  _applyAndRerender();
 }
 
 // Track the last pre-request filter state to detect changes
@@ -2034,14 +2032,14 @@ async function renderGraph() {
     })
     .nodeVal((n) => Math.max(2, (n.count || 1) * 0.4 + (n.score || 0) * 2));
 
-  // Add custom node canvas rendering for 2D only (for glow effect)
+  // Add custom node canvas rendering for 2D only (for glow effect and strong border)
   if (!use3D) {
     graphInstance.nodeCanvasObject((node, ctx, globalScale) => {
       const isSelected = selectedNodes.has(node.id);
       const nodeColor = isSelected ? '#3b82f6' : getNodeColor(node);
       const size = Math.max(2, (node.count || 1) * 0.4 + (node.score || 0) * 2) * 4;
       
-      // Draw glow for selected nodes
+      // Draw colored backdrop glow for selected nodes
       if (isSelected) {
         ctx.beginPath();
         const gradient = ctx.createRadialGradient(node.x, node.y, size * 0.5, node.x, node.y, size * 2.5);
@@ -2057,6 +2055,13 @@ async function renderGraph() {
       ctx.arc(node.x, node.y, size, 0, 2 * Math.PI);
       ctx.fillStyle = nodeColor;
       ctx.fill();
+      
+      // Draw strong border for selected nodes
+      if (isSelected) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
     });
   }
 
