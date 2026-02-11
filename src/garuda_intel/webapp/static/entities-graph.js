@@ -76,6 +76,7 @@ let allDbEdgeKinds = new Set();
 let selectedNodes = new Map(); // id -> node
 let selectionMode = false;
 let selectionRect = null; // {startX, startY} during drag
+let selectionDepth = 0; // 0 = only clicked node, 1 = direct neighbors, 2 = 2-hop, etc.
 
 // --- Relation filter/highlight ---
 let highlightedRelTypes = new Set();
@@ -249,25 +250,48 @@ function renderFilterBar() {
     html += _filterPill(kind, color, state, 'edge', false, inResult);
   }
 
+  // Add search inputs
+  html += '<input type="text" id="entities-graph-node-filter-search" placeholder="+ node type" class="ml-2 w-24 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px]">';
+  html += '<input type="text" id="entities-graph-edge-filter-search" placeholder="+ edge type" class="ml-2 w-24 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px]">';
+
   bar.innerHTML = html;
 
   // Attach click handlers
   bar.querySelectorAll('[data-filter-kind]').forEach(el => {
     el.addEventListener('click', _onFilterPillClick);
-    el.addEventListener('contextmenu', _onFilterPillRightClick);
+  });
+  bar.querySelectorAll('[data-filter-delete]').forEach(el => {
+    el.addEventListener('click', _onFilterPillDelete);
+  });
+
+  // Wire search inputs
+  document.getElementById('entities-graph-node-filter-search')?.addEventListener('input', (e) => {
+    _onFilterSearch(e.target.value, 'node');
+  });
+  document.getElementById('entities-graph-edge-filter-search')?.addEventListener('input', (e) => {
+    _onFilterSearch(e.target.value, 'edge');
   });
 }
 
 function _filterPill(kind, color, state, group, isPre = false, inResult = true) {
   const opacity = state === 'blacklist' ? '0.3' : inResult ? '1' : '0.55';
   const strike = state === 'blacklist' ? 'line-through' : 'none';
-  const border = state === 'whitelist' ? `2px solid ${color}` : state === 'blacklist' ? '2px solid #ef4444' : `1.5px solid ${color}`;
+  const border = isPre 
+    ? `3px solid ${color}` 
+    : state === 'whitelist' 
+    ? `2px solid ${color}` 
+    : state === 'blacklist' 
+    ? '2px solid #ef4444' 
+    : `1.5px solid ${color}`;
   const preIcon = isPre ? '<span class="text-[9px]" title="Pre-request filter (affects API query)">⬆</span>' : '';
-  return `<button type="button" data-filter-kind="${escapeHtml(kind)}" data-filter-group="${group}" data-filter-state="${state}"
-    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] cursor-pointer transition-all hover:shadow-sm${!inResult ? ' italic' : ''}"
-    style="border:${border};opacity:${opacity};text-decoration:${strike}"
-    title="Left-click: toggle whitelist/blacklist. Right-click: toggle pre/post filter.${!inResult ? ' (not in current results)' : ''}">
-    ${preIcon}<span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(kind)}</button>`;
+  return `<span class="inline-flex items-center gap-0.5${!inResult ? ' italic' : ''}" style="opacity:${opacity}">
+    <button type="button" data-filter-kind="${escapeHtml(kind)}" data-filter-group="${group}" data-filter-state="${state}"
+      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] cursor-pointer transition-all hover:shadow-sm"
+      style="border:${border};text-decoration:${strike}"
+      title="Click to cycle: default → blacklist → whitelist → pre-request → default.${!inResult ? ' (not in current results)' : ''}">
+      ${preIcon}<span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(kind)}</button>
+    <button type="button" data-filter-delete="${escapeHtml(kind)}" data-filter-group="${group}" class="text-[10px] text-slate-400 hover:text-red-500" title="Remove this filter type">✕</button>
+  </span>`;
 }
 
 function _onFilterPillClick(e) {
@@ -277,40 +301,79 @@ function _onFilterPillClick(e) {
   const state = e.currentTarget.dataset.filterState;
   const [wl, bl] = group === 'node' ? [nodeWhitelist, nodeBlacklist] : [edgeWhitelist, edgeBlacklist];
 
-  if (state === 'default') {
-    // Click on default → blacklist (exclude)
-    bl.add(kind);
-    wl.delete(kind);
-  } else if (state === 'blacklist') {
-    // Click on blacklisted → whitelist (include only)
-    bl.delete(kind);
-    wl.add(kind);
+  if (group === 'node') {
+    const isPre = preRequestNodeFilters.has(kind);
+    
+    if (state === 'default' && !isPre) {
+      // default → blacklist
+      bl.add(kind);
+      wl.delete(kind);
+    } else if (state === 'blacklist') {
+      // blacklist → whitelist
+      bl.delete(kind);
+      wl.add(kind);
+    } else if (state === 'whitelist' && !isPre) {
+      // whitelist → pre-request
+      preRequestNodeFilters.add(kind);
+    } else if (isPre) {
+      // pre-request → default
+      preRequestNodeFilters.delete(kind);
+      wl.delete(kind);
+      bl.delete(kind);
+    }
   } else {
-    // Click on whitelisted → default (remove filter)
-    wl.delete(kind);
-    bl.delete(kind);
+    // Edge filters: default → blacklist → whitelist → default
+    if (state === 'default') {
+      bl.add(kind);
+      wl.delete(kind);
+    } else if (state === 'blacklist') {
+      bl.delete(kind);
+      wl.add(kind);
+    } else {
+      wl.delete(kind);
+      bl.delete(kind);
+    }
   }
   _applyAndRerender();
 }
 
-function _onFilterPillRightClick(e) {
+function _onFilterPillDelete(e) {
   e.preventDefault();
-  const kind = e.currentTarget.dataset.filterKind;
+  e.stopPropagation();
+  const kind = e.currentTarget.dataset.filterDelete;
   const group = e.currentTarget.dataset.filterGroup;
+  
   if (group === 'node') {
-    // Right-click toggles pre-request mode for node filters
-    if (preRequestNodeFilters.has(kind)) {
-      preRequestNodeFilters.delete(kind);
-    } else {
-      preRequestNodeFilters.add(kind);
-    }
+    nodeWhitelist.delete(kind);
+    nodeBlacklist.delete(kind);
+    preRequestNodeFilters.delete(kind);
+    allDbNodeKinds.delete(kind);
   } else {
-    // For edges, right-click removes filter (reset to default)
-    const [wl, bl] = [edgeWhitelist, edgeBlacklist];
-    wl.delete(kind);
-    bl.delete(kind);
+    edgeWhitelist.delete(kind);
+    edgeBlacklist.delete(kind);
+    allDbEdgeKinds.delete(kind);
   }
   _applyAndRerender();
+}
+
+function _onFilterSearch(query, group) {
+  if (!query.trim()) return;
+  
+  const allKinds = group === 'node' ? allDbNodeKinds : allDbEdgeKinds;
+  const matches = [...allKinds].filter(k => k.toLowerCase().includes(query.toLowerCase()));
+  
+  // For now, just add the exact query as a new kind if it doesn't exist
+  if (!allKinds.has(query.trim().toLowerCase())) {
+    const kind = query.trim().toLowerCase();
+    if (group === 'node') {
+      allDbNodeKinds.add(kind);
+      nodeWhitelist.add(kind);
+    } else {
+      allDbEdgeKinds.add(kind);
+      edgeWhitelist.add(kind);
+    }
+    _applyAndRerender();
+  }
 }
 
 // Track the last pre-request filter state to detect changes
@@ -349,9 +412,12 @@ function renderRelationFilterBar() {
   let html = '<span class="text-[10px] text-slate-400 uppercase mr-1">Relations:</span>';
   for (const rt of relTypes) {
     const active = highlightedRelTypes.has(rt);
-    html += `<button type="button" data-rel-type="${escapeHtml(rt)}"
-      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] cursor-pointer transition-all border ${active ? 'border-purple-500 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 font-semibold' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}"
-      title="Click to highlight this relation type">${escapeHtml(rt)}</button>`;
+    html += `<span class="inline-flex items-center gap-0.5">
+      <button type="button" data-rel-type="${escapeHtml(rt)}"
+        class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] cursor-pointer transition-all border ${active ? 'border-purple-500 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 font-semibold' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}"
+        title="Click to highlight this relation type">${escapeHtml(rt)}</button>
+      <button type="button" data-rel-delete="${escapeHtml(rt)}" class="text-[10px] text-slate-400 hover:text-red-500" title="Remove this relation type">✕</button>
+    </span>`;
   }
   bar.innerHTML = html;
 
@@ -360,6 +426,17 @@ function renderRelationFilterBar() {
       const rt = e.currentTarget.dataset.relType;
       if (highlightedRelTypes.has(rt)) highlightedRelTypes.delete(rt);
       else highlightedRelTypes.add(rt);
+      renderRelationFilterBar();
+      _updateGraphHighlights();
+    });
+  });
+  
+  bar.querySelectorAll('[data-rel-delete]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const rt = e.currentTarget.dataset.relDelete;
+      allDbEdgeKinds.delete(rt);
+      highlightedRelTypes.delete(rt);
       renderRelationFilterBar();
       _updateGraphHighlights();
     });
@@ -1001,14 +1078,30 @@ function renderNodeModalContent(node, links, detail) {
   // Get kind from meta or node type
   const kind = meta.kind || node.type || 'entity';
   const kindColor = COLORS[kind] || COLORS.entity;
+  
+  // Edit button for entity nodes
+  const editBtn = isEntityNode
+    ? `<button data-edit-entity="${escapeHtml(node.id)}" class="ml-auto px-2 py-1 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[10px] font-semibold hover:bg-blue-200 transition">Edit</button>`
+    : '';
 
   return `
-    <div class="space-y-3">
+    <div class="space-y-3" data-entity-modal="${escapeHtml(node.id)}">
       <div class="flex items-center gap-2">
         <span class="inline-block w-3 h-3 rounded-full" style="background:${kindColor}"></span>
-        <span class="text-xs uppercase text-slate-500">${escapeHtml(kind)}</span>
+        <span class="text-xs uppercase text-slate-500" data-entity-kind-display>${escapeHtml(kind)}</span>
+        ${editBtn}
       </div>
-      <div class="text-lg font-semibold break-all">${escapeHtml(node.label || meta.name || node.id)}</div>
+      <div class="text-lg font-semibold break-all" data-entity-name-display>${escapeHtml(node.label || meta.name || node.id)}</div>
+      <div class="hidden" data-entity-edit-form>
+        <input type="text" data-entity-name-input value="${escapeHtml(node.label || meta.name || node.id)}" class="w-full mb-2 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-sm">
+        <select data-entity-kind-input class="w-full mb-2 rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-sm">
+          ${[...allDbNodeKinds].map(k => `<option value="${escapeHtml(k)}" ${k === kind ? 'selected' : ''}>${escapeHtml(k)}</option>`).join('')}
+        </select>
+        <div class="flex gap-2">
+          <button data-entity-save class="px-3 py-1 rounded bg-green-600 text-white text-xs font-semibold hover:bg-green-500 transition">Save</button>
+          <button data-entity-cancel class="px-3 py-1 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-300 transition">Cancel</button>
+        </div>
+      </div>
       ${meta.last_seen ? `<div class="text-xs text-slate-500">Last seen: ${escapeHtml(meta.last_seen)}</div>` : ''}
       ${node.score ? `<div class="text-xs"><span class="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900 rounded">score: ${escapeHtml(fmt(node.score))}</span></div>` : ''}
       ${node.count ? `<div class="text-xs"><span class="px-1.5 py-0.5 bg-green-100 dark:bg-green-900 rounded">mentions: ${escapeHtml(fmt(node.count))}</span></div>` : ''}
@@ -1054,6 +1147,8 @@ function openNodeModal(node) {
     });
     // Wire delete buttons inside the modal
     _wireDeleteButtons(node);
+    // Wire edit buttons inside the modal
+    _wireEditButtons(node);
   });
 }
 
@@ -1123,6 +1218,80 @@ function _wireDeleteButtons(node) {
     document.querySelectorAll('[data-delete-rel]').forEach(btn => {
       btn.onclick = () => _deleteRelationship(btn.dataset.entityId, btn.dataset.deleteRel, btn);
     });
+  }, 50);
+}
+
+function _wireEditButtons(node) {
+  setTimeout(() => {
+    const editBtn = document.querySelector('[data-edit-entity]');
+    const modal = document.querySelector(`[data-entity-modal="${node.id}"]`);
+    if (!editBtn || !modal) return;
+
+    const nameDisplay = modal.querySelector('[data-entity-name-display]');
+    const kindDisplay = modal.querySelector('[data-entity-kind-display]');
+    const editForm = modal.querySelector('[data-entity-edit-form]');
+    const nameInput = modal.querySelector('[data-entity-name-input]');
+    const kindInput = modal.querySelector('[data-entity-kind-input]');
+    const saveBtn = modal.querySelector('[data-entity-save]');
+    const cancelBtn = modal.querySelector('[data-entity-cancel]');
+
+    if (!nameDisplay || !kindDisplay || !editForm || !nameInput || !kindInput || !saveBtn || !cancelBtn) return;
+
+    editBtn.onclick = () => {
+      nameDisplay.classList.add('hidden');
+      editForm.classList.remove('hidden');
+      editBtn.classList.add('hidden');
+    };
+
+    cancelBtn.onclick = () => {
+      nameDisplay.classList.remove('hidden');
+      editForm.classList.add('hidden');
+      editBtn.classList.remove('hidden');
+      nameInput.value = node.label || node.id;
+      const currentKind = node.kind || node.type || 'entity';
+      kindInput.value = currentKind;
+    };
+
+    saveBtn.onclick = () => {
+      const newName = nameInput.value.trim();
+      const newKind = kindInput.value;
+      
+      if (!newName) {
+        alert('Name cannot be empty');
+        return;
+      }
+
+      // Update local node data
+      const nodeIndex = filteredNodes.findIndex(n => n.id === node.id);
+      if (nodeIndex >= 0) {
+        filteredNodes[nodeIndex].label = newName;
+        filteredNodes[nodeIndex].type = newKind;
+        filteredNodes[nodeIndex].kind = newKind;
+      }
+      const globalNodeIndex = currentNodes.findIndex(n => n.id === node.id);
+      if (globalNodeIndex >= 0) {
+        currentNodes[globalNodeIndex].label = newName;
+        currentNodes[globalNodeIndex].type = newKind;
+        currentNodes[globalNodeIndex].kind = newKind;
+      }
+
+      // Update display
+      nameDisplay.textContent = newName;
+      kindDisplay.textContent = newKind;
+      nameDisplay.classList.remove('hidden');
+      editForm.classList.add('hidden');
+      editBtn.classList.remove('hidden');
+
+      // Update modal title
+      updateModal(activeModalId, { title: newName });
+
+      // Re-render graph with updated data
+      if (graphInstance) {
+        graphInstance.nodeColor(graphInstance.nodeColor());
+        graphInstance.nodeLabel(graphInstance.nodeLabel());
+        graphInstance.graphData({ nodes: filteredNodes, links: filteredLinks });
+      }
+    };
   }, 50);
 }
 
@@ -1417,7 +1586,49 @@ function toggleNodeSelection(node) {
   if (selectedNodes.has(node.id)) {
     selectedNodes.delete(node.id);
   } else {
+    // Add the clicked node
     selectedNodes.set(node.id, node);
+    
+    // If depth > 0, also select connected nodes using BFS
+    if (selectionDepth > 0) {
+      const toVisit = [{ id: node.id, depth: 0 }];
+      const visited = new Set([node.id]);
+      
+      // Build adjacency map from filtered links
+      const adjacency = new Map();
+      for (const link of filteredLinks) {
+        if (!adjacency.has(link.source.id || link.source)) {
+          adjacency.set(link.source.id || link.source, []);
+        }
+        if (!adjacency.has(link.target.id || link.target)) {
+          adjacency.set(link.target.id || link.target, []);
+        }
+        adjacency.get(link.source.id || link.source).push(link.target.id || link.target);
+        adjacency.get(link.target.id || link.target).push(link.source.id || link.source);
+      }
+      
+      // BFS to find all nodes within depth
+      let idx = 0;
+      while (idx < toVisit.length) {
+        const { id, depth } = toVisit[idx++];
+        
+        if (depth < selectionDepth) {
+          const neighbors = adjacency.get(id) || [];
+          for (const neighborId of neighbors) {
+            if (!visited.has(neighborId)) {
+              visited.add(neighborId);
+              toVisit.push({ id: neighborId, depth: depth + 1 });
+              
+              // Find and add the neighbor node
+              const neighborNode = filteredNodes.find(n => n.id === neighborId);
+              if (neighborNode) {
+                selectedNodes.set(neighborId, neighborNode);
+              }
+            }
+          }
+        }
+      }
+    }
   }
   renderSelectionPanel();
   _updateGraphHighlights();
@@ -1507,6 +1718,82 @@ function _populateRelationTypeList() {
   if (!list) return;
   const types = discoverRelationTypes(currentLinks);
   list.innerHTML = [...types].map(t => `<option value="${escapeHtml(t)}">`).join('');
+}
+
+async function linkAllSelected() {
+  if (selectedNodes.size < 2) {
+    alert('Select at least 2 nodes to link');
+    return;
+  }
+  
+  const relationType = prompt('Enter relation type for all links:');
+  if (!relationType || !relationType.trim()) return;
+  
+  const nodes = [...selectedNodes.values()];
+  const base = val('base-url') || '';
+  let successCount = 0;
+  
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      try {
+        const res = await fetch(`${base}/api/relationships/record`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-API-Key': els.apiKey?.value || '' 
+          },
+          body: JSON.stringify({
+            source_id: nodes[i].id,
+            target_id: nodes[j].id,
+            relation_type: relationType.trim()
+          })
+        });
+        if (res.ok) successCount++;
+      } catch (e) {
+        console.warn('Link failed:', e);
+      }
+    }
+  }
+  
+  alert(`Created ${successCount} links`);
+  clearSelection();
+  loadAndRender();
+}
+
+async function mergeSelectedNodes() {
+  if (selectedNodes.size < 2) {
+    alert('Select at least 2 nodes to merge');
+    return;
+  }
+  
+  const nodes = [...selectedNodes.values()];
+  const targetNode = nodes[0];
+  
+  if (!confirm(`Merge ${nodes.length} nodes into "${targetNode.label || targetNode.id}"?\nThis will keep the first selected node and merge all others into it.`)) {
+    return;
+  }
+  
+  const base = val('base-url') || '';
+  let successCount = 0;
+  
+  for (let i = 1; i < nodes.length; i++) {
+    try {
+      const res = await fetch(`${base}/api/entities/${encodeURIComponent(nodes[i].id)}/merge/${encodeURIComponent(targetNode.id)}`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-API-Key': els.apiKey?.value || '' 
+        }
+      });
+      if (res.ok) successCount++;
+    } catch (e) {
+      console.warn('Merge failed:', e);
+    }
+  }
+  
+  alert(`Merged ${successCount} node(s) into "${targetNode.label || targetNode.id}"`);
+  clearSelection();
+  loadAndRender();
 }
 
 function _clearRelationTargetResults() {
@@ -1714,7 +2001,35 @@ async function renderGraph() {
       if (selectedNodes.has(n.id)) return '#3b82f6';
       return getNodeColor(n);
     })
-    .nodeVal((n) => Math.max(2, (n.count || 1) * 0.4 + (n.score || 0) * 2))
+    .nodeVal((n) => Math.max(2, (n.count || 1) * 0.4 + (n.score || 0) * 2));
+
+  // Add custom node canvas rendering for 2D only (for glow effect)
+  if (!use3D) {
+    graphInstance.nodeCanvasObject((node, ctx, globalScale) => {
+      const isSelected = selectedNodes.has(node.id);
+      const nodeColor = isSelected ? '#3b82f6' : getNodeColor(node);
+      const size = Math.max(2, (node.count || 1) * 0.4 + (node.score || 0) * 2) * 4;
+      
+      // Draw glow for selected nodes
+      if (isSelected) {
+        ctx.beginPath();
+        const gradient = ctx.createRadialGradient(node.x, node.y, size * 0.5, node.x, node.y, size * 2.5);
+        gradient.addColorStop(0, nodeColor.replace(')', ', 0.4)').replace('rgb', 'rgba'));
+        gradient.addColorStop(1, nodeColor.replace(')', ', 0)').replace('rgb', 'rgba'));
+        ctx.fillStyle = gradient;
+        ctx.arc(node.x, node.y, size * 2.5, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      
+      // Draw the node itself
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, size, 0, 2 * Math.PI);
+      ctx.fillStyle = nodeColor;
+      ctx.fill();
+    });
+  }
+
+  graphInstance
     .linkColor((l) => {
       if (highlightedRelTypes.size > 0) {
         const rt = l.meta?.relation_type || l.kind || '';
@@ -1846,6 +2161,13 @@ export async function initEntitiesGraph() {
   document.getElementById('entities-graph-clear-selection')?.addEventListener('click', clearSelection);
   document.getElementById('entities-graph-delete-selected')?.addEventListener('click', deleteSelectedNodes);
   document.getElementById('entities-graph-connect-selected')?.addEventListener('click', openConnectPanel);
+  document.getElementById('entities-graph-link-all-selected')?.addEventListener('click', linkAllSelected);
+  document.getElementById('entities-graph-merge-selected')?.addEventListener('click', mergeSelectedNodes);
+
+  // Selection depth selector
+  document.getElementById('entities-graph-selection-depth')?.addEventListener('change', (e) => {
+    selectionDepth = parseInt(e.target.value) || 0;
+  });
 
   // Add relation panel
   document.getElementById('entities-graph-cancel-relation')?.addEventListener('click', _closeRelationPanel);
