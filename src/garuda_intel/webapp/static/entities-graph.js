@@ -377,6 +377,9 @@ function renderDetails(node, links) {
     })
     .filter(Boolean);
 
+  // Check if it's a deletable entity (not a page/image/link/seed node)
+  const isEntity = node.type && !['page', 'image', 'link', 'seed'].includes(node.type);
+
   els.entitiesGraphDetails.innerHTML = `
     <div class="flex items-center justify-between">
       <div>
@@ -404,6 +407,7 @@ function renderDetails(node, links) {
         >
           Expand
         </button>
+        ${isEntity ? `<button data-delete-entity="${escapeHtml(node.id)}" class="inline-flex items-center gap-1 rounded-md border border-red-200 dark:border-red-800 px-2 py-1 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition" title="Delete entity">🗑</button>` : ''}
       </div>
     </div>
 
@@ -431,6 +435,9 @@ function renderDetails(node, links) {
       }
     </ul>
   `;
+
+  // Wire delete button in the side panel
+  _wireDeleteButtons(node);
 }
 
 async function fetchNodeDetail(node) {
@@ -725,11 +732,22 @@ function renderNodeModalContent(node, links, detail) {
               : `<b class="text-blue-600">${escapeHtml(r.source_name || 'Unknown')}</b> <span class="text-slate-400">(${escapeHtml(r.source_kind || 'entity')})</span>`;
             const relType = escapeHtml(formatRelationType(r.type || 'related'));
             const confidence = r.confidence ? ` <span class="text-slate-400">confidence: ${r.confidence}</span>` : '';
-            return `<li class="py-1 border-b border-slate-100 dark:border-slate-800 last:border-0">${direction} <span class="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[10px]">${relType}</span> ${other}${confidence}</li>`;
+            const deleteRelBtn = r.id
+              ? `<button data-delete-rel="${escapeHtml(r.id)}" data-entity-id="${escapeHtml(node.id)}" class="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-800 transition" title="Delete relationship">✕</button>`
+              : '';
+            return `<li class="py-1 border-b border-slate-100 dark:border-slate-800 last:border-0 flex items-center gap-1">${direction} <span class="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[10px]">${relType}</span> ${other}${confidence}${deleteRelBtn}</li>`;
           }).join('')}
         </ul>
       </div>
     `
+    : '';
+
+  // Delete entity button (only for entities with a valid UUID id)
+  const isEntityNode = detail?.type && !['page', 'image', 'intel', 'seed', 'media', 'link'].includes(detail.type);
+  const deleteEntityBtn = isEntityNode && node.id
+    ? `<div class="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800">
+        <button data-delete-entity="${escapeHtml(node.id)}" class="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-500 transition">Delete Entity</button>
+       </div>`
     : '';
 
   // Get kind from meta or node type
@@ -755,6 +773,7 @@ function renderNodeModalContent(node, links, detail) {
         <div class="text-xs uppercase text-slate-500 mb-1">Graph Connections (${connections.length})</div>
         ${connList}
       </div>
+      ${deleteEntityBtn}
     </div>
   `;
 }
@@ -785,7 +804,78 @@ function openNodeModal(node) {
       title: node.label || node.id || 'Node detail',
       content
     });
+    // Wire delete buttons inside the modal
+    _wireDeleteButtons(node);
   });
+}
+
+// ------------------------------------------------------------------
+// Delete helpers – called from modal buttons
+// ------------------------------------------------------------------
+async function _deleteEntity(entityId) {
+  if (!confirm('Delete this entity and all its relationships? This cannot be undone.')) return;
+  try {
+    const base = val('base-url') || '';
+    const res = await fetch(`${base}/api/entities/${encodeURIComponent(entityId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      alert('Delete failed: ' + err);
+      return;
+    }
+    // Close modal and reload graph
+    if (activeModalId) {
+      const overlay = document.getElementById(activeModalId);
+      if (overlay) overlay.remove();
+      activeModalNodeId = null;
+      activeModalId = null;
+    }
+    // Reload graph if button exists
+    const loadBtn = document.getElementById('entities-graph-load');
+    if (loadBtn) loadBtn.click();
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+async function _deleteRelationship(entityId, relId, buttonEl) {
+  if (!confirm('Delete this relationship?')) return;
+  try {
+    const base = val('base-url') || '';
+    const res = await fetch(
+      `${base}/api/entities/${encodeURIComponent(entityId)}/relationships/${encodeURIComponent(relId)}`,
+      {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+      }
+    );
+    if (!res.ok) {
+      const err = await res.text();
+      alert('Delete failed: ' + err);
+      return;
+    }
+    // Remove the parent <li> from the DOM
+    const li = buttonEl.closest('li');
+    if (li) li.remove();
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+function _wireDeleteButtons(node) {
+  // Short delay to ensure the modal DOM has been rendered before binding handlers
+  setTimeout(() => {
+    // Delete entity buttons
+    document.querySelectorAll('[data-delete-entity]').forEach(btn => {
+      btn.onclick = () => _deleteEntity(btn.dataset.deleteEntity);
+    });
+    // Delete relationship buttons
+    document.querySelectorAll('[data-delete-rel]').forEach(btn => {
+      btn.onclick = () => _deleteRelationship(btn.dataset.entityId, btn.dataset.deleteRel, btn);
+    });
+  }, 50);
 }
 
 function wireHoverModal(graph) {

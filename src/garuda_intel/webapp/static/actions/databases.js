@@ -125,6 +125,8 @@ async function switchDatabase(name) {
       body: JSON.stringify({ name }),
     });
     loadDatabases();
+    // Notify other panels that the database changed
+    window.dispatchEvent(new CustomEvent('garuda:db-switched', { detail: { name } }));
   } catch (err) {
     alert('Switch failed: ' + err.message);
   }

@@ -22,13 +22,17 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
     
     Args:
         api_key_required: Auth decorator
-        store: SQLAlchemy store instance
+        store: SQLAlchemy store instance (may be a proxy)
         semantic_engine: Optional semantic engine for embedding-based search
     """
     
-    # Initialize engines
-    graph_engine = GraphSearchEngine(store.Session, semantic_engine, logger)
-    deduplicator = SemanticEntityDeduplicator(store.Session, semantic_engine, logger)
+    def _graph_engine():
+        """Create a GraphSearchEngine bound to the *current* store.Session."""
+        return GraphSearchEngine(store.Session, semantic_engine, logger)
+
+    def _deduplicator():
+        """Create a SemanticEntityDeduplicator bound to the *current* store.Session."""
+        return SemanticEntityDeduplicator(store.Session, semantic_engine, logger)
     
     @bp_graph.get("/search")
     @api_key_required
@@ -61,7 +65,7 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
         })
         
         try:
-            results = graph_engine.search_entities(
+            results = _graph_engine().search_entities(
                 query=query,
                 kind=kind,
                 semantic_threshold=threshold,
@@ -112,7 +116,7 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
         })
         
         try:
-            result = graph_engine.traverse_graph(
+            result = _graph_engine().traverse_graph(
                 entity_ids=entity_ids,
                 max_depth=max_depth,
                 top_n_per_depth=top_n,
@@ -160,7 +164,7 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
         })
         
         try:
-            path = graph_engine.find_path(
+            path = _graph_engine().find_path(
                 source_id=source_id,
                 target_id=target_id,
                 max_depth=max_depth,
@@ -216,7 +220,7 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
         })
         
         try:
-            results = deduplicator.find_semantic_duplicates(
+            results = _deduplicator().find_semantic_duplicates(
                 name=name,
                 kind=kind,
                 threshold=threshold,
@@ -263,7 +267,7 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
         })
         
         try:
-            report = deduplicator.deduplicate_entities(
+            report = _deduplicator().deduplicate_entities(
                 dry_run=not merge,
                 threshold=threshold,
                 kind=kind,
@@ -314,7 +318,7 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
         })
         
         try:
-            success = deduplicator.merge_entities(source_id, target_id)
+            success = _deduplicator().merge_entities(source_id, target_id)
             
             if success:
                 emit_event("merge_entities", "success")
