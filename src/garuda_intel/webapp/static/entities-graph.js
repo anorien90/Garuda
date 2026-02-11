@@ -72,6 +72,10 @@ let preRequestNodeFilters = new Set(); // node kinds that are pre-request filter
 let allDbNodeKinds = new Set();
 let allDbEdgeKinds = new Set();
 
+// --- Visible (added) filter sets – user adds/removes these ---
+let visibleNodeKinds = new Set(); // node kinds added by user to the filter bar
+let visibleEdgeKinds = new Set(); // edge kinds added by user to the filter bar
+
 // --- Node selection state ---
 let selectedNodes = new Map(); // id -> node
 let selectionMode = false;
@@ -207,67 +211,54 @@ function discoverRelationTypes(links) {
 }
 
 /**
- * Render colorized filter pills for node and edge types.
- * Shows all kinds from the database (not just current result set).
- * Kinds present in the current data are shown normally; db-only kinds are shown dimmer.
- * Whitelist empty = all allowed. Click cycles: allowed → blacklisted → removed (allowed again).
- * Right-click toggles pre-request mode (filter affects API query).
+ * Render colorized filter pills for node kinds.
+ * Only user-added kinds are shown as pills. Empty = all allowed (no filtering).
+ * Click cycles: active (blur glow) → blacklisted (strikethrough) → removed.
+ * No right-click pre-query mechanic.
  */
 function renderFilterBar() {
-  const bar = document.getElementById('entities-graph-filter-bar');
-  if (!bar) return;
+  const pillsEl = document.getElementById('entities-graph-node-pills');
+  if (!pillsEl) return;
 
   const resultNodeKinds = discoverNodeKinds(currentNodes);
-  const resultEdgeKinds = discoverEdgeKinds(currentLinks);
-
-  // Merge result kinds with all database kinds
-  const allNodeKinds = new Set([...resultNodeKinds, ...allDbNodeKinds]);
-  const allEdgeKinds = new Set([...resultEdgeKinds, ...allDbEdgeKinds]);
 
   let html = '';
-
-  // Node kind pills
-  html += '<span class="text-[10px] text-slate-400 uppercase mr-1">Nodes:</span>';
-  for (const kind of allNodeKinds) {
+  for (const kind of visibleNodeKinds) {
     const color = COLORS[kind] || COLORS.unknown;
-    const inWL = nodeWhitelist.has(kind);
     const inBL = nodeBlacklist.has(kind);
-    const isPre = preRequestNodeFilters.has(kind);
+    const inWL = nodeWhitelist.has(kind);
     const inResult = resultNodeKinds.has(kind);
-    const state = inBL ? 'blacklist' : inWL ? 'whitelist' : 'default';
-    html += _filterPill(kind, color, state, 'node', isPre, inResult);
+    const isActive = inWL && !inBL;
+    html += _filterPill(kind, color, inBL ? 'blacklist' : inWL ? 'whitelist' : 'default', 'node', false, inResult, isActive);
   }
+  pillsEl.innerHTML = html;
 
-  // Edge kind pills
-  html += '<span class="text-[10px] text-slate-400 uppercase ml-3 mr-1">Edges:</span>';
-  for (const kind of allEdgeKinds) {
-    const color = EDGE_COLORS[kind] || EDGE_COLORS.default;
-    const inWL = edgeWhitelist.has(kind);
-    const inBL = edgeBlacklist.has(kind);
-    const inResult = resultEdgeKinds.has(kind);
-    const state = inBL ? 'blacklist' : inWL ? 'whitelist' : 'default';
-    html += _filterPill(kind, color, state, 'edge', false, inResult);
-  }
-
-  bar.innerHTML = html;
-
-  // Attach click handlers
-  bar.querySelectorAll('[data-filter-kind]').forEach(el => {
+  // Attach click + remove handlers
+  pillsEl.querySelectorAll('[data-filter-kind]').forEach(el => {
     el.addEventListener('click', _onFilterPillClick);
-    el.addEventListener('contextmenu', _onFilterPillRightClick);
   });
+  pillsEl.querySelectorAll('[data-remove-filter]').forEach(el => {
+    el.addEventListener('click', _onRemoveFilterPill);
+  });
+
+  // Wire up the search input for adding node kinds
+  _wireNodeFilterSearch();
 }
 
-function _filterPill(kind, color, state, group, isPre = false, inResult = true) {
+function _filterPill(kind, color, state, group, isPre = false, inResult = true, isActive = false) {
   const opacity = state === 'blacklist' ? '0.3' : inResult ? '1' : '0.55';
   const strike = state === 'blacklist' ? 'line-through' : 'none';
-  const border = state === 'whitelist' ? `2px solid ${color}` : state === 'blacklist' ? '2px solid #ef4444' : `1.5px solid ${color}`;
-  const preIcon = isPre ? '<span class="text-[9px]" title="Pre-request filter (affects API query)">⬆</span>' : '';
-  return `<button type="button" data-filter-kind="${escapeHtml(kind)}" data-filter-group="${group}" data-filter-state="${state}"
-    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] cursor-pointer transition-all hover:shadow-sm${!inResult ? ' italic' : ''}"
-    style="border:${border};opacity:${opacity};text-decoration:${strike}"
-    title="Left-click: toggle whitelist/blacklist. Right-click: toggle pre/post filter.${!inResult ? ' (not in current results)' : ''}">
-    ${preIcon}<span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(kind)}</button>`;
+  const border = `1.5px solid ${color}`;
+  // Active filters get a subtle blur/glow effect in the related color
+  const blurStyle = isActive ? `box-shadow:0 0 6px 2px ${color}44;` : '';
+  return `<span class="inline-flex items-center gap-0.5">
+    <button type="button" data-filter-kind="${escapeHtml(kind)}" data-filter-group="${group}" data-filter-state="${state}"
+      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] cursor-pointer transition-all hover:shadow-sm${!inResult ? ' italic' : ''}"
+      style="border:${border};opacity:${opacity};text-decoration:${strike};${blurStyle}"
+      title="Click to toggle filter">
+      <span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(kind)}</button>
+    <button type="button" data-remove-filter="${escapeHtml(kind)}" data-remove-group="${group}" class="text-[9px] text-slate-400 hover:text-red-500 cursor-pointer" title="Remove filter">✕</button>
+  </span>`;
 }
 
 function _onFilterPillClick(e) {
@@ -278,39 +269,73 @@ function _onFilterPillClick(e) {
   const [wl, bl] = group === 'node' ? [nodeWhitelist, nodeBlacklist] : [edgeWhitelist, edgeBlacklist];
 
   if (state === 'default') {
-    // Click on default → blacklist (exclude)
-    bl.add(kind);
-    wl.delete(kind);
-  } else if (state === 'blacklist') {
-    // Click on blacklisted → whitelist (include only)
-    bl.delete(kind);
+    // Click on default → whitelist (include only, active with blur)
     wl.add(kind);
+    bl.delete(kind);
+  } else if (state === 'whitelist') {
+    // Click on whitelisted → blacklist (exclude)
+    wl.delete(kind);
+    bl.add(kind);
   } else {
-    // Click on whitelisted → default (remove filter)
+    // Click on blacklisted → default (remove filter)
     wl.delete(kind);
     bl.delete(kind);
   }
   _applyAndRerender();
 }
 
-function _onFilterPillRightClick(e) {
+function _onRemoveFilterPill(e) {
   e.preventDefault();
-  const kind = e.currentTarget.dataset.filterKind;
-  const group = e.currentTarget.dataset.filterGroup;
+  e.stopPropagation();
+  const kind = e.currentTarget.dataset.removeFilter;
+  const group = e.currentTarget.dataset.removeGroup;
   if (group === 'node') {
-    // Right-click toggles pre-request mode for node filters
-    if (preRequestNodeFilters.has(kind)) {
-      preRequestNodeFilters.delete(kind);
-    } else {
-      preRequestNodeFilters.add(kind);
-    }
+    visibleNodeKinds.delete(kind);
+    nodeWhitelist.delete(kind);
+    nodeBlacklist.delete(kind);
+    preRequestNodeFilters.delete(kind);
   } else {
-    // For edges, right-click removes filter (reset to default)
-    const [wl, bl] = [edgeWhitelist, edgeBlacklist];
-    wl.delete(kind);
-    bl.delete(kind);
+    visibleEdgeKinds.delete(kind);
+    edgeWhitelist.delete(kind);
+    edgeBlacklist.delete(kind);
   }
   _applyAndRerender();
+}
+
+function _wireNodeFilterSearch() {
+  const input = document.getElementById('entities-graph-node-filter-search');
+  if (!input || input._wired) return;
+  input._wired = true;
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const val = input.value.trim().toLowerCase();
+      if (val) {
+        visibleNodeKinds.add(val);
+        nodeWhitelist.add(val);
+        input.value = '';
+        _applyAndRerender();
+      }
+    }
+  });
+}
+
+function _wireRelFilterSearch() {
+  const input = document.getElementById('entities-graph-rel-filter-search');
+  if (!input || input._wired) return;
+  input._wired = true;
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const val = input.value.trim().toLowerCase();
+      if (val) {
+        visibleEdgeKinds.add(val);
+        highlightedRelTypes.add(val);
+        input.value = '';
+        _applyAndRerender();
+      }
+    }
+  });
 }
 
 // Track the last pre-request filter state to detect changes
@@ -337,25 +362,33 @@ async function _applyAndRerender() {
 }
 
 /**
- * Render relation type filter/highlight bar
+ * Render relation type filter/highlight bar (searchable, add/delete).
+ * No filters = show all relations. Active filters get blur glow.
  */
 function renderRelationFilterBar() {
-  const bar = document.getElementById('entities-graph-relation-filter-bar');
-  if (!bar) return;
+  const pillsEl = document.getElementById('entities-graph-rel-pills');
+  if (!pillsEl) return;
+
+  if (visibleEdgeKinds.size === 0) { pillsEl.innerHTML = ''; _wireRelFilterSearch(); return; }
 
   const relTypes = discoverRelationTypes(filteredLinks);
-  if (relTypes.size === 0) { bar.innerHTML = ''; return; }
-
-  let html = '<span class="text-[10px] text-slate-400 uppercase mr-1">Relations:</span>';
-  for (const rt of relTypes) {
+  let html = '';
+  for (const rt of visibleEdgeKinds) {
     const active = highlightedRelTypes.has(rt);
-    html += `<button type="button" data-rel-type="${escapeHtml(rt)}"
-      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] cursor-pointer transition-all border ${active ? 'border-purple-500 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 font-semibold' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}"
-      title="Click to highlight this relation type">${escapeHtml(rt)}</button>`;
+    const inResult = relTypes.has(rt);
+    const color = EDGE_COLORS[rt] || EDGE_COLORS.default || 'rgba(139,92,246,0.85)';
+    const blurStyle = active ? `box-shadow:0 0 6px 2px rgba(139,92,246,0.4);` : '';
+    html += `<span class="inline-flex items-center gap-0.5">
+      <button type="button" data-rel-type="${escapeHtml(rt)}"
+        class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] cursor-pointer transition-all border ${active ? 'border-purple-500 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 font-semibold' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}${!inResult ? ' italic opacity-50' : ''}"
+        style="${blurStyle}"
+        title="Click to highlight">${escapeHtml(rt)}</button>
+      <button type="button" data-remove-rel="${escapeHtml(rt)}" class="text-[9px] text-slate-400 hover:text-red-500 cursor-pointer" title="Remove">✕</button>
+    </span>`;
   }
-  bar.innerHTML = html;
+  pillsEl.innerHTML = html;
 
-  bar.querySelectorAll('[data-rel-type]').forEach(el => {
+  pillsEl.querySelectorAll('[data-rel-type]').forEach(el => {
     el.addEventListener('click', (e) => {
       const rt = e.currentTarget.dataset.relType;
       if (highlightedRelTypes.has(rt)) highlightedRelTypes.delete(rt);
@@ -364,6 +397,18 @@ function renderRelationFilterBar() {
       _updateGraphHighlights();
     });
   });
+  pillsEl.querySelectorAll('[data-remove-rel]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const rt = e.currentTarget.dataset.removeRel;
+      visibleEdgeKinds.delete(rt);
+      highlightedRelTypes.delete(rt);
+      renderRelationFilterBar();
+      _updateGraphHighlights();
+    });
+  });
+
+  _wireRelFilterSearch();
 }
 
 function _updateGraphHighlights() {
@@ -967,12 +1012,13 @@ function renderNodeModalContent(node, links, detail) {
     `;
   }
 
-  // Render relationships from API if available
+  // Render relationships from API if available, with search bar
   const relationshipsSection = detail?.relationships && detail.relationships.length > 0
     ? `
       <div>
         <div class="text-xs uppercase text-slate-500 mb-1">Relationships (${detail.relationships.length})</div>
-        <ul class="text-xs space-y-1">
+        <input type="text" data-rel-search placeholder="Filter relations…" class="w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs mb-1">
+        <ul class="text-xs space-y-1" data-rel-list>
           ${detail.relationships.map(r => {
             const direction = r.direction === 'outgoing' ? '→' : '←';
             const other = r.direction === 'outgoing' 
@@ -983,7 +1029,11 @@ function renderNodeModalContent(node, links, detail) {
             const deleteRelBtn = r.id
               ? `<button data-delete-rel="${escapeHtml(r.id)}" data-entity-id="${escapeHtml(node.id)}" class="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-800 transition" title="Delete relationship">✕</button>`
               : '';
-            return `<li class="py-1 border-b border-slate-100 dark:border-slate-800 last:border-0 flex items-center gap-1">${direction} <span class="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[10px]">${relType}</span> ${other}${confidence}${deleteRelBtn}</li>`;
+            // Data attributes for searchable filtering
+            const searchData = escapeHtml(
+              (r.target_name || r.source_name || '') + ' ' + (r.type || '') + ' ' + (r.target_kind || r.source_kind || '')
+            ).toLowerCase();
+            return `<li class="py-1 border-b border-slate-100 dark:border-slate-800 last:border-0 flex items-center gap-1" data-rel-item data-search-text="${searchData}">${direction} <span class="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[10px]">${relType}</span> ${other}${confidence}${deleteRelBtn}</li>`;
           }).join('')}
         </ul>
       </div>
@@ -998,15 +1048,23 @@ function renderNodeModalContent(node, links, detail) {
        </div>`
     : '';
 
+  // Edit button (only for entity nodes)
+  const editBtn = isEntityNode && node.id
+    ? `<button data-edit-entity="${escapeHtml(node.id)}" class="px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-100 hover:border-brand-400 transition" title="Edit entity">✏ Edit</button>`
+    : '';
+
   // Get kind from meta or node type
   const kind = meta.kind || node.type || 'entity';
   const kindColor = COLORS[kind] || COLORS.entity;
 
   return `
     <div class="space-y-3">
-      <div class="flex items-center gap-2">
-        <span class="inline-block w-3 h-3 rounded-full" style="background:${kindColor}"></span>
-        <span class="text-xs uppercase text-slate-500">${escapeHtml(kind)}</span>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="inline-block w-3 h-3 rounded-full" style="background:${kindColor}"></span>
+          <span class="text-xs uppercase text-slate-500">${escapeHtml(kind)}</span>
+        </div>
+        ${editBtn}
       </div>
       <div class="text-lg font-semibold break-all">${escapeHtml(node.label || meta.name || node.id)}</div>
       ${meta.last_seen ? `<div class="text-xs text-slate-500">Last seen: ${escapeHtml(meta.last_seen)}</div>` : ''}
@@ -1019,6 +1077,7 @@ function renderNodeModalContent(node, links, detail) {
       ${relationshipsSection}
       <div>
         <div class="text-xs uppercase text-slate-500 mb-1">Graph Connections (${connections.length})</div>
+        <input type="text" data-conn-search placeholder="Filter connections…" class="w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs mb-1">
         ${connList}
       </div>
       ${deleteEntityBtn}
@@ -1054,6 +1113,10 @@ function openNodeModal(node) {
     });
     // Wire delete buttons inside the modal
     _wireDeleteButtons(node);
+    // Wire edit button
+    _wireEditButton(node, detail || {});
+    // Wire relation search
+    _wireRelationSearch();
   });
 }
 
@@ -1124,6 +1187,138 @@ function _wireDeleteButtons(node) {
       btn.onclick = () => _deleteRelationship(btn.dataset.entityId, btn.dataset.deleteRel, btn);
     });
   }, 50);
+}
+
+// ------------------------------------------------------------------
+// Edit entity – inline edit form in modal
+// ------------------------------------------------------------------
+function _wireEditButton(node, detail) {
+  setTimeout(() => {
+    document.querySelectorAll('[data-edit-entity]').forEach(btn => {
+      btn.onclick = () => _showEditForm(node, detail);
+    });
+  }, 60);
+}
+
+function _showEditForm(node, detail) {
+  if (!activeModalId) return;
+  const meta = detail?.meta || node.meta || {};
+  const kind = meta.kind || node.kind || node.type || 'entity';
+  const name = node.label || meta.name || node.id;
+  const description = meta.description || '';
+
+  const formHtml = `
+    <div class="space-y-3" id="entity-edit-form">
+      <div class="text-xs uppercase text-slate-500 mb-1">Edit Entity</div>
+      <label class="block text-xs font-semibold text-slate-700 dark:text-slate-200">Name
+        <input type="text" data-edit-field="name" value="${escapeHtml(name)}" class="mt-0.5 w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-sm">
+      </label>
+      <label class="block text-xs font-semibold text-slate-700 dark:text-slate-200">Kind
+        <input type="text" data-edit-field="kind" value="${escapeHtml(kind)}" class="mt-0.5 w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-sm">
+      </label>
+      <label class="block text-xs font-semibold text-slate-700 dark:text-slate-200">Description
+        <textarea data-edit-field="description" rows="3" class="mt-0.5 w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-sm">${escapeHtml(description)}</textarea>
+      </label>
+      <div class="flex gap-2 pt-2">
+        <button data-save-edit="${escapeHtml(node.id)}" class="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs font-semibold hover:bg-brand-500 transition">Save</button>
+        <button data-cancel-edit class="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Cancel</button>
+      </div>
+      <div data-edit-status class="text-xs"></div>
+    </div>
+  `;
+  updateModal(activeModalId, { content: formHtml });
+  setTimeout(() => {
+    document.querySelectorAll('[data-save-edit]').forEach(btn => {
+      btn.onclick = () => _saveEntityEdit(node, detail);
+    });
+    document.querySelectorAll('[data-cancel-edit]').forEach(btn => {
+      btn.onclick = () => {
+        // Re-render the original modal content
+        const content = renderNodeModalContent(node, filteredLinks, detail || {});
+        updateModal(activeModalId, { title: node.label || node.id || 'Node detail', content });
+        _wireDeleteButtons(node);
+        _wireEditButton(node, detail);
+        _wireRelationSearch();
+      };
+    });
+  }, 50);
+}
+
+async function _saveEntityEdit(node, detail) {
+  const form = document.getElementById('entity-edit-form');
+  if (!form) return;
+  const nameInput = form.querySelector('[data-edit-field="name"]');
+  const kindInput = form.querySelector('[data-edit-field="kind"]');
+  const descInput = form.querySelector('[data-edit-field="description"]');
+  const statusEl = form.querySelector('[data-edit-status]');
+
+  const body = {};
+  if (nameInput?.value?.trim()) body.name = nameInput.value.trim();
+  if (kindInput?.value?.trim()) body.kind = kindInput.value.trim();
+  // Store description in metadata
+  const newDesc = descInput?.value?.trim() || '';
+  const currentMeta = detail?.meta || node.meta || {};
+  if (newDesc !== (currentMeta.description || '')) {
+    body.metadata = { ...currentMeta, description: newDesc };
+  }
+
+  if (Object.keys(body).length === 0) {
+    if (statusEl) { statusEl.textContent = 'No changes.'; statusEl.className = 'text-xs text-slate-500'; }
+    return;
+  }
+
+  try {
+    const base = val('base-url') || '';
+    const res = await fetch(`${base}/api/entities/${encodeURIComponent(node.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      if (statusEl) { statusEl.textContent = 'Save failed: ' + err; statusEl.className = 'text-xs text-red-500'; }
+      return;
+    }
+    if (statusEl) { statusEl.textContent = '✓ Saved'; statusEl.className = 'text-xs text-green-600'; }
+    // Update local node data
+    if (body.name) node.label = body.name;
+    if (body.kind) { node.kind = body.kind; node.type = body.kind; }
+    // Refresh graph after a short delay
+    setTimeout(() => loadAndRender(), 500);
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'text-xs text-red-500'; }
+  }
+}
+
+// ------------------------------------------------------------------
+// Relation search in detail modal
+// ------------------------------------------------------------------
+function _wireRelationSearch() {
+  setTimeout(() => {
+    // Relationships search
+    document.querySelectorAll('[data-rel-search]').forEach(input => {
+      input.addEventListener('input', () => {
+        const q = input.value.toLowerCase();
+        const list = input.closest('div')?.querySelector('[data-rel-list]');
+        if (!list) return;
+        list.querySelectorAll('[data-rel-item]').forEach(li => {
+          const text = li.dataset.searchText || li.textContent.toLowerCase();
+          li.style.display = text.includes(q) ? '' : 'none';
+        });
+      });
+    });
+    // Connections search
+    document.querySelectorAll('[data-conn-search]').forEach(input => {
+      input.addEventListener('input', () => {
+        const q = input.value.toLowerCase();
+        const list = input.parentElement?.querySelector('ul');
+        if (!list) return;
+        list.querySelectorAll('li').forEach(li => {
+          li.style.display = li.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+      });
+    });
+  }, 60);
 }
 
 function wireHoverModal(graph) {
@@ -1413,6 +1608,48 @@ function renderGraphData(forceGraphInstance) {
 
 // ─── Node selection helpers ───
 
+/**
+ * Select a node and all its connected nodes up to the configured "Select Depth".
+ * BFS traversal from the clicked node through the current filtered links.
+ */
+function _selectConnectedNodes(node) {
+  const depthEl = document.getElementById('entities-graph-select-depth');
+  const maxDepth = parseInt(depthEl?.value || '1', 10);
+  const depth = Number.isFinite(maxDepth) ? maxDepth : 1;
+
+  // Build adjacency from filteredLinks
+  const adj = new Map();
+  for (const l of filteredLinks) {
+    const a = l.source?.id || l.source;
+    const b = l.target?.id || l.target;
+    if (!a || !b) continue;
+    if (!adj.has(a)) adj.set(a, new Set());
+    if (!adj.has(b)) adj.set(b, new Set());
+    adj.get(a).add(b);
+    adj.get(b).add(a);
+  }
+
+  // BFS
+  const visited = new Set();
+  const queue = [{ id: node.id, d: 0 }];
+  visited.add(node.id);
+  while (queue.length) {
+    const { id, d } = queue.shift();
+    // Add to selection
+    const n = filteredNodes.find(fn => fn.id === id);
+    if (n) selectedNodes.set(n.id, n);
+    if (d >= depth) continue;
+    for (const nbr of (adj.get(id) || [])) {
+      if (!visited.has(nbr)) {
+        visited.add(nbr);
+        queue.push({ id: nbr, d: d + 1 });
+      }
+    }
+  }
+  renderSelectionPanel();
+  _updateGraphHighlights();
+}
+
 function toggleNodeSelection(node) {
   if (selectedNodes.has(node.id)) {
     selectedNodes.delete(node.id);
@@ -1477,6 +1714,76 @@ async function deleteSelectedNodes() {
       });
     } catch (e) { console.warn('Delete failed for', id, e); }
   }
+  clearSelection();
+  loadAndRender();
+}
+
+/**
+ * Link all selected nodes to each other with a specified relation type.
+ * Prompts the user for the relation type, then creates relationships for every pair.
+ */
+async function linkAllSelected() {
+  if (selectedNodes.size < 2) { alert('Select at least 2 nodes to link.'); return; }
+  const relType = prompt('Relation type to create between all selected nodes:', 'related');
+  if (!relType?.trim()) return;
+
+  const base = val('base-url') || '';
+  const nodes = [...selectedNodes.values()];
+  let savedCount = 0;
+  let failCount = 0;
+
+  // Create a relation for every unique pair
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      try {
+        const res = await fetch(`${base}/api/relationships/record`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+          body: JSON.stringify({
+            source_id: nodes[i].id,
+            target_id: nodes[j].id,
+            relation_type: relType.trim(),
+          }),
+        });
+        if (res.ok) savedCount++; else failCount++;
+      } catch (e) { console.warn('Link failed', e); failCount++; }
+    }
+  }
+  setStatus(`Linked ${savedCount} pairs${failCount ? `, ${failCount} failed` : ''}`);
+  loadAndRender();
+}
+
+/**
+ * Merge all selected nodes into one, picked by the user from a prompt.
+ * Uses the existing merge API: POST /api/entities/<source_id>/merge/<target_id>
+ */
+async function mergeSelected() {
+  if (selectedNodes.size < 2) { alert('Select at least 2 nodes to merge.'); return; }
+  const nodes = [...selectedNodes.values()];
+  const options = nodes.map((n, i) => `${i + 1}. ${n.label || n.id}`).join('\n');
+  const choice = prompt(`Merge all selected into which node?\n${options}\n\nEnter number:`);
+  if (!choice) return;
+  const idx = parseInt(choice, 10) - 1;
+  if (idx < 0 || idx >= nodes.length || !Number.isFinite(idx)) { alert('Invalid choice.'); return; }
+
+  const target = nodes[idx];
+  const sources = nodes.filter((_, i) => i !== idx);
+
+  if (!confirm(`Merge ${sources.length} node(s) into "${target.label || target.id}"? This cannot be undone.`)) return;
+
+  const base = val('base-url') || '';
+  let mergedCount = 0;
+  let failCount = 0;
+  for (const src of sources) {
+    try {
+      const res = await fetch(`${base}/api/entities/${encodeURIComponent(src.id)}/merge/${encodeURIComponent(target.id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+      });
+      if (res.ok) mergedCount++; else failCount++;
+    } catch (e) { console.warn('Merge failed', e); failCount++; }
+  }
+  setStatus(`Merged ${mergedCount} into "${target.label || target.id}"${failCount ? `, ${failCount} failed` : ''}`);
   clearSelection();
   loadAndRender();
 }
@@ -1752,7 +2059,7 @@ async function renderGraph() {
     )
     .onNodeClick((n) => {
       if (selectionMode) {
-        toggleNodeSelection(n);
+        _selectConnectedNodes(n);
         return;
       }
       selectedNodeId = n.id;
@@ -1846,6 +2153,8 @@ export async function initEntitiesGraph() {
   document.getElementById('entities-graph-clear-selection')?.addEventListener('click', clearSelection);
   document.getElementById('entities-graph-delete-selected')?.addEventListener('click', deleteSelectedNodes);
   document.getElementById('entities-graph-connect-selected')?.addEventListener('click', openConnectPanel);
+  document.getElementById('entities-graph-link-all-selected')?.addEventListener('click', linkAllSelected);
+  document.getElementById('entities-graph-merge-selected')?.addEventListener('click', mergeSelected);
 
   // Add relation panel
   document.getElementById('entities-graph-cancel-relation')?.addEventListener('click', _closeRelationPanel);

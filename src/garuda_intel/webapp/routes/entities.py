@@ -686,6 +686,70 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
             return jsonify({"error": str(e)}), 500
 
     # ------------------------------------------------------------------
+    # Update entity fields
+    # ------------------------------------------------------------------
+    @bp.put("/<entity_id>")
+    @api_key_required
+    def api_update_entity(entity_id):
+        """Update an entity's fields (name, kind, data, metadata)."""
+        try:
+            uuid_module.UUID(entity_id)
+        except (ValueError, AttributeError):
+            return jsonify({"error": "Invalid entity UUID"}), 400
+
+        body = request.get_json(silent=True) or {}
+        if not body:
+            return jsonify({"error": "No fields to update"}), 400
+
+        allowed = {"name", "kind", "data", "metadata"}
+        updates = {k: v for k, v in body.items() if k in allowed}
+        if not updates:
+            return jsonify({"error": "No valid fields to update"}), 400
+
+        try:
+            with store.Session() as session:
+                entity = session.query(db_models.Entity).filter_by(id=entity_id).first()
+                if not entity:
+                    return jsonify({"error": "Entity not found"}), 404
+
+                if "name" in updates:
+                    if updates["name"] is None or (isinstance(updates["name"], str) and not updates["name"].strip()):
+                        return jsonify({"error": "Name cannot be empty or null"}), 400
+                    entity.name = str(updates["name"]).strip()
+                if "kind" in updates:
+                    if updates["kind"] is None:
+                        return jsonify({"error": "Kind cannot be null"}), 400
+                    kind_value = str(updates["kind"]).strip().lower()
+                    if not kind_value:
+                        return jsonify({"error": "Kind cannot be empty"}), 400
+                    entity.kind = kind_value
+                if "data" in updates:
+                    entity.data = updates["data"]
+                if "metadata" in updates:
+                    entity.metadata_json = updates["metadata"]
+
+                session.commit()
+
+                result = {
+                    "id": str(entity.id),
+                    "name": entity.name,
+                    "kind": entity.kind,
+                    "data": entity.data,
+                    "metadata": entity.metadata_json,
+                }
+
+            # Emit event outside transaction - if this fails, update is still persisted
+            try:
+                emit_event("entity_update", f"updated entity {entity_id}", payload=result)
+            except Exception as event_error:
+                logger.warning("Failed to emit entity_update event: %s", event_error)
+
+            return jsonify({"status": "ok", "entity": result})
+        except Exception as e:
+            logger.exception("Entity update failed for %s", entity_id)
+            return jsonify({"error": str(e)}), 500
+
+    # ------------------------------------------------------------------
     # Delete entity (and its relationships)
     # ------------------------------------------------------------------
     @bp.delete("/<entity_id>")
