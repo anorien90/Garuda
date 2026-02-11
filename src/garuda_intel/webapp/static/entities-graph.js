@@ -170,6 +170,37 @@ function getEdgeColor(link) {
   return EDGE_COLORS[kind] || EDGE_COLORS.default;
 }
 
+/**
+ * Get node ID from link endpoint (handles both object and string references)
+ */
+function getLinkNodeId(nodeRef) {
+  return nodeRef?.id || nodeRef;
+}
+
+/**
+ * Convert hex or rgb color to rgba with specified opacity
+ */
+function colorToRgba(color, opacity) {
+  // If already rgba, return as-is
+  if (color.startsWith('rgba')) return color;
+  
+  // Convert hex to rgb
+  if (color.startsWith('#')) {
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+  }
+  
+  // Convert rgb to rgba
+  if (color.startsWith('rgb')) {
+    return color.replace('rgb(', 'rgba(').replace(')', `, ${opacity})`);
+  }
+  
+  // Fallback
+  return `rgba(148, 163, 184, ${opacity})`;
+}
+
 // ─── Dynamic filter pills ───
 
 /**
@@ -360,7 +391,6 @@ function _onFilterSearch(query, group) {
   if (!query.trim()) return;
   
   const allKinds = group === 'node' ? allDbNodeKinds : allDbEdgeKinds;
-  const matches = [...allKinds].filter(k => k.toLowerCase().includes(query.toLowerCase()));
   
   // For now, just add the exact query as a new kind if it doesn't exist
   if (!allKinds.has(query.trim().toLowerCase())) {
@@ -1257,7 +1287,7 @@ function _wireEditButtons(node) {
       const newKind = kindInput.value;
       
       if (!newName) {
-        alert('Name cannot be empty');
+        alert('Entity name is required and cannot be empty.');
         return;
       }
 
@@ -1285,10 +1315,8 @@ function _wireEditButtons(node) {
       // Update modal title
       updateModal(activeModalId, { title: newName });
 
-      // Re-render graph with updated data
+      // Re-render graph with updated data (force re-evaluation of node properties)
       if (graphInstance) {
-        graphInstance.nodeColor(graphInstance.nodeColor());
-        graphInstance.nodeLabel(graphInstance.nodeLabel());
         graphInstance.graphData({ nodes: filteredNodes, links: filteredLinks });
       }
     };
@@ -1597,14 +1625,17 @@ function toggleNodeSelection(node) {
       // Build adjacency map from filtered links
       const adjacency = new Map();
       for (const link of filteredLinks) {
-        if (!adjacency.has(link.source.id || link.source)) {
-          adjacency.set(link.source.id || link.source, []);
+        const sourceId = getLinkNodeId(link.source);
+        const targetId = getLinkNodeId(link.target);
+        
+        if (!adjacency.has(sourceId)) {
+          adjacency.set(sourceId, []);
         }
-        if (!adjacency.has(link.target.id || link.target)) {
-          adjacency.set(link.target.id || link.target, []);
+        if (!adjacency.has(targetId)) {
+          adjacency.set(targetId, []);
         }
-        adjacency.get(link.source.id || link.source).push(link.target.id || link.target);
-        adjacency.get(link.target.id || link.target).push(link.source.id || link.source);
+        adjacency.get(sourceId).push(targetId);
+        adjacency.get(targetId).push(sourceId);
       }
       
       // BFS to find all nodes within depth
@@ -1722,7 +1753,7 @@ function _populateRelationTypeList() {
 
 async function linkAllSelected() {
   if (selectedNodes.size < 2) {
-    alert('Select at least 2 nodes to link');
+    alert('Please select at least 2 nodes to create links between them.');
     return;
   }
   
@@ -1762,7 +1793,7 @@ async function linkAllSelected() {
 
 async function mergeSelectedNodes() {
   if (selectedNodes.size < 2) {
-    alert('Select at least 2 nodes to merge');
+    alert('Please select at least 2 nodes to merge them together.');
     return;
   }
   
@@ -2014,8 +2045,8 @@ async function renderGraph() {
       if (isSelected) {
         ctx.beginPath();
         const gradient = ctx.createRadialGradient(node.x, node.y, size * 0.5, node.x, node.y, size * 2.5);
-        gradient.addColorStop(0, nodeColor.replace(')', ', 0.4)').replace('rgb', 'rgba'));
-        gradient.addColorStop(1, nodeColor.replace(')', ', 0)').replace('rgb', 'rgba'));
+        gradient.addColorStop(0, colorToRgba(nodeColor, 0.4));
+        gradient.addColorStop(1, colorToRgba(nodeColor, 0));
         ctx.fillStyle = gradient;
         ctx.arc(node.x, node.y, size * 2.5, 0, 2 * Math.PI);
         ctx.fill();
