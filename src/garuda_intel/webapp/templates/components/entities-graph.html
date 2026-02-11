@@ -27,28 +27,14 @@
         <option value="0">0</option><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="99">∞</option>
       </select>
     </label>
-    <label class="inline-flex items-center gap-1 text-slate-700 dark:text-slate-200">
-      Select Depth
-      <select id="entities-graph-select-depth" class="rounded border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-xs">
-        <option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="99">∞</option>
-      </select>
-    </label>
-    <span class="text-[10px] text-slate-400 ml-2">Filters: click to toggle</span>
+    <span class="text-[10px] text-slate-400 ml-2">Filters: click=whitelist/blacklist, right-click=pre-request ⬆</span>
   </div>
 
-  <!-- Filter pills for entity kinds (searchable + add/delete) -->
-  <div id="entities-graph-filter-bar" class="flex flex-wrap items-center gap-1.5 min-h-[24px]">
-    <span class="text-[10px] text-slate-400 uppercase mr-1">Nodes:</span>
-    <div id="entities-graph-node-pills" class="flex flex-wrap items-center gap-1"></div>
-    <input id="entities-graph-node-filter-search" type="text" placeholder="+ kind…" class="w-20 rounded border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-brand-500">
-  </div>
+  <!-- Filter pills (whitelist / blacklist) populated dynamically -->
+  <div id="entities-graph-filter-bar" class="flex flex-wrap items-center gap-1.5 min-h-[24px]"></div>
 
-  <!-- Relation type filter (searchable + add/delete) -->
-  <div id="entities-graph-relation-filter-bar" class="flex flex-wrap items-center gap-1.5 min-h-[0px]">
-    <span class="text-[10px] text-slate-400 uppercase mr-1">Relations:</span>
-    <div id="entities-graph-rel-pills" class="flex flex-wrap items-center gap-1"></div>
-    <input id="entities-graph-rel-filter-search" type="text" placeholder="+ type…" class="w-20 rounded border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-brand-500">
-  </div>
+  <!-- Relation type filter -->
+  <div id="entities-graph-relation-filter-bar" class="flex flex-wrap items-center gap-1.5 min-h-[0px]"></div>
 
   <!-- Main layout: graph + side details -->
   <div class="flex gap-3" style="min-height:560px">
@@ -67,11 +53,9 @@
           <button id="entities-graph-clear-selection" type="button" class="text-[10px] text-blue-500 hover:text-blue-700">Clear</button>
         </div>
         <div id="entities-graph-selection-list" class="flex flex-wrap gap-1 max-h-24 overflow-y-auto"></div>
-        <div class="flex flex-wrap gap-1 pt-1 border-t border-blue-200 dark:border-blue-800">
+        <div class="flex gap-1 pt-1 border-t border-blue-200 dark:border-blue-800">
           <button id="entities-graph-delete-selected" type="button" class="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 text-[10px] font-semibold">Delete selected</button>
           <button id="entities-graph-connect-selected" type="button" class="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 hover:bg-green-200 text-[10px] font-semibold">Connect to…</button>
-          <button id="entities-graph-link-all-selected" type="button" class="px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 hover:bg-purple-200 text-[10px] font-semibold">Link all ↔</button>
-          <button id="entities-graph-merge-selected" type="button" class="px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 hover:bg-amber-200 text-[10px] font-semibold">Merge into…</button>
         </div>
       </div>
 
