@@ -713,13 +713,12 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                     return jsonify({"error": "Entity not found"}), 404
 
                 if "name" in updates:
-                    if updates["name"] is None or (isinstance(updates["name"], str) and not updates["name"].strip()):
-                        return jsonify({"error": "Name cannot be empty or null"}), 400
-                    entity.name = str(updates["name"]).strip()
+                    name_val = str(updates["name"]).strip() if updates["name"] is not None else ""
+                    if not name_val:
+                        return jsonify({"error": "Name cannot be empty"}), 400
+                    entity.name = name_val
                 if "kind" in updates:
-                    if updates["kind"] is None:
-                        return jsonify({"error": "Kind cannot be null"}), 400
-                    kind_value = str(updates["kind"]).strip().lower()
+                    kind_value = str(updates["kind"]).strip().lower() if updates["kind"] is not None else ""
                     if not kind_value:
                         return jsonify({"error": "Kind cannot be empty"}), 400
                     entity.kind = kind_value

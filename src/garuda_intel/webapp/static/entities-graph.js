@@ -1031,7 +1031,7 @@ function renderNodeModalContent(node, links, detail) {
               : '';
             // Data attributes for searchable filtering
             const searchData = escapeHtml(
-              (r.target_name || r.source_name || '') + ' ' + (r.type || '') + ' ' + (r.target_kind || r.source_kind || '')
+              [r.target_name || r.source_name, r.type, r.target_kind || r.source_kind].filter(Boolean).join(' ')
             ).toLowerCase();
             return `<li class="py-1 border-b border-slate-100 dark:border-slate-800 last:border-0 flex items-center gap-1" data-rel-item data-search-text="${searchData}">${direction} <span class="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[10px]">${relType}</span> ${other}${confidence}${deleteRelBtn}</li>`;
           }).join('')}
@@ -1615,7 +1615,7 @@ function renderGraphData(forceGraphInstance) {
 function _selectConnectedNodes(node) {
   const depthEl = document.getElementById('entities-graph-select-depth');
   const maxDepth = parseInt(depthEl?.value || '1', 10);
-  const depth = Number.isFinite(maxDepth) ? maxDepth : 1;
+  const depth = Number.isFinite(maxDepth) ? (maxDepth >= 99 ? Infinity : maxDepth) : 1;
 
   // Build adjacency from filteredLinks
   const adj = new Map();
@@ -1764,7 +1764,7 @@ async function mergeSelected() {
   const choice = prompt(`Merge all selected into which node?\n${options}\n\nEnter number:`);
   if (!choice) return;
   const idx = parseInt(choice, 10) - 1;
-  if (idx < 0 || idx >= nodes.length || !Number.isFinite(idx)) { alert('Invalid choice.'); return; }
+  if (!Number.isFinite(idx) || idx < 0 || idx >= nodes.length) { alert('Invalid choice.'); return; }
 
   const target = nodes[idx];
   const sources = nodes.filter((_, i) => i !== idx);
