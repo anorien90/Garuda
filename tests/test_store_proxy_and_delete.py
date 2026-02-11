@@ -11,6 +11,7 @@ from sqlalchemy import select
 from garuda_intel.database.engine import SQLAlchemyStore
 from garuda_intel.database.models import Entity, Relationship, Intelligence
 from garuda_intel.services.database_manager import DatabaseManager
+from garuda_intel.webapp.utils.store_proxy import StoreProxy
 
 
 # ------------------------------------------------------------------
@@ -32,30 +33,11 @@ def manager(tmp_data_dir):
 # ------------------------------------------------------------------
 
 
-class _StoreProxy:
-    """Same proxy class used in app.py – duplicated here for unit-testing."""
-
-    def __init__(self, initial):
-        object.__setattr__(self, '_target', initial)
-
-    def _swap(self, new_store):
-        object.__setattr__(self, '_target', new_store)
-
-    def __getattr__(self, name):
-        return getattr(object.__getattribute__(self, '_target'), name)
-
-    def __setattr__(self, name, value):
-        if name == '_target':
-            object.__setattr__(self, name, value)
-        else:
-            setattr(object.__getattribute__(self, '_target'), name, value)
-
-
 class TestStoreProxy:
     def test_proxy_delegates_session(self, tmp_path):
         db_path = str(tmp_path / "a.db")
         real = SQLAlchemyStore(url=f"sqlite:///{db_path}")
-        proxy = _StoreProxy(real)
+        proxy = StoreProxy(real)
         # Session attribute should be accessible via proxy
         assert proxy.Session is real.Session
 
@@ -64,7 +46,7 @@ class TestStoreProxy:
         db_b = str(tmp_path / "b.db")
         store_a = SQLAlchemyStore(url=f"sqlite:///{db_a}")
         store_b = SQLAlchemyStore(url=f"sqlite:///{db_b}")
-        proxy = _StoreProxy(store_a)
+        proxy = StoreProxy(store_a)
         assert proxy.Session is store_a.Session
         proxy._swap(store_b)
         assert proxy.Session is store_b.Session
@@ -75,7 +57,7 @@ class TestStoreProxy:
         db_b = str(tmp_path / "b.db")
         store_a = SQLAlchemyStore(url=f"sqlite:///{db_a}")
         store_b = SQLAlchemyStore(url=f"sqlite:///{db_b}")
-        proxy = _StoreProxy(store_a)
+        proxy = StoreProxy(store_a)
 
         # Simulate a closure capturing the proxy
         def get_entities():

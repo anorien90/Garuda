@@ -717,7 +717,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 # Delete intelligence records tied to this entity
                 intel_del = (
                     session.query(db_models.Intelligence)
-                    .filter(db_models.Intelligence.entity_name == entity.name)
+                    .filter(db_models.Intelligence.entity_id == entity.id)
                     .delete(synchronize_session="fetch")
                 )
 

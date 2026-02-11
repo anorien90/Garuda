@@ -56,24 +56,7 @@ print(f"Embedding Model: {settings.embedding_model}")
 # StoreProxy – transparent wrapper so all closure-captured references
 # automatically pick up database switches without touching any route code.
 # ---------------------------------------------------------------------------
-class _StoreProxy:
-    """Delegate every attribute access to the *current* underlying store."""
-
-    def __init__(self, initial):
-        object.__setattr__(self, '_target', initial)
-
-    def _swap(self, new_store):
-        object.__setattr__(self, '_target', new_store)
-
-    # Attribute access is forwarded to the current target ----------------
-    def __getattr__(self, name):
-        return getattr(object.__getattribute__(self, '_target'), name)
-
-    def __setattr__(self, name, value):
-        if name == '_target':
-            object.__setattr__(self, name, value)
-        else:
-            setattr(object.__getattribute__(self, '_target'), name, value)
+from .utils.store_proxy import StoreProxy as _StoreProxy
 
 # Initialize core components
 _real_store = SQLAlchemyStore(settings.db_url)

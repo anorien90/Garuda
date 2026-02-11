@@ -865,7 +865,7 @@ async function _deleteRelationship(entityId, relId, buttonEl) {
 }
 
 function _wireDeleteButtons(node) {
-  // Use event delegation on the modal overlay
+  // Short delay to ensure the modal DOM has been rendered before binding handlers
   setTimeout(() => {
     // Delete entity buttons
     document.querySelectorAll('[data-delete-entity]').forEach(btn => {
