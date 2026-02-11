@@ -58,9 +58,27 @@ let hoverTimer = null;
 let activeModalNodeId = null;
 let activeModalId = null;
 
+// --- Filter state: whitelist (allowed) / blacklist (excluded) ---
+// whitelist empty = all allowed; items in blacklist are excluded
+let nodeWhitelist = new Set();
+let nodeBlacklist = new Set();
+let edgeWhitelist = new Set();
+let edgeBlacklist = new Set();
+
+// --- Node selection state ---
+let selectedNodes = new Map(); // id -> node
+let selectionMode = false;
+let selectionRect = null; // {startX, startY} during drag
+
+// --- Relation filter/highlight ---
+let highlightedRelTypes = new Set();
+let relationFilterText = '';
+
+// --- Add-relation state ---
+let addRelationSourceNodes = []; // nodes to connect from
+let addRelationTargetNode = null;
+
 const filterEls = {
-  nodeFilters: () => Array.from(document.querySelectorAll('.entities-node-filter')),
-  edgeFilters: () => Array.from(document.querySelectorAll('.entities-edge-filter')),
   depth: () => document.getElementById('entities-graph-depth'),
   toggle3d: () => document.getElementById('entities-graph-toggle3d'),
 };
@@ -136,34 +154,212 @@ function getEdgeColor(link) {
   return EDGE_COLORS[kind] || EDGE_COLORS.default;
 }
 
+// ─── Dynamic filter pills ───
+
+/**
+ * Discover all node kinds present in current graph data
+ */
+function discoverNodeKinds(nodes) {
+  const kinds = new Set();
+  for (const n of nodes) {
+    const k = (n.kind || n.type || n.meta?.entity_kind || 'unknown').toLowerCase();
+    kinds.add(k);
+  }
+  return kinds;
+}
+
+/**
+ * Discover all edge kinds present in current graph data
+ */
+function discoverEdgeKinds(links) {
+  const kinds = new Set();
+  for (const l of links) {
+    kinds.add(l.kind || 'link');
+  }
+  return kinds;
+}
+
+/**
+ * Discover all relation types from edge metadata
+ */
+function discoverRelationTypes(links) {
+  const types = new Set();
+  for (const l of links) {
+    if (l.meta?.relation_type) types.add(l.meta.relation_type);
+    if (l.kind) types.add(l.kind);
+  }
+  return types;
+}
+
+/**
+ * Render colorized filter pills for node and edge types.
+ * Whitelist empty = all allowed. Click cycles: allowed → blacklisted → removed (allowed again).
+ */
+function renderFilterBar() {
+  const bar = document.getElementById('entities-graph-filter-bar');
+  if (!bar) return;
+
+  const nodeKinds = discoverNodeKinds(currentNodes);
+  const edgeKinds = discoverEdgeKinds(currentLinks);
+
+  let html = '';
+
+  // Node kind pills
+  html += '<span class="text-[10px] text-slate-400 uppercase mr-1">Nodes:</span>';
+  for (const kind of nodeKinds) {
+    const color = COLORS[kind] || COLORS.unknown;
+    const inWL = nodeWhitelist.has(kind);
+    const inBL = nodeBlacklist.has(kind);
+    const state = inBL ? 'blacklist' : inWL ? 'whitelist' : 'default';
+    html += _filterPill(kind, color, state, 'node');
+  }
+
+  // Edge kind pills
+  html += '<span class="text-[10px] text-slate-400 uppercase ml-3 mr-1">Edges:</span>';
+  for (const kind of edgeKinds) {
+    const color = EDGE_COLORS[kind] || EDGE_COLORS.default;
+    const inWL = edgeWhitelist.has(kind);
+    const inBL = edgeBlacklist.has(kind);
+    const state = inBL ? 'blacklist' : inWL ? 'whitelist' : 'default';
+    html += _filterPill(kind, color, state, 'edge');
+  }
+
+  bar.innerHTML = html;
+
+  // Attach click handlers
+  bar.querySelectorAll('[data-filter-kind]').forEach(el => {
+    el.addEventListener('click', _onFilterPillClick);
+    el.addEventListener('contextmenu', _onFilterPillRightClick);
+  });
+}
+
+function _filterPill(kind, color, state, group) {
+  const opacity = state === 'blacklist' ? '0.3' : '1';
+  const strike = state === 'blacklist' ? 'line-through' : 'none';
+  const border = state === 'whitelist' ? `2px solid ${color}` : state === 'blacklist' ? '2px solid #ef4444' : `1.5px solid ${color}`;
+  return `<button type="button" data-filter-kind="${escapeHtml(kind)}" data-filter-group="${group}" data-filter-state="${state}"
+    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] cursor-pointer transition-all hover:shadow-sm"
+    style="border:${border};opacity:${opacity};text-decoration:${strike}"
+    title="Left-click: toggle whitelist/blacklist. Right-click: remove filter.">
+    <span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(kind)}</button>`;
+}
+
+function _onFilterPillClick(e) {
+  e.preventDefault();
+  const kind = e.currentTarget.dataset.filterKind;
+  const group = e.currentTarget.dataset.filterGroup;
+  const state = e.currentTarget.dataset.filterState;
+  const [wl, bl] = group === 'node' ? [nodeWhitelist, nodeBlacklist] : [edgeWhitelist, edgeBlacklist];
+
+  if (state === 'default') {
+    // Click on default → blacklist (exclude)
+    bl.add(kind);
+    wl.delete(kind);
+  } else if (state === 'blacklist') {
+    // Click on blacklisted → whitelist (include only)
+    bl.delete(kind);
+    wl.add(kind);
+  } else {
+    // Click on whitelisted → default (remove filter)
+    wl.delete(kind);
+    bl.delete(kind);
+  }
+  _applyAndRerender();
+}
+
+function _onFilterPillRightClick(e) {
+  e.preventDefault();
+  const kind = e.currentTarget.dataset.filterKind;
+  const group = e.currentTarget.dataset.filterGroup;
+  const [wl, bl] = group === 'node' ? [nodeWhitelist, nodeBlacklist] : [edgeWhitelist, edgeBlacklist];
+  wl.delete(kind);
+  bl.delete(kind);
+  _applyAndRerender();
+}
+
+async function _applyAndRerender() {
+  applyFilters(currentNodes, currentLinks);
+  renderFilterBar();
+  renderRelationFilterBar();
+  await renderGraph();
+}
+
+/**
+ * Render relation type filter/highlight bar
+ */
+function renderRelationFilterBar() {
+  const bar = document.getElementById('entities-graph-relation-filter-bar');
+  if (!bar) return;
+
+  const relTypes = discoverRelationTypes(filteredLinks);
+  if (relTypes.size === 0) { bar.innerHTML = ''; return; }
+
+  let html = '<span class="text-[10px] text-slate-400 uppercase mr-1">Relations:</span>';
+  for (const rt of relTypes) {
+    const active = highlightedRelTypes.has(rt);
+    html += `<button type="button" data-rel-type="${escapeHtml(rt)}"
+      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] cursor-pointer transition-all border ${active ? 'border-purple-500 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 font-semibold' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}"
+      title="Click to highlight this relation type">${escapeHtml(rt)}</button>`;
+  }
+  bar.innerHTML = html;
+
+  bar.querySelectorAll('[data-rel-type]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      const rt = e.currentTarget.dataset.relType;
+      if (highlightedRelTypes.has(rt)) highlightedRelTypes.delete(rt);
+      else highlightedRelTypes.add(rt);
+      renderRelationFilterBar();
+      _updateGraphHighlights();
+    });
+  });
+}
+
+function _updateGraphHighlights() {
+  if (!graphInstance) return;
+  // Re-apply link color with highlights
+  graphInstance.linkColor((l) => {
+    if (highlightedRelTypes.size > 0) {
+      const rt = l.meta?.relation_type || l.kind || '';
+      if (highlightedRelTypes.has(rt)) return 'rgba(139,92,246,0.85)';
+      return 'rgba(148,163,184,0.08)';
+    }
+    return EDGE_COLORS[l.kind] || EDGE_COLORS.default;
+  });
+  graphInstance.linkWidth((l) => {
+    if (highlightedRelTypes.size > 0) {
+      const rt = l.meta?.relation_type || l.kind || '';
+      if (highlightedRelTypes.has(rt)) return linkWidthFromWeight(l.weight) * 2.5;
+      return 0.3;
+    }
+    return linkWidthFromWeight(l.weight);
+  });
+  graphInstance.nodeColor((n) => {
+    if (selectedNodes.has(n.id)) return '#3b82f6'; // selected = blue
+    return getNodeColor(n);
+  });
+}
+
+/**
+ * Render legend: only shows kinds present in current filtered graph data
+ */
 function renderLegend() {
   if (!els.entitiesGraphLegend) return;
-  els.entitiesGraphLegend.innerHTML = `
-    <div class="flex flex-wrap gap-3 items-start">
-      ${Object.entries(COLORS)
-        .map(
-          ([k, v]) => `
-        <div class="flex items-center gap-2">
-          <span class="inline-block w-3 h-3 rounded-full" style="background:${v}"></span>
-          <span>${escapeHtml(k)}</span>
-        </div>
-      `
-        )
-        .join('')}
-      <span class="text-slate-400">•</span>
-      <div class="flex flex-wrap gap-2 text-[11px]">
-        ${Object.entries(EDGE_COLORS)
-          .filter(([k]) => k !== 'default')
-          .map(
-            ([k, v]) =>
-              `<span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-0.5" style="background:${v}"></span>${escapeHtml(
-                k
-              )}</span>`
-          )
-          .join('')}
-      </div>
-    </div>
-  `;
+  const nodes = filteredNodes.length > 0 ? filteredNodes : currentNodes;
+  const links = filteredLinks.length > 0 ? filteredLinks : currentLinks;
+  const nodeKinds = discoverNodeKinds(nodes);
+  const edgeKinds = discoverEdgeKinds(links);
+
+  const nodeItems = [...nodeKinds].map(k => {
+    const c = COLORS[k] || COLORS.unknown;
+    return `<span class="inline-flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full" style="background:${c}"></span>${escapeHtml(k)}</span>`;
+  }).join('');
+
+  const edgeItems = [...edgeKinds].filter(k => k !== 'default').map(k => {
+    const c = EDGE_COLORS[k] || EDGE_COLORS.default;
+    return `<span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-0.5" style="background:${c}"></span>${escapeHtml(k)}</span>`;
+  }).join('');
+
+  els.entitiesGraphLegend.innerHTML = `<div class="flex flex-wrap gap-2 items-center text-[11px]">${nodeItems}${edgeItems ? '<span class="text-slate-400">•</span>' + edgeItems : ''}</div>`;
 }
 
 function fmt(val) {
@@ -955,15 +1151,20 @@ async function loadForceGraphLib(is3D) {
 }
 
 function getNodeTypeFilters() {
-  return filterEls.nodeFilters()
-    .filter((c) => c.checked)
-    .map((c) => c.value);
+  // If whitelist is set, only those are allowed; otherwise all minus blacklist
+  const allKinds = discoverNodeKinds(currentNodes);
+  if (nodeWhitelist.size > 0) {
+    return [...nodeWhitelist].filter(k => !nodeBlacklist.has(k));
+  }
+  return [...allKinds].filter(k => !nodeBlacklist.has(k));
 }
 
 function getEdgeKindFilters() {
-  return filterEls.edgeFilters()
-    .filter((c) => c.checked)
-    .map((c) => c.value);
+  const allKinds = discoverEdgeKinds(currentLinks);
+  if (edgeWhitelist.size > 0) {
+    return [...edgeWhitelist].filter(k => !edgeBlacklist.has(k));
+  }
+  return [...allKinds].filter(k => !edgeBlacklist.has(k));
 }
 
 function getDepthLimit() {
@@ -1134,6 +1335,259 @@ function renderGraphData(forceGraphInstance) {
   forceGraphInstance.graphData({ nodes: filteredNodes, links });
 }
 
+// ─── Node selection helpers ───
+
+function toggleNodeSelection(node) {
+  if (selectedNodes.has(node.id)) {
+    selectedNodes.delete(node.id);
+  } else {
+    selectedNodes.set(node.id, node);
+  }
+  renderSelectionPanel();
+  _updateGraphHighlights();
+}
+
+function clearSelection() {
+  selectedNodes.clear();
+  renderSelectionPanel();
+  _updateGraphHighlights();
+}
+
+function renderSelectionPanel() {
+  const panel = document.getElementById('entities-graph-selection-panel');
+  const countEl = document.getElementById('entities-graph-selection-count');
+  const listEl = document.getElementById('entities-graph-selection-list');
+  if (!panel || !countEl || !listEl) return;
+
+  const count = selectedNodes.size;
+  countEl.textContent = count;
+  panel.classList.toggle('hidden', count === 0);
+
+  if (count === 0) { listEl.innerHTML = ''; return; }
+
+  listEl.innerHTML = [...selectedNodes.values()].map(n => {
+    const color = getNodeColor(n);
+    return `<span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border" style="border-color:${color}">
+      <span class="w-1.5 h-1.5 rounded-full" style="background:${color}"></span>
+      ${escapeHtml((n.label || n.id).slice(0, 20))}
+      <button type="button" data-deselect="${escapeHtml(n.id)}" class="ml-0.5 text-slate-400 hover:text-red-500">✕</button>
+    </span>`;
+  }).join('');
+
+  listEl.querySelectorAll('[data-deselect]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.deselect;
+      selectedNodes.delete(id);
+      renderSelectionPanel();
+      _updateGraphHighlights();
+    });
+  });
+}
+
+async function deleteSelectedNodes() {
+  if (selectedNodes.size === 0) return;
+  const allNames = [...selectedNodes.values()].map(n => n.label || n.id);
+  const displayNames = allNames.length > 5
+    ? allNames.slice(0, 5).join(', ') + ` …and ${allNames.length - 5} more`
+    : allNames.join(', ');
+  if (!confirm(`Delete ${selectedNodes.size} selected node(s)?\n${displayNames}\nThis cannot be undone.`)) return;
+  const base = val('base-url') || '';
+  for (const [id] of selectedNodes) {
+    try {
+      await fetch(`${base}/api/entities/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+      });
+    } catch (e) { console.warn('Delete failed for', id, e); }
+  }
+  clearSelection();
+  loadAndRender();
+}
+
+function openConnectPanel() {
+  if (selectedNodes.size === 0) return;
+  addRelationSourceNodes = [...selectedNodes.values()];
+  addRelationTargetNode = null;
+
+  const panel = document.getElementById('entities-graph-add-relation-panel');
+  const srcLabel = document.getElementById('entities-graph-relation-source-label');
+  const saveBtn = document.getElementById('entities-graph-relation-save');
+  if (!panel) return;
+
+  panel.classList.remove('hidden');
+  if (srcLabel) {
+    srcLabel.textContent = `From: ${addRelationSourceNodes.map(n => n.label || n.id).join(', ')}`;
+  }
+  if (saveBtn) saveBtn.disabled = true;
+
+  // Populate relation type datalist with known types
+  _populateRelationTypeList();
+  _clearRelationTargetResults();
+}
+
+function _populateRelationTypeList() {
+  const list = document.getElementById('entities-graph-relation-type-list');
+  if (!list) return;
+  const types = discoverRelationTypes(currentLinks);
+  list.innerHTML = [...types].map(t => `<option value="${escapeHtml(t)}">`).join('');
+}
+
+function _clearRelationTargetResults() {
+  const el = document.getElementById('entities-graph-relation-target-results');
+  if (el) el.innerHTML = '';
+}
+
+function _searchTargetNodes(query) {
+  if (!query || query.length < 2) { _clearRelationTargetResults(); return; }
+  const q = query.toLowerCase();
+  const results = filteredNodes
+    .filter(n => (n.label || '').toLowerCase().includes(q) || n.id.toLowerCase().includes(q))
+    .slice(0, 8);
+
+  const el = document.getElementById('entities-graph-relation-target-results');
+  if (!el) return;
+
+  el.innerHTML = results.map(n => {
+    const color = getNodeColor(n);
+    const selected = addRelationTargetNode?.id === n.id;
+    return `<button type="button" data-target-id="${escapeHtml(n.id)}"
+      class="w-full text-left px-2 py-1 rounded text-[11px] flex items-center gap-1.5 ${selected ? 'bg-green-100 dark:bg-green-900/30 font-semibold' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}">
+      <span class="w-2 h-2 rounded-full shrink-0" style="background:${color}"></span>
+      ${escapeHtml((n.label || n.id).slice(0, 40))}
+      <span class="text-[9px] text-slate-400 ml-auto">${escapeHtml(n.kind || n.type || '')}</span>
+    </button>`;
+  }).join('');
+
+  el.querySelectorAll('[data-target-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.targetId;
+      addRelationTargetNode = filteredNodes.find(n => n.id === id) || null;
+      _searchTargetNodes(document.getElementById('entities-graph-relation-target-search')?.value || '');
+      _updateRelationSaveBtn();
+    });
+  });
+}
+
+function _updateRelationSaveBtn() {
+  const btn = document.getElementById('entities-graph-relation-save');
+  const typeInput = document.getElementById('entities-graph-relation-type-input');
+  if (!btn) return;
+  btn.disabled = !(addRelationTargetNode && typeInput?.value?.trim());
+}
+
+async function _saveRelation() {
+  const typeInput = document.getElementById('entities-graph-relation-type-input');
+  const relType = typeInput?.value?.trim();
+  if (!addRelationTargetNode || !relType || addRelationSourceNodes.length === 0) return;
+
+  const base = val('base-url') || '';
+  for (const src of addRelationSourceNodes) {
+    try {
+      await fetch(`${base}/api/relationships/record`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+        body: JSON.stringify({
+          source_id: src.id,
+          target_id: addRelationTargetNode.id,
+          relation_type: relType,
+        }),
+      });
+    } catch (e) { console.warn('Save relation failed', e); }
+  }
+
+  // Close panel and reload
+  _closeRelationPanel();
+  loadAndRender();
+}
+
+function _closeRelationPanel() {
+  const panel = document.getElementById('entities-graph-add-relation-panel');
+  if (panel) panel.classList.add('hidden');
+  addRelationSourceNodes = [];
+  addRelationTargetNode = null;
+}
+
+// ─── Rectangle selection on canvas ───
+
+function _initRectangleSelection() {
+  const canvas = els.entitiesGraphCanvas;
+  if (!canvas) return;
+
+  let overlay = null;
+  let startX = 0, startY = 0;
+  let dragging = false;
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (!selectionMode || use3D) return;
+    if (e.button !== 0) return;
+    dragging = true;
+    const rect = canvas.getBoundingClientRect();
+    startX = e.clientX - rect.left;
+    startY = e.clientY - rect.top;
+
+    overlay = document.createElement('div');
+    overlay.style.cssText = `position:absolute;border:2px dashed #3b82f6;background:rgba(59,130,246,0.08);pointer-events:none;z-index:50;`;
+    overlay.style.left = startX + 'px';
+    overlay.style.top = startY + 'px';
+    canvas.style.position = 'relative';
+    canvas.appendChild(overlay);
+    e.preventDefault();
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (!dragging || !overlay) return;
+    const rect = canvas.getBoundingClientRect();
+    const curX = e.clientX - rect.left;
+    const curY = e.clientY - rect.top;
+    const x = Math.min(startX, curX);
+    const y = Math.min(startY, curY);
+    const w = Math.abs(curX - startX);
+    const h = Math.abs(curY - startY);
+    overlay.style.left = x + 'px';
+    overlay.style.top = y + 'px';
+    overlay.style.width = w + 'px';
+    overlay.style.height = h + 'px';
+  });
+
+  canvas.addEventListener('mouseup', (e) => {
+    if (!dragging || !overlay) return;
+    dragging = false;
+    const rect = canvas.getBoundingClientRect();
+    const curX = e.clientX - rect.left;
+    const curY = e.clientY - rect.top;
+    const selRect = {
+      x1: Math.min(startX, curX),
+      y1: Math.min(startY, curY),
+      x2: Math.max(startX, curX),
+      y2: Math.max(startY, curY),
+    };
+
+    overlay.remove();
+    overlay = null;
+
+    // Only select if dragged a meaningful rectangle
+    if (selRect.x2 - selRect.x1 < 5 && selRect.y2 - selRect.y1 < 5) return;
+
+    // Find nodes inside selection rectangle (2D only)
+    if (graphInstance && graphInstance.screen2GraphCoords) {
+      const topLeft = graphInstance.screen2GraphCoords(selRect.x1, selRect.y1);
+      const bottomRight = graphInstance.screen2GraphCoords(selRect.x2, selRect.y2);
+      const minX = Math.min(topLeft.x, bottomRight.x);
+      const maxX = Math.max(topLeft.x, bottomRight.x);
+      const minY = Math.min(topLeft.y, bottomRight.y);
+      const maxY = Math.max(topLeft.y, bottomRight.y);
+      for (const n of filteredNodes) {
+        if (n.x >= minX && n.x <= maxX && n.y >= minY && n.y <= maxY) {
+          selectedNodes.set(n.id, n);
+        }
+      }
+      renderSelectionPanel();
+      _updateGraphHighlights();
+    }
+  });
+}
+
 async function renderGraph() {
   if (!els.entitiesGraphCanvas) return;
   clearGraphCanvas();
@@ -1146,16 +1600,32 @@ async function renderGraph() {
   graphInstance = createGraph(els.entitiesGraphCanvas)
     .nodeRelSize(4)
     .nodeLabel((n) => `${n.label || n.id} (${n.type || 'unknown'})`)
-    .nodeColor((n) => COLORS[n.type] || COLORS[n.meta?.entity_kind] || COLORS.unknown)
+    .nodeColor((n) => {
+      if (selectedNodes.has(n.id)) return '#3b82f6';
+      return getNodeColor(n);
+    })
     .nodeVal((n) => Math.max(2, (n.count || 1) * 0.4 + (n.score || 0) * 2))
-    .linkColor((l) => EDGE_COLORS[l.kind] || EDGE_COLORS.default)
-    .linkWidth((l) => linkWidthFromWeight(l.weight))
+    .linkColor((l) => {
+      if (highlightedRelTypes.size > 0) {
+        const rt = l.meta?.relation_type || l.kind || '';
+        if (highlightedRelTypes.has(rt)) return 'rgba(139,92,246,0.85)';
+        return 'rgba(148,163,184,0.08)';
+      }
+      return EDGE_COLORS[l.kind] || EDGE_COLORS.default;
+    })
+    .linkWidth((l) => {
+      if (highlightedRelTypes.size > 0) {
+        const rt = l.meta?.relation_type || l.kind || '';
+        if (highlightedRelTypes.has(rt)) return linkWidthFromWeight(l.weight) * 2.5;
+        return 0.3;
+      }
+      return linkWidthFromWeight(l.weight);
+    })
     .linkDirectionalParticles((l) => (shouldAnimateLink(l) ? 1 : 0))
     .linkDirectionalParticleWidth((l) => Math.max(PARTICLE_WIDTH_BASE, (l.weight || 1) * 0.6))
     .linkDirectionalParticleSpeed(() => PARTICLE_SPEED)
     .linkLabel(
       (l) => {
-        // For relationship edges, show the specific relation_type from metadata
         const displayKind = l.kind === 'relationship' && l.meta?.relation_type 
           ? l.meta.relation_type 
           : l.kind || 'link';
@@ -1163,7 +1633,7 @@ async function renderGraph() {
         return `${displayKind}${l.weight ? ` (w:${l.weight})` : ''}${
           l.meta && Object.keys(l.meta).length
             ? `\n${Object.entries(l.meta)
-                .filter(([k]) => k !== 'relation_type') // Don't duplicate relation_type
+                .filter(([k]) => k !== 'relation_type')
                 .map(([k, v]) => `${k}: ${fmt(v)}`)
                 .join('\n')}`
             : ''
@@ -1171,6 +1641,10 @@ async function renderGraph() {
       }
     )
     .onNodeClick((n) => {
+      if (selectionMode) {
+        toggleNodeSelection(n);
+        return;
+      }
       selectedNodeId = n.id;
       renderDetails(n, filteredLinks);
       openNodeModal(n);
@@ -1189,13 +1663,14 @@ async function loadAndRender(ev) {
   try {
     // Fetch schema first to update colors
     await fetchSchema();
-    // Re-render legend with updated colors
-    renderLegend();
     
     const data = await fetchGraph();
     currentNodes = data.nodes || [];
     currentLinks = data.links || [];
     applyFilters(currentNodes, currentLinks);
+    renderFilterBar();
+    renderRelationFilterBar();
+    renderLegend();
     await renderGraph();
   } catch (e) {
     console.error(e);
@@ -1230,14 +1705,50 @@ export async function initEntitiesGraph() {
     };
   }
 
-  [...filterEls.nodeFilters(), ...filterEls.edgeFilters()].forEach((c) =>
-    c.addEventListener('change', async () => {
-      applyFilters(currentNodes, currentLinks);
-      await renderGraph();
-    })
-  );
+  // Advanced options toggle
+  const advToggle = document.getElementById('entities-graph-advanced-toggle');
+  const advPanel = document.getElementById('entities-graph-advanced');
+  if (advToggle && advPanel) {
+    advToggle.addEventListener('click', () => advPanel.classList.toggle('hidden'));
+  }
+
+  // Selection mode toggle
+  const selModeBtn = document.getElementById('entities-graph-selection-mode');
+  if (selModeBtn) {
+    selModeBtn.addEventListener('click', () => {
+      selectionMode = !selectionMode;
+      selModeBtn.classList.toggle('border-blue-500', selectionMode);
+      selModeBtn.classList.toggle('bg-blue-50', selectionMode);
+      selModeBtn.classList.toggle('dark:bg-blue-900/30', selectionMode);
+      if (selectionMode && use3D) {
+        selModeBtn.textContent = '⬚ Select (click only)';
+        selModeBtn.title = 'Rectangle selection is not available in 3D mode. Click nodes to select.';
+      } else {
+        selModeBtn.textContent = selectionMode ? '⬚ Select ✓' : '⬚ Select';
+        selModeBtn.title = 'Toggle rectangle selection mode';
+      }
+    });
+  }
+
+  // Selection panel buttons
+  document.getElementById('entities-graph-clear-selection')?.addEventListener('click', clearSelection);
+  document.getElementById('entities-graph-delete-selected')?.addEventListener('click', deleteSelectedNodes);
+  document.getElementById('entities-graph-connect-selected')?.addEventListener('click', openConnectPanel);
+
+  // Add relation panel
+  document.getElementById('entities-graph-cancel-relation')?.addEventListener('click', _closeRelationPanel);
+  document.getElementById('entities-graph-relation-save')?.addEventListener('click', _saveRelation);
+  document.getElementById('entities-graph-relation-target-search')?.addEventListener('input', (e) => {
+    _searchTargetNodes(e.target.value);
+  });
+  document.getElementById('entities-graph-relation-type-input')?.addEventListener('input', _updateRelationSaveBtn);
+
+  // Depth filter
   filterEls.depth()?.addEventListener('change', async () => {
     applyFilters(currentNodes, currentLinks);
+    renderFilterBar();
+    renderRelationFilterBar();
+    renderLegend();
     await renderGraph();
   });
 
@@ -1254,6 +1765,9 @@ export async function initEntitiesGraph() {
       loadAndRender();
     });
   }
+
+  // Init rectangle selection
+  _initRectangleSelection();
 
   await loadAndRender();
 }
