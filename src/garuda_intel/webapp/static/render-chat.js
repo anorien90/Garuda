@@ -1,6 +1,8 @@
 import { els } from './config.js';
 import { pill, collapsible } from './ui.js';
 
+const MEMORY_PREVIEW_MAX_CHARS = 300;
+
 export function renderChat(payload, targetEl) {
   const el = targetEl || els.searchTabChatAnswer || els.popupChatAnswer;
   if (!el) return;
@@ -172,10 +174,10 @@ export function renderChat(payload, targetEl) {
       const keyClass = isInsufficient
         ? 'bg-rose-200 dark:bg-rose-800 text-rose-900 dark:text-rose-200'
         : 'bg-slate-200 dark:bg-slate-700';
-      const valPreview = typeof v === 'string' ? v.slice(0, 300) : JSON.stringify(v).slice(0, 300);
+      const valPreview = typeof v === 'string' ? v.slice(0, MEMORY_PREVIEW_MAX_CHARS) : JSON.stringify(v).slice(0, MEMORY_PREVIEW_MAX_CHARS);
       return `<div class="mb-1.5 p-1.5 rounded bg-white/60 dark:bg-slate-800/60">
         <span class="inline-block ${keyClass} rounded px-1.5 py-0.5 text-xs font-semibold mr-1">${k}</span>
-        <span class="text-xs text-slate-600 dark:text-slate-400 break-all">${valPreview}${valPreview.length >= 300 ? '…' : ''}</span>
+        <span class="text-xs text-slate-600 dark:text-slate-400 break-all">${valPreview}${valPreview.length >= MEMORY_PREVIEW_MAX_CHARS ? '…' : ''}</span>
       </div>`;
     }).join('');
     memorySection = collapsible(
