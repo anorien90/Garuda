@@ -76,6 +76,7 @@ let allDbEdgeKinds = new Set();
 let selectedNodes = new Map(); // id -> node
 let selectionMode = false;
 let selectionRect = null; // {startX, startY} during drag
+let selectionDepth = 0; // BFS depth for selection (0 = single node, 1-3 hops)
 
 // --- Relation filter/highlight ---
 let highlightedRelTypes = new Set();
@@ -998,6 +999,31 @@ function renderNodeModalContent(node, links, detail) {
        </div>`
     : '';
 
+  // Inline edit form for entity nodes
+  const kindOptions = [...allDbNodeKinds, 'person', 'org', 'location', 'product', 'event', 'entity', 'unknown']
+    .filter((v, i, a) => a.indexOf(v) === i);
+
+  const editForm = isEntityNode && node.id
+    ? `<div id="entity-edit-section" class="hidden mt-2 p-2 rounded border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-900/20 space-y-2">
+        <label class="block text-xs text-slate-500">Name
+          <input id="entity-edit-name" type="text" value="${escapeHtml(node.label || meta.name || '')}" class="mt-0.5 w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-sm">
+        </label>
+        <label class="block text-xs text-slate-500">Kind
+          <select id="entity-edit-kind" class="mt-0.5 w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-sm">
+            ${kindOptions.map(k => `<option value="${escapeHtml(k)}"${k === kind ? ' selected' : ''}>${escapeHtml(k)}</option>`).join('')}
+          </select>
+        </label>
+        <div class="flex gap-2">
+          <button id="entity-edit-save" type="button" class="px-3 py-1 rounded bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500">Save</button>
+          <button id="entity-edit-cancel" type="button" class="px-3 py-1 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-300">Cancel</button>
+        </div>
+      </div>`
+    : '';
+
+  const editButton = isEntityNode && node.id
+    ? `<button id="entity-edit-toggle" type="button" class="px-2 py-1 rounded border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 text-xs font-semibold hover:bg-blue-50 dark:hover:bg-blue-900/30">✏ Edit</button>`
+    : '';
+
   // Get kind from meta or node type
   const kind = meta.kind || node.type || 'entity';
   const kindColor = COLORS[kind] || COLORS.entity;
@@ -1007,8 +1033,10 @@ function renderNodeModalContent(node, links, detail) {
       <div class="flex items-center gap-2">
         <span class="inline-block w-3 h-3 rounded-full" style="background:${kindColor}"></span>
         <span class="text-xs uppercase text-slate-500">${escapeHtml(kind)}</span>
+        ${editButton}
       </div>
       <div class="text-lg font-semibold break-all">${escapeHtml(node.label || meta.name || node.id)}</div>
+      ${editForm}
       ${meta.last_seen ? `<div class="text-xs text-slate-500">Last seen: ${escapeHtml(meta.last_seen)}</div>` : ''}
       ${node.score ? `<div class="text-xs"><span class="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900 rounded">score: ${escapeHtml(fmt(node.score))}</span></div>` : ''}
       ${node.count ? `<div class="text-xs"><span class="px-1.5 py-0.5 bg-green-100 dark:bg-green-900 rounded">mentions: ${escapeHtml(fmt(node.count))}</span></div>` : ''}
@@ -1123,7 +1151,61 @@ function _wireDeleteButtons(node) {
     document.querySelectorAll('[data-delete-rel]').forEach(btn => {
       btn.onclick = () => _deleteRelationship(btn.dataset.entityId, btn.dataset.deleteRel, btn);
     });
+    // Inline edit toggle
+    const editToggle = document.getElementById('entity-edit-toggle');
+    const editSection = document.getElementById('entity-edit-section');
+    if (editToggle && editSection) {
+      editToggle.onclick = () => editSection.classList.toggle('hidden');
+      const cancelBtn = document.getElementById('entity-edit-cancel');
+      if (cancelBtn) cancelBtn.onclick = () => editSection.classList.add('hidden');
+      const saveBtn = document.getElementById('entity-edit-save');
+      if (saveBtn) saveBtn.onclick = () => _saveEntityEdit(node);
+    }
   }, 50);
+}
+
+async function _saveEntityEdit(node) {
+  const nameInput = document.getElementById('entity-edit-name');
+  const kindSelect = document.getElementById('entity-edit-kind');
+  if (!nameInput || !kindSelect) return;
+
+  const newName = nameInput.value.trim();
+  const newKind = kindSelect.value;
+  if (!newName) { alert('Name cannot be empty'); return; }
+
+  const base = val('base-url') || '';
+  try {
+    const res = await fetch(`${base}/api/entities/${encodeURIComponent(node.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+      body: JSON.stringify({ name: newName, kind: newKind }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      alert('Update failed: ' + err);
+      return;
+    }
+    // Update local graph data immediately
+    const updateNode = (n) => {
+      if (n.id === node.id) {
+        n.label = newName;
+        n.kind = newKind;
+        n.type = newKind;
+        if (n.meta) { n.meta.name = newName; n.meta.kind = newKind; }
+      }
+    };
+    currentNodes.forEach(updateNode);
+    filteredNodes.forEach(updateNode);
+
+    // Close edit section and re-render
+    const editSection = document.getElementById('entity-edit-section');
+    if (editSection) editSection.classList.add('hidden');
+    _updateGraphHighlights();
+    if (graphInstance) graphInstance.nodeColor(graphInstance.nodeColor());
+    setStatus(`Updated "${newName}"`);
+  } catch (e) {
+    alert('Update failed: ' + e.message);
+  }
 }
 
 function wireHoverModal(graph) {
@@ -1314,6 +1396,10 @@ function linkWidthFromWeight(weight) {
   return Math.max(0.6, Math.log1p(w) * 1.8);
 }
 
+function nodeRadius(node) {
+  return Math.max(3, Math.sqrt(Math.max(2, (node.count || 1) * 0.4 + (node.score || 0) * 2)) * 4);
+}
+
 function shouldAnimateLink(l) {
   const key = `${l.source?.id || l.source}-${l.target?.id || l.target}-${l.kind || ''}`;
   return pseudoRandomFromKey(key) < PARTICLE_PROB;
@@ -1477,6 +1563,75 @@ async function deleteSelectedNodes() {
       });
     } catch (e) { console.warn('Delete failed for', id, e); }
   }
+  clearSelection();
+  loadAndRender();
+}
+
+// Build adjacency map from links for BFS traversal
+function _buildAdjacencyMap(links) {
+  const adj = new Map();
+  for (const l of links) {
+    const src = l.source?.id || l.source;
+    const tgt = l.target?.id || l.target;
+    if (!adj.has(src)) adj.set(src, []);
+    if (!adj.has(tgt)) adj.set(tgt, []);
+    adj.get(src).push(tgt);
+    adj.get(tgt).push(src);
+  }
+  return adj;
+}
+
+// Bulk Link All: create relationships between all selected node pairs
+async function bulkLinkAll() {
+  if (selectedNodes.size < 2) { alert('Select at least 2 nodes to link.'); return; }
+  const relType = prompt('Relationship type for all pairs:', 'related_to');
+  if (!relType) return;
+
+  const nodes = [...selectedNodes.values()];
+  const base = val('base-url') || '';
+  let saved = 0, failed = 0;
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      try {
+        const res = await fetch(`${base}/api/relationships/record`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+          body: JSON.stringify({
+            source_id: nodes[i].id,
+            target_id: nodes[j].id,
+            relation_type: relType,
+          }),
+        });
+        if (res.ok) saved++; else failed++;
+      } catch (e) { console.warn('Link failed', e); failed++; }
+    }
+  }
+  setStatus(`Linked ${saved} pairs${failed ? `, ${failed} failed` : ''}`);
+  loadAndRender();
+}
+
+// Bulk Merge: merge N selected entities into the first selected
+async function bulkMerge() {
+  if (selectedNodes.size < 2) { alert('Select at least 2 nodes to merge.'); return; }
+  const nodes = [...selectedNodes.values()];
+  const targetNode = nodes[0];
+  const sources = nodes.slice(1);
+  const displayTarget = targetNode.label || targetNode.id;
+  const displaySrcs = sources.map(n => n.label || n.id).join(', ');
+  if (!confirm(`Merge ${sources.length} node(s) into "${displayTarget}"?\n\nWill merge: ${displaySrcs}\n\nThis cannot be undone.`)) return;
+
+  const base = val('base-url') || '';
+  let merged = 0, failed = 0;
+  for (const src of sources) {
+    try {
+      const res = await fetch(`${base}/api/entities/${encodeURIComponent(src.id)}/merge/${encodeURIComponent(targetNode.id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+      });
+      if (res.ok) merged++; else failed++;
+    } catch (e) { console.warn('Merge failed', e); failed++; }
+  }
+  setStatus(`Merged ${merged} entities into "${displayTarget}"${failed ? `, ${failed} failed` : ''}`);
   clearSelection();
   loadAndRender();
 }
@@ -1753,12 +1908,85 @@ async function renderGraph() {
     .onNodeClick((n) => {
       if (selectionMode) {
         toggleNodeSelection(n);
+        // Depth-based BFS selection on node click
+        if (selectionDepth > 0) {
+          const adj = _buildAdjacencyMap(filteredLinks);
+          const bfsQueue = [{ id: n.id, depth: 0 }];
+          const visited = new Set([n.id]);
+          let qi = 0;
+          while (qi < bfsQueue.length) {
+            const { id, depth } = bfsQueue[qi++];
+            if (depth >= selectionDepth) continue;
+            const neighbors = adj.get(id) || [];
+            for (const nbrId of neighbors) {
+              if (!visited.has(nbrId)) {
+                visited.add(nbrId);
+                const nbrNode = filteredNodes.find(nd => nd.id === nbrId);
+                if (nbrNode) {
+                  selectedNodes.set(nbrId, nbrNode);
+                  bfsQueue.push({ id: nbrId, depth: depth + 1 });
+                }
+              }
+            }
+          }
+          renderSelectionPanel();
+          _updateGraphHighlights();
+        }
         return;
       }
       selectedNodeId = n.id;
       renderDetails(n, filteredLinks);
       openNodeModal(n);
     });
+
+  // Custom node rendering for 2D mode: radial gradient glow + selected border
+  if (!use3D) {
+    graphInstance.nodeCanvasObject((node, ctx, globalScale) => {
+      const r = nodeRadius(node);
+      const color = getNodeColor(node);
+      const isSelected = selectedNodes.has(node.id);
+
+      // Radial gradient glow backdrop
+      const glowR = r * 2.5;
+      const grad = ctx.createRadialGradient(node.x, node.y, r * 0.3, node.x, node.y, glowR);
+      grad.addColorStop(0, color + '66'); // ~40% opacity center
+      grad.addColorStop(1, color + '00'); // transparent edge
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, glowR, 0, 2 * Math.PI);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Node circle
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+      ctx.fillStyle = isSelected ? '#3b82f6' : color;
+      ctx.fill();
+
+      // White 2px stroke border on selected nodes
+      if (isSelected) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2 / globalScale;
+        ctx.stroke();
+      }
+
+      // Label (only when zoomed enough)
+      if (globalScale > 1.2) {
+        const label = node.label || node.id || '';
+        const fontSize = Math.max(10, 12 / globalScale);
+        ctx.font = `${fontSize}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = isSelected ? '#3b82f6' : '#64748b';
+        ctx.fillText(label.slice(0, 24), node.x, node.y + r + 2);
+      }
+    }).nodePointerAreaPaint((node, color, ctx) => {
+      const r = nodeRadius(node);
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r * 2.5, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.fill();
+    });
+  }
 
   tuneForces(graphInstance);
   renderGraphData(graphInstance);
@@ -1846,6 +2074,13 @@ export async function initEntitiesGraph() {
   document.getElementById('entities-graph-clear-selection')?.addEventListener('click', clearSelection);
   document.getElementById('entities-graph-delete-selected')?.addEventListener('click', deleteSelectedNodes);
   document.getElementById('entities-graph-connect-selected')?.addEventListener('click', openConnectPanel);
+  document.getElementById('entities-graph-link-all-selected')?.addEventListener('click', bulkLinkAll);
+  document.getElementById('entities-graph-merge-selected')?.addEventListener('click', bulkMerge);
+
+  // Selection depth dropdown
+  document.getElementById('entities-graph-selection-depth')?.addEventListener('change', (e) => {
+    selectionDepth = parseInt(e.target.value, 10) || 0;
+  });
 
   // Add relation panel
   document.getElementById('entities-graph-cancel-relation')?.addEventListener('click', _closeRelationPanel);
