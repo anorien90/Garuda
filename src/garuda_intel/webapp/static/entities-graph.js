@@ -1396,6 +1396,10 @@ function linkWidthFromWeight(weight) {
   return Math.max(0.6, Math.log1p(w) * 1.8);
 }
 
+function nodeRadius(node) {
+  return Math.max(3, Math.sqrt(Math.max(2, (node.count || 1) * 0.4 + (node.score || 0) * 2)) * 4);
+}
+
 function shouldAnimateLink(l) {
   const key = `${l.source?.id || l.source}-${l.target?.id || l.target}-${l.kind || ''}`;
   return pseudoRandomFromKey(key) < PARTICLE_PROB;
@@ -1907,10 +1911,11 @@ async function renderGraph() {
         // Depth-based BFS selection on node click
         if (selectionDepth > 0) {
           const adj = _buildAdjacencyMap(filteredLinks);
-          const toVisit = [{ id: n.id, depth: 0 }];
+          const bfsQueue = [{ id: n.id, depth: 0 }];
           const visited = new Set([n.id]);
-          while (toVisit.length > 0) {
-            const { id, depth } = toVisit.shift();
+          let qi = 0;
+          while (qi < bfsQueue.length) {
+            const { id, depth } = bfsQueue[qi++];
             if (depth >= selectionDepth) continue;
             const neighbors = adj.get(id) || [];
             for (const nbrId of neighbors) {
@@ -1919,7 +1924,7 @@ async function renderGraph() {
                 const nbrNode = filteredNodes.find(nd => nd.id === nbrId);
                 if (nbrNode) {
                   selectedNodes.set(nbrId, nbrNode);
-                  toVisit.push({ id: nbrId, depth: depth + 1 });
+                  bfsQueue.push({ id: nbrId, depth: depth + 1 });
                 }
               }
             }
@@ -1937,7 +1942,7 @@ async function renderGraph() {
   // Custom node rendering for 2D mode: radial gradient glow + selected border
   if (!use3D) {
     graphInstance.nodeCanvasObject((node, ctx, globalScale) => {
-      const r = Math.max(3, Math.sqrt(Math.max(2, (node.count || 1) * 0.4 + (node.score || 0) * 2)) * 4);
+      const r = nodeRadius(node);
       const color = getNodeColor(node);
       const isSelected = selectedNodes.has(node.id);
 
@@ -1975,7 +1980,7 @@ async function renderGraph() {
         ctx.fillText(label.slice(0, 24), node.x, node.y + r + 2);
       }
     }).nodePointerAreaPaint((node, color, ctx) => {
-      const r = Math.max(3, Math.sqrt(Math.max(2, (node.count || 1) * 0.4 + (node.score || 0) * 2)) * 4);
+      const r = nodeRadius(node);
       ctx.beginPath();
       ctx.arc(node.x, node.y, r * 2.5, 0, 2 * Math.PI);
       ctx.fillStyle = color;
