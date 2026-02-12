@@ -27,7 +27,7 @@
         <option value="0">0</option><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="99">∞</option>
       </select>
     </label>
-    <span class="text-[10px] text-slate-400 ml-2">Filters: click=whitelist/blacklist, right-click=pre-request ⬆</span>
+    <span class="text-[10px] text-slate-400 ml-2">Filters: click to cycle states (default → blacklist → whitelist → pre-request)</span>
   </div>
 
   <!-- Filter pills (whitelist / blacklist) populated dynamically -->
@@ -52,10 +52,21 @@
           <span class="uppercase tracking-wide text-blue-600 dark:text-blue-400 font-semibold">Selection (<span id="entities-graph-selection-count">0</span>)</span>
           <button id="entities-graph-clear-selection" type="button" class="text-[10px] text-blue-500 hover:text-blue-700">Clear</button>
         </div>
+        <div class="flex items-center gap-2 text-[10px] text-slate-600 dark:text-slate-300">
+          <label>Depth:</label>
+          <select id="entities-graph-selection-depth" class="rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-0.5 text-[10px]">
+            <option value="0" selected>0 (clicked only)</option>
+            <option value="1">1 (neighbors)</option>
+            <option value="2">2 (2-hop)</option>
+            <option value="3">3 (3-hop)</option>
+          </select>
+        </div>
         <div id="entities-graph-selection-list" class="flex flex-wrap gap-1 max-h-24 overflow-y-auto"></div>
-        <div class="flex gap-1 pt-1 border-t border-blue-200 dark:border-blue-800">
+        <div class="flex flex-wrap gap-1 pt-1 border-t border-blue-200 dark:border-blue-800">
           <button id="entities-graph-delete-selected" type="button" class="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 text-[10px] font-semibold">Delete selected</button>
           <button id="entities-graph-connect-selected" type="button" class="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 hover:bg-green-200 text-[10px] font-semibold">Connect to…</button>
+          <button id="entities-graph-link-all-selected" type="button" class="px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 hover:bg-purple-200 text-[10px] font-semibold">Link All</button>
+          <button id="entities-graph-merge-selected" type="button" class="px-2 py-0.5 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:bg-orange-200 text-[10px] font-semibold">Merge Selected</button>
         </div>
       </div>
 
