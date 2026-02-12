@@ -224,8 +224,8 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
 
     def _handle_crawl(task_id, params):
         """Handle crawl tasks (standard, intelligent, or unified)."""
-        from ...search import run_crawl_api
-        from ...database.models import Entity
+        from ..search import run_crawl_api
+        from ..database.models import Entity
         
         mode = params.get("mode", "standard")
         tq.update_progress(task_id, 0.1, f"Starting {mode} crawl")
