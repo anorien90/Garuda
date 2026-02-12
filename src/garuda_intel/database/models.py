@@ -998,7 +998,7 @@ class StructureKind(BasicDataEntry):
     color: Mapped[str] = mapped_column(String(30), nullable=False, default="#94a3b8")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=40)
     parent_kind: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    aliases_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    aliases_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -1065,7 +1065,7 @@ class UserSetting(BasicDataEntry):
         GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
     )
     key: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
-    value_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    value_json: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __mapper_args__ = {

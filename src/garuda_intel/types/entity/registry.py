@@ -81,12 +81,12 @@ def derive_child_color(parent_hex: str, child_index: int = 0) -> str:
         r, g, b = int(parent_hex[0:2], 16), int(parent_hex[2:4], 16), int(parent_hex[4:6], 16)
     except ValueError:
         return "#94a3b8"
-    h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    h, lightness, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
     # Small hue shift per child, wrapping around 1.0
     h = (h + 0.04 * (child_index + 1)) % 1.0
     # Slight lightness bump to differentiate
-    l = min(1.0, l + 0.06)
-    nr, ng, nb = colorsys.hls_to_rgb(h, l, s)
+    lightness = min(1.0, lightness + 0.06)
+    nr, ng, nb = colorsys.hls_to_rgb(h, lightness, s)
     return f"#{int(nr*255):02x}{int(ng*255):02x}{int(nb*255):02x}"
 
 
