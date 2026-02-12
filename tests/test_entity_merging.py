@@ -426,8 +426,9 @@ class TestEntityTypeHierarchy:
     """Test entity type hierarchy definitions."""
     
     def test_headquarters_is_subtype_of_address(self):
-        """Verify headquarters is defined as subtype of address."""
-        assert ENTITY_TYPE_HIERARCHY.get("headquarters") == "address"
+        """Verify headquarters is defined as subtype of location (address is alias for location)."""
+        parent = ENTITY_TYPE_HIERARCHY.get("headquarters")
+        assert parent in ("address", "location")
     
     def test_ceo_is_subtype_of_person(self):
         """Verify ceo is defined as subtype of person."""
@@ -987,19 +988,12 @@ class TestDeduplicationPreservesHighestKind:
         # Run deduplication with a low threshold so all three match
         report = deduplicator.deduplicate_entities(dry_run=False, threshold=0.3)
         
-        # All 3 entities should still exist (soft-merge preserves duplicates)
+        # After hard-delete merge, only the canonical entity should remain
         with db_session() as session:
             remaining = session.execute(select(Entity)).scalars().all()
-            assert len(remaining) == 3
+            assert len(remaining) == 1
             
-            # Find the master entity (the one without merged_into)
-            master_entities = [
-                e for e in remaining
-                if not (e.metadata_json and e.metadata_json.get("merged_into"))
-            ]
-            assert len(master_entities) == 1
-            
-            survivor = master_entities[0]
+            survivor = remaining[0]
             # Should have the most specific kind: founder (rank 2)
             assert survivor.kind == "founder"
             # Should have the longest name
@@ -1010,22 +1004,9 @@ class TestDeduplicationPreservesHighestKind:
             assert survivor.data.get("born") == "1955"
             assert survivor.data.get("nationality") == "American"
             
-            # Subordinate entities should be marked with merged_into
-            subordinates = [
-                e for e in remaining
-                if e.metadata_json and e.metadata_json.get("merged_into")
-            ]
-            assert len(subordinates) == 2
-            for sub in subordinates:
-                assert sub.metadata_json["merged_into"] == str(survivor.id)
-            
-            # duplicate_of relationships should exist
-            dup_rels = session.execute(
-                select(Relationship).where(Relationship.relation_type == "duplicate_of")
-            ).scalars().all()
-            assert len(dup_rels) == 2
-            for rel in dup_rels:
-                assert str(rel.target_id) == str(survivor.id)
+            # merged_from metadata should record the merged entities
+            assert "merged_from" in survivor.metadata_json
+            assert len(survivor.metadata_json["merged_from"]) == 2
 
 
 class TestMergeTransfersAllReferences:
@@ -1083,31 +1064,31 @@ class TestMergeTransfersAllReferences:
             deduplicator._merge_entities(session, source_id, target_id)
             session.commit()
         
-        # Verify relationships survived and point to target, plus duplicate_of
+        # Verify relationships survived and point to target (source is deleted)
         with db_session() as session:
             relationships = session.execute(select(Relationship)).scalars().all()
-            # 2 original relationships redirected + 1 duplicate_of = 3
-            assert len(relationships) == 3, "Both relationships should survive plus duplicate_of"
+            # 2 original relationships redirected (no duplicate_of since source is deleted)
+            assert len(relationships) == 2, "Both relationships should survive after merge"
             
             # Check that original relationships now point to target instead of source
             rel_types = {}
-            dup_of_count = 0
             for rel in relationships:
-                if rel.relation_type == "duplicate_of":
-                    dup_of_count += 1
-                    assert str(rel.source_id) == source_id
-                    assert str(rel.target_id) == target_id
-                elif str(rel.source_id) == target_id and str(rel.target_id) == entity_c_id:
+                if str(rel.source_id) == target_id and str(rel.target_id) == entity_c_id:
                     rel_types['target_to_c'] = rel.relation_type
                 elif str(rel.source_id) == entity_c_id and str(rel.target_id) == target_id:
                     rel_types['c_to_target'] = rel.relation_type
             
             assert rel_types.get('target_to_c') == "FOUNDED_BY"
             assert rel_types.get('c_to_target') == "FOUNDED"
-            assert dup_of_count == 1
+            
+            # Source entity should be deleted
+            source = session.execute(
+                select(Entity).where(Entity.id == source_id)
+            ).scalar_one_or_none()
+            assert source is None, "Source entity should be deleted after merge"
     
     def test_merge_removes_self_referential_relationships(self, db_session):
-        """Test that self-referential relationships are removed after merge, but duplicate_of remains."""
+        """Test that self-referential relationships are removed after merge, source is deleted."""
         from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
         
         deduplicator = SemanticEntityDeduplicator(db_session)
@@ -1146,14 +1127,17 @@ class TestMergeTransfersAllReferences:
             deduplicator._merge_entities(session, source_id, target_id)
             session.commit()
         
-        # Verify self-referential relationship is removed but duplicate_of exists
+        # Verify self-referential relationship is removed and source is deleted
         with db_session() as session:
             relationships = session.execute(select(Relationship)).scalars().all()
-            # Only the duplicate_of relationship should remain
-            assert len(relationships) == 1, "Only duplicate_of relationship should remain"
-            assert relationships[0].relation_type == "duplicate_of"
-            assert str(relationships[0].source_id) == source_id
-            assert str(relationships[0].target_id) == target_id
+            # Self-referential relationship should be removed, no duplicate_of since source deleted
+            assert len(relationships) == 0, "Self-referential relationships should be removed"
+            
+            # Source entity should be deleted
+            source = session.execute(
+                select(Entity).where(Entity.id == source_id)
+            ).scalar_one_or_none()
+            assert source is None, "Source entity should be deleted after merge"
     
     def test_merge_deduplicates_relationships(self, db_session):
         """Test that duplicate relationships are deduplicated, plus duplicate_of is created."""
@@ -1207,13 +1191,12 @@ class TestMergeTransfersAllReferences:
             deduplicator._merge_entities(session, source_id, target_id)
             session.commit()
         
-        # Verify: 1 deduplicated FOUNDED_BY + 1 duplicate_of = 2 relationships
+        # Verify: 1 deduplicated FOUNDED_BY (no duplicate_of since source is deleted)
         with db_session() as session:
             relationships = session.execute(select(Relationship)).scalars().all()
-            assert len(relationships) == 2, "Deduplicated relationship + duplicate_of should remain"
+            assert len(relationships) == 1, "Only deduplicated relationship should remain"
             
             founded_by_rels = [r for r in relationships if r.relation_type == "FOUNDED_BY"]
-            dup_of_rels = [r for r in relationships if r.relation_type == "duplicate_of"]
             
             assert len(founded_by_rels) == 1
             rel = founded_by_rels[0]
@@ -1221,9 +1204,11 @@ class TestMergeTransfersAllReferences:
             assert str(rel.target_id) == entity_c_id
             assert rel.relation_type == "FOUNDED_BY"
             
-            assert len(dup_of_rels) == 1
-            assert str(dup_of_rels[0].source_id) == source_id
-            assert str(dup_of_rels[0].target_id) == target_id
+            # Source entity should be deleted
+            source = session.execute(
+                select(Entity).where(Entity.id == source_id)
+            ).scalar_one_or_none()
+            assert source is None, "Source entity should be deleted after merge"
     
     def test_merge_transfers_entity_field_values(self, db_session):
         """Test that EntityFieldValue records are transferred to target."""
@@ -1491,11 +1476,11 @@ class TestMergeTransfersAllReferences:
             assert merge_history[0]["name"] == "Microsoft"
 
 
-class TestSoftMergeProvenance:
-    """Test that soft-merge preserves duplicate entities for provenance tracking."""
+class TestHardDeleteMerge:
+    """Test that merge deletes source entity after transferring all data."""
     
-    def test_source_entity_preserved_after_merge(self, db_session):
-        """Test that the source entity is not deleted after merge."""
+    def test_source_entity_deleted_after_merge(self, db_session):
+        """Test that the source entity is deleted after merge."""
         from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
         
         deduplicator = SemanticEntityDeduplicator(db_session)
@@ -1522,15 +1507,22 @@ class TestSoftMergeProvenance:
             deduplicator._merge_entities(session, source_id, target_id)
             session.commit()
         
-        # Source entity should still exist
+        # Source entity should be deleted
         with db_session() as session:
             source = session.execute(
                 select(Entity).where(Entity.id == source_id)
             ).scalar_one_or_none()
-            assert source is not None, "Source entity should be preserved (not deleted)"
+            assert source is None, "Source entity should be deleted after merge"
+            
+            # Target should have inherited source data
+            target = session.execute(
+                select(Entity).where(Entity.id == target_id)
+            ).scalar_one()
+            assert target.data.get("industry") == "tech"
+            assert target.data.get("website") == "microsoft.com"
     
-    def test_source_entity_marked_with_merged_into(self, db_session):
-        """Test that the source entity is marked with merged_into metadata."""
+    def test_merged_from_metadata_recorded(self, db_session):
+        """Test that target entity records merged_from metadata."""
         from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
         
         deduplicator = SemanticEntityDeduplicator(db_session)
@@ -1556,15 +1548,18 @@ class TestSoftMergeProvenance:
             session.commit()
         
         with db_session() as session:
-            source = session.execute(
-                select(Entity).where(Entity.id == source_id)
+            target = session.execute(
+                select(Entity).where(Entity.id == target_id)
             ).scalar_one()
-            assert source.metadata_json is not None
-            assert source.metadata_json.get("merged_into") == target_id
-            assert "merged_at" in source.metadata_json
+            assert target.metadata_json is not None
+            assert "merged_from" in target.metadata_json
+            merged_entries = target.metadata_json["merged_from"]
+            assert len(merged_entries) == 1
+            assert merged_entries[0]["id"] == source_id
+            assert merged_entries[0]["name"] == "Bill Gates"
     
-    def test_duplicate_of_relationship_created(self, db_session):
-        """Test that a duplicate_of relationship is created from source → target."""
+    def test_no_duplicate_of_relationship_after_merge(self, db_session):
+        """Test that no duplicate_of relationship exists since source is deleted."""
         from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
         
         deduplicator = SemanticEntityDeduplicator(db_session)
@@ -1590,22 +1585,14 @@ class TestSoftMergeProvenance:
             session.commit()
         
         with db_session() as session:
-            dup_rel = session.execute(
-                select(Relationship).where(
-                    Relationship.source_id == source_id,
-                    Relationship.target_id == target_id,
-                    Relationship.relation_type == "duplicate_of",
-                )
-            ).scalar_one_or_none()
-            
-            assert dup_rel is not None, "duplicate_of relationship should be created"
-            assert dup_rel.metadata_json is not None
-            assert "merged_at" in dup_rel.metadata_json
-            assert dup_rel.metadata_json.get("original_name") == "MSFT"
-            assert dup_rel.metadata_json.get("original_kind") == "company"
+            # No duplicate_of relationship should exist since source entity is deleted
+            dup_rels = session.execute(
+                select(Relationship).where(Relationship.relation_type == "duplicate_of")
+            ).scalars().all()
+            assert len(dup_rels) == 0, "No duplicate_of relationship after hard-delete merge"
     
-    def test_provenance_preserved_through_page_references(self, db_session):
-        """Test that source entity's page references are preserved for provenance."""
+    def test_page_references_transferred_before_delete(self, db_session):
+        """Test that source entity's page references are transferred to target before deletion."""
         from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
         
         deduplicator = SemanticEntityDeduplicator(db_session)
@@ -1624,7 +1611,7 @@ class TestSoftMergeProvenance:
             session.add_all([source, target])
             session.commit()
             
-            # Create a page associated with the source (provenance)
+            # Create a page associated with the source
             page = Page(
                 id=uuid.uuid4(),
                 url="https://intel-source.com/bill-gates",
@@ -1643,21 +1630,18 @@ class TestSoftMergeProvenance:
             deduplicator._merge_entities(session, source_id, target_id)
             session.commit()
         
-        # Source entity should still exist and be linked via duplicate_of
+        # Source entity should be deleted, page transferred to target
         with db_session() as session:
             source = session.execute(
                 select(Entity).where(Entity.id == source_id)
             ).scalar_one_or_none()
-            assert source is not None, "Source entity preserved for provenance"
+            assert source is None, "Source entity should be deleted"
             
-            # duplicate_of relationship exists
-            dup_rel = session.execute(
-                select(Relationship).where(
-                    Relationship.source_id == source_id,
-                    Relationship.relation_type == "duplicate_of",
-                )
-            ).scalar_one_or_none()
-            assert dup_rel is not None
+            # Page should now point to target
+            page = session.execute(
+                select(Page).where(Page.id == page_id)
+            ).scalar_one()
+            assert str(page.entity_id) == target_id, "Page should be transferred to target"
     
     def test_richest_name_wins_in_merge(self, db_session):
         """Test that the longest (richest) name is preserved on the target."""
@@ -1724,3 +1708,663 @@ class TestSoftMergeProvenance:
             ).scalar_one()
             # "person" (rank 1) should win over "entity" (rank 0)
             assert target.kind == "person"
+
+
+class TestComprehensiveStructuredDataExtraction:
+    """Test that entity extraction captures comprehensive structured data."""
+    
+    def test_product_entity_captures_specifications(self):
+        """Test that product entities capture specifications, prices, providers."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+        
+        finding = {
+            "products": [
+                {
+                    "name": "Widget Pro X",
+                    "description": "Advanced industrial widget",
+                    "manufacturer": "Acme Corp",
+                    "price": "$299.99",
+                    "currency": "USD",
+                    "provider": "TechDistro Inc",
+                    "version": "3.2",
+                    "specifications": {"weight": "1.5kg", "dimensions": "10x10x5cm", "power": "120V"},
+                    "sku": "WPX-3200",
+                    "rating": "4.8/5",
+                    "availability": "In Stock",
+                    "additional_attributes": {"warranty": "2 years", "material": "titanium"},
+                }
+            ]
+        }
+        
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        
+        product = entities[0]
+        assert product["name"] == "Widget Pro X"
+        assert product["kind"] == "product"
+        
+        # Core product data
+        assert product["data"]["price"] == "$299.99"
+        assert product["data"]["provider"] == "TechDistro Inc"
+        assert product["data"]["version"] == "3.2"
+        assert product["data"]["specifications"] == {"weight": "1.5kg", "dimensions": "10x10x5cm", "power": "120V"}
+        assert product["data"]["sku"] == "WPX-3200"
+        assert product["data"]["rating"] == "4.8/5"
+        assert product["data"]["availability"] == "In Stock"
+        # Additional attributes merged into data
+        assert product["data"]["warranty"] == "2 years"
+        assert product["data"]["material"] == "titanium"
+    
+    def test_location_entity_captures_detailed_address(self):
+        """Test that location entities capture street, postal code, lat/lng."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+        
+        finding = {
+            "locations": [
+                {
+                    "address": "1 Microsoft Way",
+                    "street": "Microsoft Way",
+                    "city": "Redmond",
+                    "state": "Washington",
+                    "postal_code": "98052",
+                    "country": "USA",
+                    "type": "headquarters",
+                    "latitude": "47.6405",
+                    "longitude": "-122.1292",
+                    "phone": "+1-425-882-8080",
+                    "additional_attributes": {"timezone": "PST", "campus_size": "500 acres"},
+                }
+            ]
+        }
+        
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        
+        loc = entities[0]
+        assert loc["data"]["street"] == "Microsoft Way"
+        assert loc["data"]["state"] == "Washington"
+        assert loc["data"]["postal_code"] == "98052"
+        assert loc["data"]["latitude"] == "47.6405"
+        assert loc["data"]["longitude"] == "-122.1292"
+        assert loc["data"]["phone"] == "+1-425-882-8080"
+        assert loc["data"]["timezone"] == "PST"
+        assert loc["data"]["campus_size"] == "500 acres"
+    
+    def test_person_entity_captures_additional_attributes(self):
+        """Test that person entities capture extended attributes."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+        
+        finding = {
+            "persons": [
+                {
+                    "name": "John Smith",
+                    "title": "CEO",
+                    "role": "chief executive officer",
+                    "organization": "Acme Corp",
+                    "email": "john@acme.com",
+                    "education": "MBA Stanford",
+                    "nationality": "American",
+                    "additional_attributes": {"linkedin": "linkedin.com/in/johnsmith"},
+                }
+            ]
+        }
+        
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        
+        person = entities[0]
+        assert person["data"]["email"] == "john@acme.com"
+        assert person["data"]["education"] == "MBA Stanford"
+        assert person["data"]["nationality"] == "American"
+        assert person["data"]["linkedin"] == "linkedin.com/in/johnsmith"
+    
+    def test_organization_entity_captures_additional_attributes(self):
+        """Test that organization entities capture registration numbers, certifications."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+        
+        finding = {
+            "organizations": [
+                {
+                    "name": "Acme Corp",
+                    "type": "company",
+                    "industry": "Manufacturing",
+                    "description": "Leading widget manufacturer",
+                    "registration_number": "DE123456789",
+                    "tax_id": "US-EIN-12-3456789",
+                    "employee_count": "5000",
+                    "certifications": ["ISO 9001", "ISO 14001"],
+                    "additional_attributes": {"stock_exchange": "NYSE", "ticker": "ACME"},
+                }
+            ]
+        }
+        
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        
+        org = entities[0]
+        assert org["data"]["registration_number"] == "DE123456789"
+        assert org["data"]["tax_id"] == "US-EIN-12-3456789"
+        assert org["data"]["employee_count"] == "5000"
+        assert org["data"]["certifications"] == ["ISO 9001", "ISO 14001"]
+        assert org["data"]["stock_exchange"] == "NYSE"
+        assert org["data"]["ticker"] == "ACME"
+    
+    def test_unknown_extra_fields_captured(self):
+        """Test that arbitrary unknown fields are captured from entity extraction."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+        
+        finding = {
+            "products": [
+                {
+                    "name": "Custom Widget",
+                    "description": "A special widget",
+                    "custom_field_1": "custom_value_1",
+                    "proprietary_code": "X-42",
+                }
+            ]
+        }
+        
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        
+        product = entities[0]
+        # Unknown fields should be captured
+        assert product["data"]["custom_field_1"] == "custom_value_1"
+        assert product["data"]["proprietary_code"] == "X-42"
+
+
+class TestMergeInheritsAllStructuredData:
+    """Test that merge transfers ALL structured data and relations, then deletes source."""
+    
+    def test_merge_transfers_all_data_fields(self, db_session):
+        """Test that all structured data fields are transferred from source to target."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Widget Pro",
+                kind="product",
+                data={
+                    "price": "$299.99",
+                    "specifications": {"weight": "1.5kg"},
+                    "provider": "TechDistro",
+                    "rating": "4.8",
+                },
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Widget Pro X",
+                kind="product",
+                data={
+                    "manufacturer": "Acme Corp",
+                    "description": "Advanced widget",
+                },
+            )
+            session.add_all([source, target])
+            session.commit()
+            source_id = str(source.id)
+            target_id = str(target.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        with db_session() as session:
+            # Source should be deleted
+            source = session.execute(
+                select(Entity).where(Entity.id == source_id)
+            ).scalar_one_or_none()
+            assert source is None, "Source entity should be deleted after merge"
+            
+            # Target should have all data
+            target = session.execute(
+                select(Entity).where(Entity.id == target_id)
+            ).scalar_one()
+            assert target.data["manufacturer"] == "Acme Corp"
+            assert target.data["description"] == "Advanced widget"
+            assert target.data["price"] == "$299.99"
+            assert target.data["specifications"] == {"weight": "1.5kg"}
+            assert target.data["provider"] == "TechDistro"
+            assert target.data["rating"] == "4.8"
+    
+    def test_merge_higher_ranked_data_wins(self, db_session):
+        """Test that the target (higher ranked) entity's data takes priority."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            source = Entity(
+                id=uuid.uuid4(),
+                name="Acme Corp",
+                kind="company",
+                data={
+                    "industry": "Old Industry",
+                    "founded": "1990",
+                    "ceo": "Old CEO",
+                },
+            )
+            target = Entity(
+                id=uuid.uuid4(),
+                name="Acme Corporation",
+                kind="company",
+                data={
+                    "industry": "Manufacturing",
+                    "website": "acme.com",
+                },
+            )
+            session.add_all([source, target])
+            session.commit()
+            source_id = str(source.id)
+            target_id = str(target.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        with db_session() as session:
+            target = session.execute(
+                select(Entity).where(Entity.id == target_id)
+            ).scalar_one()
+            # Target's existing data should win
+            assert target.data["industry"] == "Manufacturing"
+            assert target.data["website"] == "acme.com"
+            # Source fills gaps
+            assert target.data["founded"] == "1990"
+            assert target.data["ceo"] == "Old CEO"
+    
+    def test_merge_transfers_all_relationships(self, db_session):
+        """Test that all relationships are transferred from source to target."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            source = Entity(id=uuid.uuid4(), name="Source Co", kind="company")
+            target = Entity(id=uuid.uuid4(), name="Source Company", kind="company")
+            person = Entity(id=uuid.uuid4(), name="John Smith", kind="person")
+            location = Entity(id=uuid.uuid4(), name="New York", kind="location")
+            product = Entity(id=uuid.uuid4(), name="Widget", kind="product")
+            session.add_all([source, target, person, location, product])
+            session.commit()
+            
+            # Create various relationships from source
+            rels = [
+                Relationship(id=uuid.uuid4(), source_id=source.id, target_id=person.id, relation_type="employs"),
+                Relationship(id=uuid.uuid4(), source_id=source.id, target_id=location.id, relation_type="headquartered_at"),
+                Relationship(id=uuid.uuid4(), source_id=product.id, target_id=source.id, relation_type="produced_by"),
+            ]
+            session.add_all(rels)
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        with db_session() as session:
+            # Source should be deleted
+            assert session.execute(
+                select(Entity).where(Entity.id == source_id)
+            ).scalar_one_or_none() is None
+            
+            # All relationships should now point to/from target
+            rels = session.execute(select(Relationship)).scalars().all()
+            assert len(rels) == 3
+            
+            for rel in rels:
+                assert str(rel.source_id) != source_id
+                assert str(rel.target_id) != source_id
+    
+    def test_merge_transfers_intelligence_records(self, db_session):
+        """Test that intelligence records are transferred to target before deletion."""
+        from garuda_intel.extractor.entity_merger import SemanticEntityDeduplicator
+        
+        deduplicator = SemanticEntityDeduplicator(db_session)
+        
+        with db_session() as session:
+            source = Entity(id=uuid.uuid4(), name="Source", kind="company")
+            target = Entity(id=uuid.uuid4(), name="Target", kind="company")
+            session.add_all([source, target])
+            session.commit()
+            
+            # Create an intelligence record for source
+            intel = Intelligence(
+                id=uuid.uuid4(),
+                entity_id=source.id,
+                entity_name="Source",
+                entity_type="company",
+                confidence=0.9,
+                data={"key": "value"},
+            )
+            session.add(intel)
+            session.commit()
+            
+            source_id = str(source.id)
+            target_id = str(target.id)
+            intel_id = str(intel.id)
+        
+        with db_session() as session:
+            deduplicator._merge_entities(session, source_id, target_id)
+            session.commit()
+        
+        with db_session() as session:
+            # Intelligence should now point to target
+            intel = session.execute(
+                select(Intelligence).where(Intelligence.id == intel_id)
+            ).scalar_one()
+            assert str(intel.entity_id) == target_id
+
+
+class TestDynamicEntityTypeDiscovery:
+    """Test that entity types can be discovered dynamically via LLM extraction."""
+
+    def test_llm_entity_type_registers_new_kind(self):
+        """Test that an LLM-provided entity_type gets registered in the registry."""
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+
+        finding = {
+            "organizations": [
+                {
+                    "name": "Red Cross",
+                    "type": "nonprofit",
+                    "description": "Humanitarian organization",
+                    "entity_type": "humanitarian_ngo",
+                    "parent_type": "org",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        assert entities[0]["kind"] == "humanitarian_ngo"
+
+        # Verify it was registered in the registry
+        registry = EntityKindRegistry.instance()
+        kind_info = registry.get_kind("humanitarian_ngo")
+        assert kind_info is not None
+        assert kind_info.parent_kind == "org"
+
+    def test_llm_entity_type_for_person(self):
+        """Test that an LLM-provided entity_type for a person gets registered."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+
+        finding = {
+            "persons": [
+                {
+                    "name": "Dr. Jane Doe",
+                    "title": "Chief Medical Officer",
+                    "role": "CMO",
+                    "entity_type": "cmo",
+                    "parent_type": "person",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        assert entities[0]["kind"] == "cmo"
+
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+        registry = EntityKindRegistry.instance()
+        kind_info = registry.get_kind("cmo")
+        assert kind_info is not None
+        assert kind_info.parent_kind == "person"
+
+    def test_llm_entity_type_for_product(self):
+        """Test that an LLM-provided entity_type for a product gets registered."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+
+        finding = {
+            "products": [
+                {
+                    "name": "CloudWatch Pro",
+                    "description": "Monitoring SaaS",
+                    "entity_type": "saas",
+                    "parent_type": "product",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        assert entities[0]["kind"] == "saas"
+
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+        registry = EntityKindRegistry.instance()
+        kind_info = registry.get_kind("saas")
+        assert kind_info is not None
+        assert kind_info.parent_kind == "product"
+
+    def test_llm_entity_type_for_location(self):
+        """Test that an LLM-provided entity_type for a location gets registered."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+
+        finding = {
+            "locations": [
+                {
+                    "address": "Building 42, Data Center Park",
+                    "city": "Ashburn",
+                    "country": "USA",
+                    "entity_type": "data_center",
+                    "parent_type": "location",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        assert entities[0]["kind"] == "data_center"
+
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+        registry = EntityKindRegistry.instance()
+        kind_info = registry.get_kind("data_center")
+        assert kind_info is not None
+        assert kind_info.parent_kind == "location"
+
+    def test_llm_entity_type_for_event(self):
+        """Test that an LLM-provided entity_type for an event gets registered."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+
+        finding = {
+            "events": [
+                {
+                    "title": "Microsoft acquires Activision",
+                    "date": "2023",
+                    "entity_type": "merger",
+                    "parent_type": "event",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        assert entities[0]["kind"] == "merger"
+
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+        registry = EntityKindRegistry.instance()
+        kind_info = registry.get_kind("merger")
+        assert kind_info is not None
+        assert kind_info.parent_kind == "event"
+
+    def test_dynamic_hierarchy_visible_in_global_dicts(self):
+        """Test that dynamically registered kinds show up in ENTITY_TYPE_HIERARCHY."""
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+
+        registry = EntityKindRegistry.instance()
+        # Register a completely new kind
+        registry.register_kind(
+            name="test_dynamic_kind_xyz",
+            parent_kind="person",
+            description="Test dynamic kind",
+        )
+
+        # Now check: the dynamic hierarchy should include this new kind
+        assert "test_dynamic_kind_xyz" in ENTITY_TYPE_HIERARCHY
+        assert ENTITY_TYPE_HIERARCHY["test_dynamic_kind_xyz"] == "person"
+
+    def test_fallback_to_detection_when_no_entity_type(self):
+        """Test that when entity_type is not provided, existing detection logic is used."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+        )
+
+        finding = {
+            "persons": [
+                {
+                    "name": "Jane Smith",
+                    "title": "CEO",
+                    "role": "chief executive officer",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        # Should detect CEO from title/role without entity_type field
+        assert entities[0]["kind"] == "ceo"
+
+
+class TestFillerValueSanitization:
+    """Test that filler/placeholder values are stripped from LLM responses."""
+
+    def test_sanitize_simple_fillers(self):
+        """Test that common filler strings are stripped."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+        )
+
+        data = {
+            "basic_info": {
+                "official_name": "Acme Corp",
+                "ticker": "not mentioned",
+                "industry": "Technology",
+                "description": "N/A",
+                "founded": "not available",
+                "website": "https://acme.com",
+            }
+        }
+
+        result = extractor._sanitize_filler_values(data)
+        basic_info = result["basic_info"]
+        assert basic_info.get("official_name") == "Acme Corp"
+        assert "ticker" not in basic_info  # "not mentioned" should be removed
+        assert basic_info.get("industry") == "Technology"
+        assert "description" not in basic_info  # "N/A" should be removed
+        assert "founded" not in basic_info  # "not available" should be removed
+        assert basic_info.get("website") == "https://acme.com"
+
+    def test_sanitize_nested_fillers(self):
+        """Test that filler values are stripped from nested structures."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+        )
+
+        data = {
+            "persons": [
+                {
+                    "name": "John Doe",
+                    "title": "not mentioned in the text",
+                    "role": "Engineer",
+                    "bio": "unknown",
+                    "email": "Not Specified",
+                },
+                {
+                    "name": "not mentioned",
+                },
+            ]
+        }
+
+        result = extractor._sanitize_filler_values(data)
+        # The second person should be removed since name becomes empty
+        persons = result["persons"]
+        assert len(persons) == 1
+        person = persons[0]
+        assert person["name"] == "John Doe"
+        assert "title" not in person
+        assert person["role"] == "Engineer"
+        assert "bio" not in person
+        assert "email" not in person
+
+    def test_sanitize_preserves_valid_data(self):
+        """Test that valid data is not stripped."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+        )
+
+        data = {
+            "basic_info": {
+                "official_name": "None Corp",
+                "industry": "Technology",
+                "founded": "2020",
+            },
+            "products": [
+                {"name": "Widget", "price": "$29.99"},
+            ],
+        }
+
+        # "None Corp" should NOT be stripped - it looks like a real name
+        result = extractor._sanitize_filler_values(data)
+        assert result["basic_info"]["official_name"] == "None Corp"
+        assert result["basic_info"]["industry"] == "Technology"
+        assert len(result["products"]) == 1
+
+    def test_sanitize_handles_empty_input(self):
+        """Test that empty/null inputs are handled gracefully."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+        )
+
+        assert extractor._sanitize_filler_values({}) == {}
+        assert extractor._sanitize_filler_values([]) == []
+        assert extractor._sanitize_filler_values("") == ""
+        assert extractor._sanitize_filler_values(None) is None
+        assert extractor._sanitize_filler_values(42) == 42

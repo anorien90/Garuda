@@ -236,11 +236,19 @@ class IntelExtractor:
             This includes:
             - ALL persons mentioned (executives, founders, employees, board members, etc.)
             - ALL organizations/companies mentioned (competitors, partners, subsidiaries, etc.)
-            - ALL products and services mentioned
-            - ALL locations mentioned (headquarters, offices, cities, countries)
+            - ALL products and services mentioned with ALL available details (specifications, prices, providers, versions, SKUs, ratings, weights, dimensions, etc.)
+            - ALL locations mentioned with ALL available details (street, city, postal_code, state, country, latitude, longitude, etc.)
             - ALL financial metrics (revenue, profit, market cap, etc.)
             - ALL events (acquisitions, launches, announcements, etc.)
             - ALL relationships between any entities mentioned in the text
+            - ANY other structured data or attributes present (certifications, awards, patents, licenses, categories, tags, etc.)
+            
+            IMPORTANT: Capture as many additional attributes as possible for each entity.
+            For products: include specifications, prices, providers, versions, dimensions, weights, ratings, availability, etc.
+            For locations: include street, postal_code, state, latitude, longitude, phone, fax, etc.
+            For persons: include email, phone, social media, education, nationality, etc.
+            For organizations: include registration_number, tax_id, employee_count, revenue, certifications, etc.
+            Include ALL key-value pairs you can extract, even if not in the schema below - add them to an "additional_attributes" dict.
             
             For relationships, extract EVERY explicit or implicit connection:
             - Employment: "Person X works at Company Y" -> source: Person X, target: Company Y, relation_type: employed_by
@@ -250,6 +258,7 @@ class IntelExtractor:
             - Competition: "Competes with" -> source: Company A, target: Company B, relation_type: competes_with
             - Location: "Headquartered in" -> source: Company, target: Location, relation_type: headquartered_in
             - Product ownership: "Developed by" -> source: Product, target: Company, relation_type: developed_by
+            - ANY other relationship type found in the text (e.g., supplies_to, regulates, certifies, sponsors, etc.)
             """
 
         prompt = f"""
@@ -268,22 +277,34 @@ class IntelExtractor:
         === TEXT TO ANALYZE ===
         {text_chunk}
 
-        Return ONLY JSON with the following schema (omit empty fields):
+        CRITICAL RULES:
+        1. NEVER use filler text like "not mentioned", "not available", "N/A", "unknown", "none", "n/a", "not specified", "not provided", "not disclosed", "not found", "no information", "no data" as field values. If information is not present in the text, OMIT the field entirely or leave it as an empty string "".
+        2. For entity_type fields: discover and assign the most specific entity type you can determine from context. Use descriptive types like "government_agency", "nonprofit", "university", "hospital", "law_firm", "bank", "sports_team", "media_outlet", etc. Do NOT default to generic types.
+        3. For parent_type fields: specify what broader category this entity type belongs to (e.g., "government_agency" -> parent_type: "organization", "hospital" -> parent_type: "organization", "cto" -> parent_type: "person").
+
+        Return ONLY JSON with the following schema (omit empty fields, include any additional attributes you find):
         {{
-          "basic_info": {{"official_name":"","ticker":"","industry":"","description":"","founded":"","website":""}},
-          "persons": [ {{"name":"","title":"","role":"","bio":"","organization":""}} ],
+          "basic_info": {{"official_name":"","ticker":"","industry":"","description":"","founded":"","website":"","entity_type":"","parent_type":"","additional_attributes":{{}}}},
+          "persons": [ {{"name":"","title":"","role":"","bio":"","organization":"","email":"","phone":"","social_media":"","education":"","nationality":"","entity_type":"","parent_type":"person","additional_attributes":{{}}}} ],
           "jobs": [ {{"title":"","location":"","description":""}} ],
           "metrics": [ {{"type":"","value":"","unit":"","date":"","entity":""}} ],
-          "locations": [ {{"address":"","city":"","country":"","type":"","associated_entity":""}} ],
+          "locations": [ {{"address":"","street":"","city":"","state":"","postal_code":"","country":"","type":"","associated_entity":"","latitude":"","longitude":"","phone":"","fax":"","entity_type":"","parent_type":"location","additional_attributes":{{}}}} ],
           "financials": [ {{"year":"","revenue":"","currency":"","profit":"","entity":""}} ],
-          "products": [ {{"name":"","description":"","status":"","manufacturer":""}} ],
-          "events": [ {{"title":"","date":"","description":"","participants":[]}} ],
-          "organizations": [ {{"name":"","type":"","industry":"","description":""}} ],
+          "products": [ {{"name":"","description":"","status":"","manufacturer":"","price":"","currency":"","provider":"","version":"","specifications":{{}},"category":"","sku":"","rating":"","weight":"","dimensions":"","availability":"","entity_type":"","parent_type":"product","additional_attributes":{{}}}} ],
+          "events": [ {{"title":"","date":"","description":"","participants":[],"entity_type":"","parent_type":"event"}} ],
+          "organizations": [ {{"name":"","type":"","industry":"","description":"","registration_number":"","tax_id":"","employee_count":"","certifications":[],"entity_type":"","parent_type":"","additional_attributes":{{}}}} ],
           "relationships": [ {{"source":"","target":"","relation_type":"","description":"","source_type":"","target_type":""}} ]
         }}
         
+        For entity_type: assign the most specific type discovered from context. Examples:
+        - A hospital: entity_type: "hospital", parent_type: "organization"
+        - A CEO: entity_type: "ceo", parent_type: "person"
+        - A warehouse: entity_type: "warehouse", parent_type: "location"
+        - A SaaS product: entity_type: "saas", parent_type: "product"
+        - A merger event: entity_type: "merger", parent_type: "event"
+        
         For relationships, extract ALL connections between entities mentioned in the text.
-        Include source_type and target_type (person, organization, product, location, event) for each relationship.
+        Include source_type and target_type for each relationship.
         Examples: 
         - {{"source":"Microsoft","target":"Satya Nadella","relation_type":"employs","description":"Nadella is CEO","source_type":"organization","target_type":"person"}}
         - {{"source":"Microsoft","target":"LinkedIn","relation_type":"acquired","description":"Acquired in 2016","source_type":"organization","target_type":"organization"}}
@@ -295,7 +316,8 @@ class IntelExtractor:
             cached_response = self.cache_manager.get_llm_response(prompt)
             if cached_response:
                 self.logger.debug("Using cached LLM response for extraction")
-                return self.text_processor.safe_json_loads(cached_response, fallback={})
+                result = self.text_processor.safe_json_loads(cached_response, fallback={})
+                return self._sanitize_filler_values(result)
 
         max_retries = 3
         for attempt in range(max_retries):
@@ -308,7 +330,8 @@ class IntelExtractor:
                 if self.cache_manager and result_raw:
                     self.cache_manager.cache_llm_response(prompt, result_raw)
                 
-                return self.text_processor.safe_json_loads(result_raw, fallback={})
+                result = self.text_processor.safe_json_loads(result_raw, fallback={})
+                return self._sanitize_filler_values(result)
             except Exception as e:
                 if attempt < max_retries - 1:
                     self.logger.warning(f"Extraction JSON parse error (attempt {attempt+1}): {e}")
@@ -316,6 +339,45 @@ class IntelExtractor:
                 else:
                     self.logger.error(f"Failed to extract intelligence after {max_retries} attempts.")
                     return {}
+
+    # Filler patterns that LLMs commonly return instead of leaving fields blank
+    _FILLER_PATTERNS = {
+        "not mentioned", "not mentioned in the text", "not available", "not specified",
+        "not provided", "not disclosed", "not found", "not applicable", "not known",
+        "no information", "no data", "no data available", "none", "n/a", "na",
+        "unknown", "unspecified", "undisclosed", "null", "-", "--", "---",
+        "not mentioned in text", "not given", "not stated", "not listed",
+        "information not available", "data not available",
+    }
+
+    def _sanitize_filler_values(self, data: Any) -> Any:
+        """Recursively strip filler/placeholder values from LLM extraction results.
+
+        LLMs often return phrases like "not mentioned in the text" or "N/A" instead
+        of leaving fields empty. This method replaces such values with empty strings
+        so downstream processing treats them as missing data.
+        """
+        if isinstance(data, str):
+            if data.strip().lower() in self._FILLER_PATTERNS:
+                return ""
+            return data
+        if isinstance(data, dict):
+            cleaned = {}
+            for k, v in data.items():
+                cleaned_v = self._sanitize_filler_values(v)
+                # Only keep non-empty values in the dict
+                if cleaned_v != "" and cleaned_v != [] and cleaned_v != {}:
+                    cleaned[k] = cleaned_v
+            return cleaned
+        if isinstance(data, list):
+            cleaned_list = []
+            for item in data:
+                cleaned_item = self._sanitize_filler_values(item)
+                # Skip empty strings/dicts but keep False, 0, etc.
+                if cleaned_item != "" and cleaned_item != {} and cleaned_item is not None:
+                    cleaned_list.append(cleaned_item)
+            return cleaned_list
+        return data
 
     def extract_entities_from_finding(
         self, 
@@ -351,18 +413,23 @@ class IntelExtractor:
         if basic_info.get("official_name"):
             # Determine entity kind based on available data using registry
             kind = "entity"
-            if basic_info.get("ticker") or basic_info.get("industry"):
-                kind = "company"
-            elif basic_info.get("entity_type"):
+            if basic_info.get("entity_type"):
                 raw_kind = basic_info.get("entity_type")
+                parent_hint = basic_info.get("parent_type")
                 # Use registry to normalize and validate the kind
-                kind = self._resolve_entity_kind(raw_kind)
+                kind = self._resolve_entity_kind(raw_kind, parent_kind_hint=parent_hint)
+            elif basic_info.get("ticker") or basic_info.get("industry"):
+                kind = "company"
             
             # Normalize kind through registry
             kind = self.kind_registry.normalize_kind(kind)
             
-            # Store all basic info as entity data
+            # Store all basic info as entity data, including any additional attributes
             entity_data = {k: v for k, v in basic_info.items() if v and k != "official_name"}
+            # Merge additional_attributes into entity_data
+            for ak, av in basic_info.get("additional_attributes", {}).items():
+                if av and ak not in entity_data:
+                    entity_data[ak] = av
             
             # Get inherited fields from parent kind if applicable
             kind_info = self.kind_registry.get_kind(kind)
@@ -384,8 +451,14 @@ class IntelExtractor:
                     p = {"name": p}
 
             if p.get("name"):
-                # Detect specialized person types using registry
-                person_kind = self._detect_person_kind(p)
+                # Use LLM-provided entity_type if available, otherwise detect from title/role
+                llm_entity_type = p.get("entity_type")
+                llm_parent_type = p.get("parent_type")
+                if llm_entity_type:
+                    person_kind = self._resolve_entity_kind(llm_entity_type, parent_kind_hint=llm_parent_type or "person")
+                else:
+                    # Detect specialized person types using registry
+                    person_kind = self._detect_person_kind(p)
                 
                 # Normalize through registry
                 person_kind = self.kind_registry.normalize_kind(person_kind)
@@ -398,9 +471,26 @@ class IntelExtractor:
                     "role": p.get("role"),
                     "bio": p.get("bio"),
                     "organization": p.get("organization"),
+                    "email": p.get("email"),
+                    "phone": p.get("phone"),
+                    "social_media": p.get("social_media"),
+                    "education": p.get("education"),
+                    "nationality": p.get("nationality"),
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
+                # Merge any additional_attributes from extraction
+                for ak, av in p.get("additional_attributes", {}).items():
+                    if av and ak not in entity_data:
+                        entity_data[ak] = av
+                # Capture any other keys not yet tracked
+                _known_person_keys = {"name", "title", "role", "bio", "organization",
+                                      "email", "phone", "social_media", "education",
+                                      "nationality", "additional_attributes",
+                                      "entity_type", "parent_type"}
+                for pk, pv in p.items():
+                    if pv and pk not in _known_person_keys and pk not in entity_data:
+                        entity_data[pk] = pv
                 
                 entity_dict = {
                     "name": p["name"],
@@ -427,8 +517,15 @@ class IntelExtractor:
                     prod = {"name": prod}
 
             if prod.get("name"):
-                # Use registry to normalize product kind
-                product_kind = self.kind_registry.normalize_kind("product")
+                # Use LLM-provided entity_type if available, otherwise default to product
+                llm_entity_type = prod.get("entity_type")
+                llm_parent_type = prod.get("parent_type")
+                if llm_entity_type:
+                    product_kind = self._resolve_entity_kind(llm_entity_type, parent_kind_hint=llm_parent_type or "product")
+                else:
+                    product_kind = "product"
+                # Normalize through registry
+                product_kind = self.kind_registry.normalize_kind(product_kind)
                 
                 # Store all product attributes as entity data
                 entity_data = {
@@ -436,9 +533,32 @@ class IntelExtractor:
                     "status": prod.get("status"),
                     "category": prod.get("category"),
                     "manufacturer": prod.get("manufacturer"),
+                    "price": prod.get("price"),
+                    "currency": prod.get("currency"),
+                    "provider": prod.get("provider"),
+                    "version": prod.get("version"),
+                    "specifications": prod.get("specifications"),
+                    "sku": prod.get("sku"),
+                    "rating": prod.get("rating"),
+                    "weight": prod.get("weight"),
+                    "dimensions": prod.get("dimensions"),
+                    "availability": prod.get("availability"),
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
+                # Merge any additional_attributes from extraction
+                for ak, av in prod.get("additional_attributes", {}).items():
+                    if av and ak not in entity_data:
+                        entity_data[ak] = av
+                # Capture any other keys not yet tracked
+                _known_product_keys = {"name", "description", "status", "category",
+                                       "manufacturer", "price", "currency", "provider",
+                                       "version", "specifications", "sku", "rating",
+                                       "weight", "dimensions", "availability",
+                                       "additional_attributes", "entity_type", "parent_type"}
+                for pk, pv in prod.items():
+                    if pv and pk not in _known_product_keys and pk not in entity_data:
+                        entity_data[pk] = pv
                 
                 entity_dict = {
                     "name": prod["name"],
@@ -465,8 +585,14 @@ class IntelExtractor:
 
             label = loc.get("address") or loc.get("city") or loc.get("country") or loc.get("name")
             if label:
-                # Detect specialized location types using registry
-                location_kind = self._detect_location_kind(loc, label, context_text)
+                # Use LLM-provided entity_type if available, otherwise detect from context
+                llm_entity_type = loc.get("entity_type")
+                llm_parent_type = loc.get("parent_type")
+                if llm_entity_type:
+                    location_kind = self._resolve_entity_kind(llm_entity_type, parent_kind_hint=llm_parent_type or "location")
+                else:
+                    # Detect specialized location types using registry
+                    location_kind = self._detect_location_kind(loc, label, context_text)
                 
                 # Normalize through registry
                 location_kind = self.kind_registry.normalize_kind(location_kind)
@@ -476,14 +602,32 @@ class IntelExtractor:
                 # Store all location attributes as entity data
                 entity_data = {
                     "address": loc.get("address"),
+                    "street": loc.get("street"),
                     "city": loc.get("city"),
+                    "state": loc.get("state"),
+                    "postal_code": loc.get("postal_code"),
                     "country": loc.get("country"),
                     "type": loc.get("type"),
                     "latitude": loc.get("latitude"),
                     "longitude": loc.get("longitude"),
+                    "phone": loc.get("phone"),
+                    "fax": loc.get("fax"),
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
+                # Merge any additional_attributes from extraction
+                for ak, av in loc.get("additional_attributes", {}).items():
+                    if av and ak not in entity_data:
+                        entity_data[ak] = av
+                # Capture any other keys not yet tracked
+                _known_location_keys = {"name", "address", "street", "city", "state",
+                                        "postal_code", "country", "type",
+                                        "associated_entity", "latitude", "longitude",
+                                        "phone", "fax", "additional_attributes",
+                                        "entity_type", "parent_type"}
+                for lk, lv in loc.items():
+                    if lv and lk not in _known_location_keys and lk not in entity_data:
+                        entity_data[lk] = lv
                 
                 entity_dict = {
                     "name": label,
@@ -521,8 +665,15 @@ class IntelExtractor:
                     evt = {"title": evt}
 
             if evt.get("title"):
-                # Use registry to normalize event kind
-                event_kind = self.kind_registry.normalize_kind("event")
+                # Use LLM-provided entity_type if available, otherwise default to event
+                llm_entity_type = evt.get("entity_type")
+                llm_parent_type = evt.get("parent_type")
+                if llm_entity_type:
+                    event_kind = self._resolve_entity_kind(llm_entity_type, parent_kind_hint=llm_parent_type or "event")
+                else:
+                    event_kind = "event"
+                # Normalize through registry
+                event_kind = self.kind_registry.normalize_kind(event_kind)
                 
                 # Store all event attributes as entity data
                 entity_data = {
@@ -533,6 +684,13 @@ class IntelExtractor:
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
+                # Capture any other keys not yet tracked
+                _known_event_keys = {"title", "date", "description", "type",
+                                     "participants", "additional_attributes",
+                                     "entity_type", "parent_type"}
+                for ek, ev in evt.items():
+                    if ev and ek not in _known_event_keys and ek not in entity_data:
+                        entity_data[ek] = ev
                 
                 entity_dict = {
                     "name": evt["title"],
@@ -559,21 +717,27 @@ class IntelExtractor:
                     org = {"name": org}
 
             if org.get("name"):
-                # Determine organization kind based on type field
-                raw_org_type = org.get("type") or ""
-                if isinstance(raw_org_type, list):
-                    raw_org_type = " ".join(str(t) for t in raw_org_type)
-                org_type = str(raw_org_type).lower()
-                if any(kw in org_type for kw in ["company", "corporation", "corp"]):
-                    org_kind = "company"
-                elif any(kw in org_type for kw in ["government", "agency", "ministry"]):
-                    org_kind = "government_agency"
-                elif any(kw in org_type for kw in ["nonprofit", "ngo", "foundation", "charity"]):
-                    org_kind = "nonprofit"
-                elif any(kw in org_type for kw in ["university", "college", "school", "institute"]):
-                    org_kind = "educational"
+                # Use LLM-provided entity_type if available, otherwise infer from type field
+                llm_entity_type = org.get("entity_type")
+                llm_parent_type = org.get("parent_type")
+                if llm_entity_type:
+                    org_kind = self._resolve_entity_kind(llm_entity_type, parent_kind_hint=llm_parent_type or "org")
                 else:
-                    org_kind = "organization"
+                    # Determine organization kind based on type field
+                    raw_org_type = org.get("type") or ""
+                    if isinstance(raw_org_type, list):
+                        raw_org_type = " ".join(str(t) for t in raw_org_type)
+                    org_type = str(raw_org_type).lower()
+                    if any(kw in org_type for kw in ["company", "corporation", "corp"]):
+                        org_kind = "company"
+                    elif any(kw in org_type for kw in ["government", "agency", "ministry"]):
+                        org_kind = "government_agency"
+                    elif any(kw in org_type for kw in ["nonprofit", "ngo", "foundation", "charity"]):
+                        org_kind = "nonprofit"
+                    elif any(kw in org_type for kw in ["university", "college", "school", "institute"]):
+                        org_kind = "educational"
+                    else:
+                        org_kind = "organization"
                 
                 # Normalize through registry
                 org_kind = self.kind_registry.normalize_kind(org_kind)
@@ -583,9 +747,25 @@ class IntelExtractor:
                     "type": org.get("type"),
                     "industry": org.get("industry"),
                     "description": org.get("description"),
+                    "registration_number": org.get("registration_number"),
+                    "tax_id": org.get("tax_id"),
+                    "employee_count": org.get("employee_count"),
+                    "certifications": org.get("certifications"),
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
+                # Merge any additional_attributes from extraction
+                for ak, av in org.get("additional_attributes", {}).items():
+                    if av and ak not in entity_data:
+                        entity_data[ak] = av
+                # Capture any other keys not yet tracked
+                _known_org_keys = {"name", "type", "industry", "description",
+                                   "registration_number", "tax_id", "employee_count",
+                                   "certifications", "additional_attributes",
+                                   "entity_type", "parent_type"}
+                for ok, ov in org.items():
+                    if ov and ok not in _known_org_keys and ok not in entity_data:
+                        entity_data[ok] = ov
                 
                 entity_dict = {
                     "name": org["name"],
@@ -605,15 +785,17 @@ class IntelExtractor:
 
         return entities
     
-    def _resolve_entity_kind(self, raw_kind: str) -> str:
+    def _resolve_entity_kind(self, raw_kind: str, parent_kind_hint: Optional[str] = None) -> str:
         """
         Resolve an entity kind using the registry with inheritance support.
         
-        Checks if the kind exists in the registry, and if not, attempts to
-        find a suitable parent kind or registers it as a new kind.
+        Checks if the kind exists in the registry, and if not, registers it
+        as a new kind with the LLM-provided or inferred parent type. This
+        allows the LLM to dynamically discover and create new entity types.
         
         Args:
             raw_kind: The raw entity kind string
+            parent_kind_hint: Optional parent kind provided by the LLM
             
         Returns:
             Normalized entity kind
@@ -626,18 +808,34 @@ class IntelExtractor:
         # Check if kind already exists in registry
         existing = self.kind_registry.get_kind(raw_kind)
         if existing:
+            # If LLM provided a parent hint and existing has no parent, update it
+            if parent_kind_hint and not existing.parent_kind:
+                parent_kind_hint = parent_kind_hint.lower().strip()
+                self.kind_registry.register_kind(
+                    name=raw_kind,
+                    parent_kind=parent_kind_hint,
+                )
+                self.logger.info(f"Updated entity kind '{raw_kind}' with parent: {parent_kind_hint}")
             return existing.name
         
-        # Try to infer parent kind for automatic registration
+        # Determine parent kind: prefer LLM-provided hint, then infer from name
         parent_kind = None
-        if any(kw in raw_kind for kw in ["person", "people", "employee", "staff"]):
-            parent_kind = "person"
-        elif any(kw in raw_kind for kw in ["company", "corp", "inc", "ltd", "org"]):
-            parent_kind = "org"
-        elif any(kw in raw_kind for kw in ["location", "place", "address", "city"]):
-            parent_kind = "location"
+        if parent_kind_hint:
+            parent_kind = parent_kind_hint.lower().strip()
+        else:
+            # Fallback: infer parent kind from keywords in the raw_kind name
+            if any(kw in raw_kind for kw in ["person", "people", "employee", "staff"]):
+                parent_kind = "person"
+            elif any(kw in raw_kind for kw in ["company", "corp", "inc", "ltd", "org"]):
+                parent_kind = "org"
+            elif any(kw in raw_kind for kw in ["location", "place", "address", "city"]):
+                parent_kind = "location"
+            elif any(kw in raw_kind for kw in ["product", "service", "tool"]):
+                parent_kind = "product"
+            elif any(kw in raw_kind for kw in ["event", "conference", "meeting"]):
+                parent_kind = "event"
         
-        # Register the new kind with inferred parent
+        # Register the new kind with discovered parent
         self.kind_registry.register_kind(
             name=raw_kind,
             parent_kind=parent_kind,

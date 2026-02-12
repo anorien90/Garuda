@@ -1,6 +1,6 @@
 from .type import EntityType
 from .profile import EntityProfile
-from .registry import EntityKindRegistry, get_registry, EntityKindInfo, RelationTypeInfo
+from .registry import EntityKindRegistry, get_registry, EntityKindInfo, RelationTypeInfo, derive_child_color
 
 __all__ = [
         "EntityType", 
@@ -9,4 +9,5 @@ __all__ = [
         "get_registry",
         "EntityKindInfo",
         "RelationTypeInfo",
+        "derive_child_color",
         ]

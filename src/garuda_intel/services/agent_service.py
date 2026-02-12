@@ -11,9 +11,8 @@ Also provides multidimensional RAG search combining embedding and graph-based se
 import asyncio
 import json
 import logging
-import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import select, func, desc, and_, or_
@@ -22,7 +21,7 @@ from sqlalchemy.orm import Session
 from ..database.store import PersistenceStore
 from ..database.models import Entity, Relationship, Intelligence, Page, EntityFieldValue, MediaItem, FieldDiscoveryLog
 from ..extractor.llm import LLMIntelExtractor
-from ..extractor.entity_merger import EntityMerger, SemanticEntityDeduplicator, GraphSearchEngine, ENTITY_TYPE_HIERARCHY, ENTITY_TYPE_CHILDREN
+from ..extractor.entity_merger import EntityMerger, SemanticEntityDeduplicator, GraphSearchEngine, ENTITY_TYPE_HIERARCHY, ENTITY_TYPE_CHILDREN, _get_registry, _build_children_from_registry
 from ..vector.base import VectorStore
 
 
@@ -486,36 +485,11 @@ class AgentService:
             })
             primary_entity.metadata_json["merged_from"] = merge_history
             
-            # Soft-merge: keep the secondary entity as a subordinate
-            merge_timestamp = datetime.now(timezone.utc).isoformat()
-            if not secondary_entity.metadata_json:
-                secondary_entity.metadata_json = {}
-            secondary_entity.metadata_json["merged_into"] = str(primary_id)
-            secondary_entity.metadata_json["merged_at"] = merge_timestamp
+            # Flush before delete to ensure metadata is persisted
+            session.flush()
             
-            # Create "duplicate_of" relationship from secondary → primary
-            existing_dup_rel = session.execute(
-                select(Relationship).where(
-                    Relationship.source_id == secondary_id,
-                    Relationship.target_id == primary_id,
-                    Relationship.relation_type == "duplicate_of",
-                )
-            ).scalar_one_or_none()
-            if not existing_dup_rel:
-                dup_rel = Relationship(
-                    id=uuid.uuid4(),
-                    source_id=secondary_id,
-                    target_id=primary_id,
-                    relation_type="duplicate_of",
-                    source_type="entity",
-                    target_type="entity",
-                    metadata_json={
-                        "merged_at": merge_timestamp,
-                        "original_name": secondary_entity.name,
-                        "original_kind": secondary_entity.kind,
-                    },
-                )
-                session.add(dup_rel)
+            # Delete secondary entity after all intel, relations and data transferred
+            session.delete(secondary_entity)
             merged_count += 1
         
         return {
@@ -583,18 +557,24 @@ class AgentService:
     def _get_kind_specificity_rank(self, kind: str) -> int:
         """Return a numeric rank for entity kind specificity.
         
+        Uses the EntityKindRegistry to determine specificity.
         Higher rank means more specific:
         - 0: generic types (entity, general, empty)
-        - 1: parent types (person, address, company, organization)
-        - 2: specialized child types (ceo, founder, headquarters, etc.)
+        - 1: base/mid-level types that have children (person, location, company, org)
+        - 2: leaf specialized types that have a parent but no children (ceo, founder, headquarters)
         """
         kind = (kind or "").lower().strip()
-        if kind in ("", "entity", "general"):
+        if kind in ("", "entity", "general", "unknown"):
             return 0
-        if kind in ENTITY_TYPE_HIERARCHY:
-            return 2  # child/specialized types
-        if kind in ENTITY_TYPE_CHILDREN:
-            return 1  # parent types
+        registry = _get_registry()
+        kind_info = registry.get_kind(kind)
+        children = _build_children_from_registry()
+        has_parent = kind_info and kind_info.parent_kind
+        has_children = kind in children
+        if has_parent and not has_children:
+            return 2  # Leaf specialized type
+        if has_children or has_parent:
+            return 1  # Mid-level type
         return 1  # any other concrete type
     
     # =========================================================================

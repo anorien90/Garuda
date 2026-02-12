@@ -6,10 +6,14 @@ A thread-safe singleton registry for managing entity kinds with:
 - Runtime registration of new kinds discovered in database
 - Kind normalization and alias support
 - Priority-based deduplication (specific kinds override generic ones)
+- Database persistence of structure learnings
+- Automatic child-color derivation from parent colors
 """
 
+import colorsys
 import logging
 import threading
+import uuid
 from typing import Dict, Optional, List, Any, Set, Tuple
 from dataclasses import dataclass, field
 
@@ -56,6 +60,36 @@ class RelationTypeInfo:
         }
 
 
+def derive_child_color(parent_hex: str, child_index: int = 0) -> str:
+    """Derive a slightly shifted color from a parent hex color.
+
+    Shifts the hue by a small amount based on *child_index* so that
+    each child of the same parent gets a unique but recognisably
+    related color.
+
+    Args:
+        parent_hex: Parent color as ``#rrggbb`` hex string.
+        child_index: Zero-based index among siblings (used for hue offset).
+
+    Returns:
+        A ``#rrggbb`` hex string with a slightly shifted hue.
+    """
+    parent_hex = parent_hex.lstrip("#")
+    if len(parent_hex) != 6:
+        return "#94a3b8"
+    try:
+        r, g, b = int(parent_hex[0:2], 16), int(parent_hex[2:4], 16), int(parent_hex[4:6], 16)
+    except ValueError:
+        return "#94a3b8"
+    h, lightness, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    # Small hue shift per child, wrapping around 1.0
+    h = (h + 0.04 * (child_index + 1)) % 1.0
+    # Slight lightness bump to differentiate
+    lightness = min(1.0, lightness + 0.06)
+    nr, ng, nb = colorsys.hls_to_rgb(h, lightness, s)
+    return f"#{int(nr*255):02x}{int(ng*255):02x}{int(nb*255):02x}"
+
+
 class EntityKindRegistry:
     """
     Thread-safe singleton registry for entity kinds.
@@ -94,10 +128,22 @@ class EntityKindRegistry:
         "founder": {"color": "#0369a1", "priority": 70, "parent_kind": "person", "aliases": {"co-founder"}, "description": "Founder"},
         "executive": {"color": "#0891b2", "priority": 65, "parent_kind": "person", "description": "Executive/leadership"},
         "board_member": {"color": "#06b6d4", "priority": 65, "parent_kind": "person", "description": "Board member"},
+        "employee": {"color": "#38bdf8", "priority": 55, "parent_kind": "person", "description": "Employee/staff member"},
         
         # Specialized location types (high priority - override 'location')
         "headquarters": {"color": "#9333ea", "priority": 60, "parent_kind": "location", "aliases": {"hq"}, "description": "Headquarters"},
         "office": {"color": "#7c3aed", "priority": 55, "parent_kind": "location", "description": "Office location"},
+        "branch_office": {"color": "#6d28d9", "priority": 55, "parent_kind": "location", "description": "Branch office"},
+        "registered_address": {"color": "#5b21b6", "priority": 55, "parent_kind": "location", "description": "Registered address"},
+        "mailing_address": {"color": "#4c1d95", "priority": 55, "parent_kind": "location", "description": "Mailing address"},
+        "billing_address": {"color": "#7e22ce", "priority": 55, "parent_kind": "location", "description": "Billing address"},
+        "shipping_address": {"color": "#6b21a8", "priority": 55, "parent_kind": "location", "description": "Shipping address"},
+        
+        # Specialized organization types (high priority - override 'org'/'company')
+        "subsidiary": {"color": "#059669", "priority": 60, "parent_kind": "company", "description": "Subsidiary company"},
+        "parent_company": {"color": "#047857", "priority": 60, "parent_kind": "company", "description": "Parent company"},
+        "division": {"color": "#065f46", "priority": 55, "parent_kind": "org", "description": "Organization division"},
+        "department": {"color": "#064e3b", "priority": 55, "parent_kind": "org", "description": "Organization department"},
         
         # Content/media types
         "page": {"color": "#4366f1", "priority": 20, "description": "Web page"},
@@ -269,7 +315,16 @@ class EntityKindRegistry:
                     existing.description = description
                 return existing
             
-            # Create new kind
+            # Create new kind – derive color from parent if not explicitly set
+            if not color and parent_kind:
+                parent_info = self._kinds.get(parent_kind)
+                if parent_info:
+                    # Count existing children to get a unique index
+                    child_idx = sum(
+                        1 for k in self._kinds.values() if k.parent_kind == parent_kind
+                    )
+                    color = derive_child_color(parent_info.color, child_idx)
+
             return self._register_kind_internal(
                 name=name,
                 color=color or "#94a3b8",  # Default gray
@@ -504,6 +559,120 @@ class EntityKindRegistry:
         except Exception as e:
             logger.warning(f"Failed to sync kinds from database: {e}")
             return 0
+
+    # ------------------------------------------------------------------
+    # Database persistence for structure learnings
+    # ------------------------------------------------------------------
+
+    def save_to_database(self, session) -> Dict[str, int]:
+        """Persist all registered kinds and relations to the database.
+
+        Uses upsert semantics: existing rows are updated, new ones inserted.
+
+        Args:
+            session: SQLAlchemy session (caller manages commit/rollback).
+
+        Returns:
+            Dict with counts: ``{"kinds_saved": N, "relations_saved": M}``.
+        """
+        from ...database.models import StructureKind, StructureRelation
+
+        kinds_saved = 0
+        with self._kind_lock:
+            for info in self._kinds.values():
+                existing = session.query(StructureKind).filter_by(name=info.name).first()
+                if existing:
+                    existing.color = info.color
+                    existing.priority = info.priority
+                    existing.parent_kind = info.parent_kind
+                    existing.aliases_json = list(info.aliases) if info.aliases else []
+                    existing.description = info.description
+                    existing.is_builtin = info.name in self.BUILTIN_KINDS
+                else:
+                    row = StructureKind(
+                        id=uuid.uuid4(),
+                        name=info.name,
+                        color=info.color,
+                        priority=info.priority,
+                        parent_kind=info.parent_kind,
+                        aliases_json=list(info.aliases) if info.aliases else [],
+                        description=info.description,
+                        is_builtin=info.name in self.BUILTIN_KINDS,
+                    )
+                    session.add(row)
+                kinds_saved += 1
+
+        relations_saved = 0
+        with self._relation_lock:
+            for info in self._relations.values():
+                existing = session.query(StructureRelation).filter_by(name=info.name).first()
+                if existing:
+                    existing.color = info.color
+                    existing.directed = info.directed
+                    existing.description = info.description
+                    existing.is_builtin = info.name in self.BUILTIN_RELATIONS
+                else:
+                    row = StructureRelation(
+                        id=uuid.uuid4(),
+                        name=info.name,
+                        color=info.color,
+                        directed=info.directed,
+                        description=info.description,
+                        is_builtin=info.name in self.BUILTIN_RELATIONS,
+                    )
+                    session.add(row)
+                relations_saved += 1
+
+        logger.info(f"Saved {kinds_saved} kinds and {relations_saved} relations to database")
+        return {"kinds_saved": kinds_saved, "relations_saved": relations_saved}
+
+    def load_from_database(self, session) -> Dict[str, int]:
+        """Load persisted kinds and relations from the database into the registry.
+
+        Database values override in-memory defaults so that user edits
+        (e.g. custom colors) are preserved across restarts.
+
+        Args:
+            session: SQLAlchemy session.
+
+        Returns:
+            Dict with counts: ``{"kinds_loaded": N, "relations_loaded": M}``.
+        """
+        from ...database.models import StructureKind, StructureRelation
+
+        kinds_loaded = 0
+        try:
+            rows = session.query(StructureKind).all()
+            for row in rows:
+                aliases = set(row.aliases_json) if row.aliases_json else set()
+                self.register_kind(
+                    name=row.name,
+                    color=row.color,
+                    priority=row.priority,
+                    aliases=aliases,
+                    parent_kind=row.parent_kind,
+                    description=row.description or "",
+                )
+                kinds_loaded += 1
+        except Exception as e:
+            logger.warning(f"Failed to load kinds from database: {e}")
+
+        relations_loaded = 0
+        try:
+            rows = session.query(StructureRelation).all()
+            for row in rows:
+                self.register_relation(
+                    name=row.name,
+                    color=row.color,
+                    directed=row.directed,
+                    description=row.description or "",
+                )
+                relations_loaded += 1
+        except Exception as e:
+            logger.warning(f"Failed to load relations from database: {e}")
+
+        logger.info(f"Loaded {kinds_loaded} kinds and {relations_loaded} relations from database")
+        return {"kinds_loaded": kinds_loaded, "relations_loaded": relations_loaded}
 
 
 # Convenience function to get the registry instance
