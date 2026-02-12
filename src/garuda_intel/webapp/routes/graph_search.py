@@ -33,6 +33,28 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
     def _deduplicator():
         """Create a SemanticEntityDeduplicator bound to the *current* store.Session."""
         return SemanticEntityDeduplicator(store.Session, semantic_engine, logger)
+
+    def _list_all_entities(kind=None, limit=20):
+        """Return all entities (optionally filtered by kind), without a query."""
+        with store.Session() as session:
+            stmt = session.query(db_models.Entity)
+            if kind:
+                stmt = stmt.filter(db_models.Entity.kind == kind)
+            rows = stmt.limit(limit).all()
+            results = []
+            for entity in rows:
+                results.append({
+                    "entity": {
+                        "id": str(entity.id),
+                        "name": entity.name,
+                        "kind": entity.kind,
+                        "data": entity.data or {},
+                        "metadata": entity.metadata_json or {},
+                    },
+                    "match_type": "all",
+                    "score": 1.0,
+                })
+            return results
     
     @bp_graph.get("/search")
     @api_key_required
@@ -41,7 +63,7 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
         Search entities using hybrid SQL + semantic search.
         
         Query params:
-            query: Search query string
+            query: Search query string (empty returns all entities)
             kind: Optional entity kind filter
             threshold: Semantic similarity threshold (default: 0.7)
             limit: Maximum results (default: 20)
@@ -50,9 +72,6 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
             List of matching entities with match type and scores
         """
         query = request.args.get("query", "").strip()
-        if not query:
-            return jsonify({"error": "Query parameter required"}), 400
-        
         kind = request.args.get("kind")
         threshold = float(request.args.get("threshold", 0.7))
         limit = min(int(request.args.get("limit", 20)), 100)
@@ -65,12 +84,16 @@ def init_graph_routes(api_key_required, store, semantic_engine=None):
         })
         
         try:
-            results = _graph_engine().search_entities(
-                query=query,
-                kind=kind,
-                semantic_threshold=threshold,
-                limit=limit,
-            )
+            if not query:
+                # Empty query → return all entities (paginated)
+                results = _list_all_entities(kind=kind, limit=limit)
+            else:
+                results = _graph_engine().search_entities(
+                    query=query,
+                    kind=kind,
+                    semantic_threshold=threshold,
+                    limit=limit,
+                )
             
             emit_event("graph_search", f"found {len(results)} results")
             

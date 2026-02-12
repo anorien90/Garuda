@@ -139,6 +139,16 @@ def _looks_like_uuid(val: str) -> bool:
         return False
 
 
+def _entity_uuid_from_canonical(canonical: str) -> str:
+    """Generate a deterministic UUID for an entity from its canonical name.
+
+    Used so that entities extracted from intelligence/page data (which may not
+    yet have a row in the Entity table) still receive a stable UUID that can be
+    used for selection, deletion and other graph actions.
+    """
+    return str(uuid5(NAMESPACE_URL, f"entity:{canonical}"))
+
+
 def _page_uuid_from_url(url: str | None) -> str | None:
     """Generate deterministic UUID from URL."""
     if not url:
