@@ -25,6 +25,7 @@ from ..utils.helpers import (
     _filter_by_depth,
     _norm_kind,
     _page_id_from_row,
+    _looks_like_uuid,
 )
 from ...database import models as db_models
 from ...search import EntityProfile, EntityType, CrawlMode
@@ -178,6 +179,14 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                     if row.kind:
                         canonical_type[canon] = norm_kind
                     entry_type_map[ent_uuid] = "entity"
+
+                # When query is a UUID, ensure that specific entity is loaded as a
+                # node so it can serve as a graph root regardless of whether it
+                # appears in intelligence / page data.
+                if q and _looks_like_uuid(q):
+                    _uuid_row = session.query(db_models.Entity).filter_by(id=q).first()
+                    if _uuid_row:
+                        upsert_entity(_uuid_row.name, _uuid_row.kind, 1.0)
 
                 semantic_entity_hints = _qdrant_semantic_entity_hints(q, vector_store, llm) if q else set()
 
@@ -419,16 +428,37 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                         best_variant = _best_label(variants[canon])
                         node["label"] = best_variant
 
+            # --- Seed-first graph construction ---
+            # Identify nodes that matched via semantic search so they can
+            # be treated as seeds even when the query text is not a
+            # substring of their label.
+            semantic_seed_ids: set[str] = set()
+            if q and semantic_entity_hints:
+                for nid, nd in nodes.items():
+                    canon = (nd.get("meta") or {}).get("canonical", "")
+                    if canon and canon in semantic_entity_hints:
+                        semantic_seed_ids.add(nid)
+
+            # Determine seeds from the *full* (unfiltered) node set so
+            # that UUID / semantic matches are never lost due to
+            # score-based truncation.
+            all_seed_ids = _seeds_from_query(list(nodes.values()), q, semantic_seeds=semantic_seed_ids)
+
+            # Apply type / score filters, but always keep seed nodes so
+            # the graph root is never discarded.
             filtered_nodes = [
                 n for n in nodes.values()
-                if (
+                if n["id"] in all_seed_ids or (
                     (not n.get("type") or n["type"] in node_type_filters)
                     and (not type_filter or n.get("type") == type_filter)
                     and (n.get("score", 0) >= min_score)
                 )
             ]
 
-            sorted_nodes = sorted(filtered_nodes, key=lambda x: (-x.get("score", 0), -x.get("count", 0), x["id"]))[:limit]
+            sorted_nodes = sorted(filtered_nodes, key=lambda x: (
+                -(1 if x["id"] in all_seed_ids else 0),
+                -x.get("score", 0), -x.get("count", 0), x["id"],
+            ))[:limit]
             node_set = {n["id"] for n in sorted_nodes}
 
             filtered_links = [
@@ -437,7 +467,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 if k[0] in node_set and k[1] in node_set and (not v.get("kind") or v["kind"] in edge_kind_filters)
             ]
 
-            seeds = _seeds_from_query(sorted_nodes, q)
+            seeds = all_seed_ids & node_set
             final_nodes, final_links = _filter_by_depth(sorted_nodes, filtered_links, depth_limit, seeds)
 
             for n in final_nodes:
