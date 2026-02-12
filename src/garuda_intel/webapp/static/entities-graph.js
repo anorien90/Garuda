@@ -1283,11 +1283,11 @@ function _wireModalAddRelation(node) {
   if (targetInput && resultsDiv) {
     targetInput.oninput = () => {
       clearTimeout(searchTimeout);
-      const q = targetInput.value.trim();
+      const q = targetInput.value.trim().toLowerCase();
       if (q.length < 2) { resultsDiv.innerHTML = ''; _modalAddRelationTargetId = null; updateSaveState(); return; }
       searchTimeout = setTimeout(() => {
         const matches = filteredNodes
-          .filter(n => n.id !== node.id && (n.label || '').toLowerCase().includes(q.toLowerCase()))
+          .filter(n => n.id !== node.id && (n.label || '').toLowerCase().includes(q))
           .slice(0, 8);
         resultsDiv.innerHTML = matches.map(n =>
           `<div class="px-2 py-1 rounded cursor-pointer hover:bg-green-100 dark:hover:bg-green-800/30 text-xs" data-target-id="${escapeHtml(n.id)}">${escapeHtml(n.label || n.id)} <span class="text-slate-400">(${escapeHtml(n.type || 'entity')})</span></div>`
@@ -1421,7 +1421,7 @@ function _wireManagementTools() {
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      setMgmtStatus(`✓ Found ${data.duplicates_found || data.groups?.length || 0} duplicates`);
+      setMgmtStatus(`✓ Found ${data.duplicates_found || data.groups?.length || 0} duplicate groups`);
     } catch (e) { setMgmtStatus('Failed: ' + e.message); }
   });
 
