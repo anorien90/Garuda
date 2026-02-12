@@ -240,6 +240,10 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
         top_k = safe_int(body.get("top_k") or request.args.get("top_k"), 6)
         session_id = body.get("session_id") or request.args.get("session_id")
         use_planner = body.get("use_planner", True)
+        # Per-request crawl toggle (falls back to global setting)
+        crawl_enabled = body.get("crawl_enabled")
+        if crawl_enabled is None:
+            crawl_enabled = getattr(settings, "chat_crawl_enabled", True)
         # Get configurable max search cycles (default from settings or body override)
         max_search_cycles = safe_int(
             body.get("max_search_cycles") or request.args.get("max_search_cycles"),
@@ -259,6 +263,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                     "top_k": top_k,
                     "max_search_cycles": max_search_cycles,
                     "use_planner": use_planner,
+                    "crawl_enabled": crawl_enabled,
                 }, priority=5)  # Higher priority for chat
                 return jsonify({"task_id": task_id, "status": "pending", "message": "Chat task queued"}), 202
             except Exception as e:
@@ -269,6 +274,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             "question": question,
             "max_search_cycles": max_search_cycles,
             "use_planner": use_planner,
+            "crawl_enabled": crawl_enabled,
         })
 
         # --- Dynamic task planner path ---
@@ -280,6 +286,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                     llm=llm,
                     vector_store=vector_store,
                     settings=settings,
+                    crawl_enabled=crawl_enabled,
                 )
                 result = planner.run(
                     question=question,
@@ -616,7 +623,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 final_step = "phase2_local_lookup_after_retry"
         
         # Phase 3: Intelligent crawling with multiple cycles if still insufficient
-        if not is_sufficient or quality_insufficient:
+        if (not is_sufficient or quality_insufficient) and crawl_enabled:
             # Determine crawl trigger reasons
             if not rag_hits:
                 crawl_reason = "No RAG results found"

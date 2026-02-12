@@ -10,7 +10,7 @@ export async function chatAsk(e) {
   const submittedForm = e && e.target;
   const formId = submittedForm?.id;
   
-  let answerEl, qEl, entityEl, topkEl, maxCyclesEl, autonomousModeEl, usePlannerEl;
+  let answerEl, qEl, entityEl, topkEl, maxCyclesEl, autonomousModeEl, usePlannerEl, crawlEnabledEl;
   
   // Determine which form was submitted and get the corresponding elements
   if (formId === 'popup-chat-form') {
@@ -22,6 +22,7 @@ export async function chatAsk(e) {
     maxCyclesEl = document.getElementById('popup-chat-max-cycles');
     autonomousModeEl = document.getElementById('popup-chat-autonomous-mode');
     usePlannerEl = document.getElementById('popup-chat-use-planner');
+    crawlEnabledEl = document.getElementById('popup-chat-crawl-enabled');
   } else if (formId === 'search-tab-chat-form') {
     // Search tab chat form
     answerEl = document.getElementById('search-tab-chat-answer');
@@ -31,6 +32,7 @@ export async function chatAsk(e) {
     maxCyclesEl = document.getElementById('search-tab-chat-max-cycles');
     autonomousModeEl = document.getElementById('search-tab-chat-autonomous-mode');
     usePlannerEl = document.getElementById('search-tab-chat-use-planner');
+    crawlEnabledEl = document.getElementById('search-tab-chat-crawl-enabled');
   } else {
     // Minimal fallback - should rarely be needed with new structure
     console.warn('Chat form submitted without recognized ID, using fallback detection');
@@ -41,6 +43,7 @@ export async function chatAsk(e) {
     maxCyclesEl = getEl('search-tab-chat-max-cycles') || getEl('popup-chat-max-cycles');
     autonomousModeEl = getEl('search-tab-chat-autonomous-mode') || getEl('popup-chat-autonomous-mode');
     usePlannerEl = getEl('search-tab-chat-use-planner') || getEl('popup-chat-use-planner');
+    crawlEnabledEl = getEl('search-tab-chat-crawl-enabled') || getEl('popup-chat-crawl-enabled');
   }
   
   if (!answerEl) {
@@ -57,6 +60,7 @@ export async function chatAsk(e) {
   const entity = entityEl?.value || '';
   const autonomousModeEnabled = autonomousModeEl ? autonomousModeEl.checked : false;
   const usePlanner = usePlannerEl ? usePlannerEl.checked : true;
+  const crawlEnabled = crawlEnabledEl ? crawlEnabledEl.checked : true;
 
   try {
     // Use task queue for chat - persistent across page reloads
@@ -64,6 +68,7 @@ export async function chatAsk(e) {
       question: question,
       entity: entity,
       use_planner: usePlanner,
+      crawl_enabled: crawlEnabled,
     }, {
       statusElement: answerEl,
       onProgress: (progress, message) => {

@@ -138,12 +138,27 @@ export function renderChat(payload, targetEl) {
     );
   }
 
-  // Memory keys section
+  // Memory keys section – show full snapshot when available
   let memorySection = '';
+  const memorySnapshot = payload.memory_snapshot || null;
   const memoryKeys = Array.isArray(payload.memory_keys) ? payload.memory_keys : [];
-  if (memoryKeys.length > 0) {
+  if (memorySnapshot && Object.keys(memorySnapshot).length > 0) {
+    const memoryItems = Object.entries(memorySnapshot).map(([k, v]) => {
+      const valPreview = typeof v === 'string' ? v.slice(0, 200) : JSON.stringify(v).slice(0, 200);
+      return `<div class="mb-1"><span class="inline-block bg-slate-200 dark:bg-slate-700 rounded px-1.5 py-0.5 text-xs font-semibold mr-1">${k}</span><span class="text-xs text-slate-600 dark:text-slate-400">${valPreview}${valPreview.length >= 200 ? '…' : ''}</span></div>`;
+    }).join('');
+    memorySection = collapsible(
+      `🗃️ Working Memory (${Object.keys(memorySnapshot).length} entries)`,
+      `<div class="ml-2 space-y-0.5">${memoryItems}</div>`
+    );
+  } else if (memoryKeys.length > 0) {
     const keysList = memoryKeys.map(k => `<span class="inline-block bg-slate-200 dark:bg-slate-700 rounded px-1.5 py-0.5 text-xs mr-1 mb-1">${k}</span>`).join('');
     memorySection = `<div class="text-xs text-slate-500 mt-1">🗃️ Memory: ${keysList}</div>`;
+  }
+
+  // Crawl enabled status
+  if (payload.crawl_enabled === false) {
+    metaBadges.push(pill('🚫 Crawl Disabled', 'bg-rose-100 dark:bg-rose-900/30 text-rose-800 dark:text-rose-200'));
   }
 
   const div = document.createElement('div');

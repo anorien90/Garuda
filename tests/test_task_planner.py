@@ -122,6 +122,7 @@ class TestToolNames:
             "reflect_findings",
             "store_memory_data",
             "get_memory_data",
+            "search_memory",
             "create_plan",
             "store_step_to_plan",
             "eval_step_from_plan",

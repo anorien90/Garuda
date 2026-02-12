@@ -26,6 +26,7 @@ from .models import (
     EntityFieldValue,
     FieldDiscoveryLog,
     Task,
+    ChatMemoryEntry,
 )
 from .engine import SQLAlchemyStore
 from .store import PersistenceStore
@@ -52,6 +53,8 @@ __all__ = [
     "FieldDiscoveryLog",
     # Task model
     "Task",
+    # Chat memory model
+    "ChatMemoryEntry",
     # Storage
     "SQLAlchemyStore",
     "PersistenceStore",
