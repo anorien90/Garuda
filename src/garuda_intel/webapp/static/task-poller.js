@@ -181,11 +181,24 @@ export function renderTaskStatus(el, status, message, progress, taskId) {
   const uuidRegex = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
   const safeTaskId = uuidRegex.test(String(taskId)) ? String(taskId) : String(taskId).replace(/[^a-fA-F0-9-]/g, '').substring(0, 36);
 
+  // Detect multi-step planner messages for richer display
+  const isStepMessage = message && /^Step \d+:/.test(message);
+  const stepMatch = isStepMessage ? message.match(/^Step (\d+): (\S+)\s*[–-]\s*(.*)$/) : null;
+
+  let messageHtml = escapeHtml(message);
+  if (stepMatch) {
+    const [, stepNum, tool, desc] = stepMatch;
+    const toolLabel = tool.replace(/_/g, ' ');
+    messageHtml = `<span class="font-medium">Step ${escapeHtml(stepNum)}</span> `
+      + `<span class="inline-block px-1 py-0.5 rounded text-[10px] bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">${escapeHtml(toolLabel)}</span>`
+      + (desc ? ` <span class="text-slate-500">${escapeHtml(desc)}</span>` : '');
+  }
+
   el.innerHTML = `
     <div class="p-4 space-y-2">
       <div class="flex items-center justify-between">
         <div class="${color} font-semibold text-sm">
-          ${icon} ${status.charAt(0).toUpperCase() + status.slice(1)}${message ? ': ' + escapeHtml(message) : ''}
+          ${icon} ${status.charAt(0).toUpperCase() + status.slice(1)}
         </div>
         ${status === 'running' || status === 'pending' ? `
           <button data-cancel-task="${safeTaskId}"
@@ -194,6 +207,7 @@ export function renderTaskStatus(el, status, message, progress, taskId) {
           </button>
         ` : ''}
       </div>
+      ${message ? `<div class="text-xs text-slate-600 dark:text-slate-300">${messageHtml}</div>` : ''}
       ${status === 'running' || status === 'pending' ? `
         <div class="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
           <div class="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all duration-500" style="width: ${progressPct}%"></div>

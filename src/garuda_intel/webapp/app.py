@@ -188,8 +188,37 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
         return result
 
     def _handle_agent_chat(task_id, params):
+        from ..services.task_planner import TaskPlanner
+        use_planner = params.get("use_planner", True)
+        crawl_enabled = params.get("crawl_enabled", True)
+
+        def _progress(pct, msg):
+            tq.update_progress(task_id, pct, msg)
+
+        _progress(0.05, "Processing chat query")
+
+        if use_planner:
+            try:
+                planner = TaskPlanner(
+                    store=store,
+                    llm=llm,
+                    vector_store=vector_store,
+                    settings=settings,
+                    crawl_enabled=crawl_enabled,
+                    task_id=task_id,
+                    progress_callback=_progress,
+                )
+                result = planner.run(
+                    question=params.get("question", ""),
+                    entity=params.get("entity") or "",
+                )
+                return result
+            except Exception as exc:
+                logger.warning("Task planner failed in queue, falling back: %s", exc)
+
+        # Fallback to legacy chat_async
         import asyncio
-        tq.update_progress(task_id, 0.1, "Processing chat query")
+        _progress(0.1, "Falling back to legacy chat")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -201,7 +230,7 @@ def _register_task_handlers(tq, agent_svc, store, gap_analyzer, adaptive_crawler
             )
         finally:
             loop.close()
-        tq.update_progress(task_id, 1.0, "Chat complete")
+        _progress(1.0, "Chat complete")
         return result
 
     def _handle_chat(task_id, params):

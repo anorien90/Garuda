@@ -252,6 +252,7 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
         
         entity = body.get("entity")
         use_planner = body.get("use_planner", True)
+        crawl_enabled = body.get("crawl_enabled", True)
         
         # Support queued execution
         if body.get("queued"):
@@ -262,6 +263,7 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
                     "question": question,
                     "entity": entity,
                     "use_planner": use_planner,
+                    "crawl_enabled": crawl_enabled,
                 }, priority=5)  # Higher priority for chat
                 return jsonify({"task_id": task_id, "status": "pending", "message": "Chat task queued"}), 202
         
@@ -280,6 +282,7 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
                     llm=llm,
                     vector_store=vector_store,
                     settings=settings,
+                    crawl_enabled=crawl_enabled,
                 )
                 result = planner.run(
                     question=question,
