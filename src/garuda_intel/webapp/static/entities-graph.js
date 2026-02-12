@@ -1809,9 +1809,14 @@ async function deleteSelectedNodes() {
 }
 
 // Build adjacency map from links for BFS traversal
-function _buildAdjacencyMap(links) {
+// When relTypes is provided (non-empty Set), only include links matching those types
+function _buildAdjacencyMap(links, relTypes) {
   const adj = new Map();
   for (const l of links) {
+    if (relTypes && relTypes.size > 0) {
+      const rt = l.meta?.relation_type || l.kind || '';
+      if (!relTypes.has(rt)) continue;
+    }
     const src = l.source?.id || l.source;
     const tgt = l.target?.id || l.target;
     if (!adj.has(src)) adj.set(src, []);
@@ -1820,6 +1825,71 @@ function _buildAdjacencyMap(links) {
     adj.get(tgt).push(src);
   }
   return adj;
+}
+
+// Select connected nodes: BFS from all currently-selected nodes using highlighted relation types and depth
+function selectConnectedNodes() {
+  if (filteredNodes.length === 0) return;
+  const depth = selectionDepth || 1;
+  const relTypes = highlightedRelTypes.size > 0 ? highlightedRelTypes : null;
+  const adj = _buildAdjacencyMap(filteredLinks, relTypes);
+
+  // BFS from every currently-selected node (or all nodes if none selected)
+  const seeds = selectedNodes.size > 0
+    ? [...selectedNodes.keys()]
+    : filteredNodes.map(n => n.id);
+
+  const visited = new Set(seeds);
+  const bfsQueue = seeds.map(id => ({ id, depth: 0 }));
+  let qi = 0;
+  while (qi < bfsQueue.length) {
+    const { id, depth: d } = bfsQueue[qi++];
+    if (d >= depth) continue;
+    const neighbors = adj.get(id) || [];
+    for (const nbrId of neighbors) {
+      if (!visited.has(nbrId)) {
+        visited.add(nbrId);
+        bfsQueue.push({ id: nbrId, depth: d + 1 });
+      }
+    }
+  }
+
+  // Select all visited nodes
+  for (const nId of visited) {
+    const node = filteredNodes.find(nd => nd.id === nId);
+    if (node) selectedNodes.set(nId, node);
+  }
+  renderSelectionPanel();
+  _updateGraphHighlights();
+}
+
+// Select all nodes that have no connections in the current graph
+function selectDisconnectedNodes() {
+  if (filteredNodes.length === 0) return;
+  const relTypes = highlightedRelTypes.size > 0 ? highlightedRelTypes : null;
+  const adj = _buildAdjacencyMap(filteredLinks, relTypes);
+  for (const node of filteredNodes) {
+    const neighbors = adj.get(node.id);
+    if (!neighbors || neighbors.length === 0) {
+      selectedNodes.set(node.id, node);
+    }
+  }
+  renderSelectionPanel();
+  _updateGraphHighlights();
+}
+
+// Invert the current selection: select all unselected, deselect all selected
+function invertSelection() {
+  if (filteredNodes.length === 0) return;
+  const newSelection = new Map();
+  for (const node of filteredNodes) {
+    if (!selectedNodes.has(node.id)) {
+      newSelection.set(node.id, node);
+    }
+  }
+  selectedNodes = newSelection;
+  renderSelectionPanel();
+  _updateGraphHighlights();
 }
 
 // Bulk Link All: create relationships between all selected node pairs
@@ -2150,8 +2220,10 @@ async function renderGraph() {
       if (selectionMode) {
         toggleNodeSelection(n);
         // Depth-based BFS selection on node click
+        // When relation types are highlighted, only traverse matching links
         if (selectionDepth > 0) {
-          const adj = _buildAdjacencyMap(filteredLinks);
+          const relTypes = highlightedRelTypes.size > 0 ? highlightedRelTypes : null;
+          const adj = _buildAdjacencyMap(filteredLinks, relTypes);
           const bfsQueue = [{ id: n.id, depth: 0 }];
           const visited = new Set([n.id]);
           let qi = 0;
@@ -2307,6 +2379,9 @@ export async function initEntitiesGraph() {
   document.getElementById('entities-graph-connect-selected')?.addEventListener('click', openConnectPanel);
   document.getElementById('entities-graph-link-all-selected')?.addEventListener('click', bulkLinkAll);
   document.getElementById('entities-graph-merge-selected')?.addEventListener('click', bulkMerge);
+  document.getElementById('entities-graph-select-connected')?.addEventListener('click', selectConnectedNodes);
+  document.getElementById('entities-graph-select-disconnected')?.addEventListener('click', selectDisconnectedNodes);
+  document.getElementById('entities-graph-invert-selection')?.addEventListener('click', invertSelection);
 
   // Selection depth dropdown
   document.getElementById('entities-graph-selection-depth')?.addEventListener('change', (e) => {
