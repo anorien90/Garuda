@@ -26,6 +26,7 @@ from ..utils.helpers import (
     _norm_kind,
     _page_id_from_row,
     _looks_like_uuid,
+    _entity_uuid_from_canonical,
 )
 from ...database import models as db_models
 from ...search import EntityProfile, EntityType, CrawlMode
@@ -142,7 +143,14 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 # Priority: stored_kind (if specific) > norm_kind (if specific) > norm_kind (generic) > "entity"
                 is_stored_specific = stored_kind and stored_kind not in ("entity", "unknown")
                 effective_kind = stored_kind if is_stored_specific else (norm_kind or "entity")
-                node_key = str(ent_uuid) if ent_uuid else canon
+                # Always use a UUID as the node key – either from the DB or a
+                # deterministic UUID derived from the canonical name.  This
+                # guarantees every entity node has a valid UUID id so that
+                # selection, deletion and other graph actions work uniformly.
+                if not ent_uuid:
+                    ent_uuid = _entity_uuid_from_canonical(canon)
+                    entity_ids[canon] = ent_uuid
+                node_key = str(ent_uuid)
                 # entity_kind in meta stores normalized kind for filtering; falls back to effective_kind
                 node_meta = {"entity_kind": norm_kind or effective_kind or "entity", "canonical": canon, "entity_id": ent_uuid, "source_id": node_key}
                 if meta:
@@ -724,6 +732,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
         """Delete an entity and all its relationships.
 
         Returns deleted entity name and counts of removed relationships.
+        If the entity UUID does not exist in the database (e.g. it was a
+        deterministic graph-only UUID), return a success response so the
+        frontend can remove the node from the graph.
         """
         try:
             uuid_module.UUID(entity_id)
@@ -734,7 +745,16 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
             with store.Session() as session:
                 entity = session.query(db_models.Entity).filter_by(id=entity_id).first()
                 if not entity:
-                    return jsonify({"error": "Entity not found"}), 404
+                    # Entity may be a graph-only node with a deterministic UUID
+                    # (not stored in the Entity table).  Return success so the
+                    # UI can remove it from the graph without error.
+                    return jsonify({
+                        "status": "deleted",
+                        "id": entity_id,
+                        "name": None,
+                        "relationships_removed": 0,
+                        "intelligence_removed": 0,
+                    })
 
                 name = entity.name
 
