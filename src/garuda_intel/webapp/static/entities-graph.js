@@ -48,6 +48,10 @@ const PARTICLE_PROB = 0.08;
 const HOVER_MODAL_DELAY = 3500;
 const LABEL_ZOOM_THRESHOLD = 0.4;
 
+function _isValidUUID(str) {
+  return typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
 let use3D = false;
 let graphInstance = null;
 let currentNodes = [];
@@ -657,7 +661,7 @@ function renderDetails(node, links) {
         >
           Expand
         </button>
-        ${isEntity ? `<button data-delete-entity="${escapeHtml(node.id)}" class="inline-flex items-center gap-1 rounded-md border border-red-200 dark:border-red-800 px-2 py-1 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition" title="Delete entity">🗑</button>` : ''}
+        ${isEntity && _isValidUUID(node.id) ? `<button data-delete-entity="${escapeHtml(node.id)}" class="inline-flex items-center gap-1 rounded-md border border-red-200 dark:border-red-800 px-2 py-1 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition" title="Delete entity">🗑</button>` : ''}
       </div>
     </div>
 
@@ -971,12 +975,13 @@ function renderNodeModalContent(node, links, detail) {
 
   // Render relationships from API if available
   const rels = detail?.relationships || [];
+  const isEntityNode = detail?.type && !['page', 'image', 'intel', 'seed', 'media', 'link'].includes(detail.type);
   const relationshipsSection = rels.length > 0
     ? `
       <div>
         <div class="flex items-center justify-between mb-1">
           <div class="text-xs uppercase text-slate-500">Relationships (${rels.length})</div>
-          ${isEntityNode && node.id ? `<button id="modal-add-relation-toggle" type="button" class="text-[10px] px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-800 transition font-semibold">+ Add</button>` : ''}
+          ${isEntityNode && _isValidUUID(node.id) ? `<button id="modal-add-relation-toggle" type="button" class="text-[10px] px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-800 transition font-semibold">+ Add</button>` : ''}
         </div>
         <input id="modal-relation-search" type="text" placeholder="Filter relations…" class="w-full mb-1 rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
         <ul id="modal-relation-list" class="text-xs space-y-1 max-h-48 overflow-y-auto">
@@ -995,7 +1000,7 @@ function renderNodeModalContent(node, links, detail) {
         </ul>
       </div>
     `
-    : (isEntityNode && node.id
+    : (isEntityNode && _isValidUUID(node.id)
       ? `<div>
           <div class="flex items-center justify-between mb-1">
             <div class="text-xs uppercase text-slate-500">Relationships (0)</div>
@@ -1006,7 +1011,7 @@ function renderNodeModalContent(node, links, detail) {
       : '');
 
   // Inline add-relation form for the modal
-  const addRelationForm = isEntityNode && node.id
+  const addRelationForm = isEntityNode && _isValidUUID(node.id)
     ? `<div id="modal-add-relation-section" class="hidden mt-1 p-2 rounded border border-green-200 dark:border-green-800 bg-green-50/60 dark:bg-green-900/20 space-y-2 text-xs">
         <div class="font-semibold text-green-700 dark:text-green-400">Add Relation from "${escapeHtml(node.label || node.id)}"</div>
         <input id="modal-add-relation-target" type="text" placeholder="Search target entity…" class="w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs">
@@ -1024,8 +1029,7 @@ function renderNodeModalContent(node, links, detail) {
     : '';
 
   // Delete entity button (only for entities with a valid UUID id)
-  const isEntityNode = detail?.type && !['page', 'image', 'intel', 'seed', 'media', 'link'].includes(detail.type);
-  const deleteEntityBtn = isEntityNode && node.id
+  const deleteEntityBtn = isEntityNode && _isValidUUID(node.id)
     ? `<div class="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800">
         <button data-delete-entity="${escapeHtml(node.id)}" class="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-500 transition">Delete Entity</button>
        </div>`
@@ -1039,7 +1043,7 @@ function renderNodeModalContent(node, links, detail) {
   const kindOptions = [...allDbNodeKinds, 'person', 'org', 'location', 'product', 'event', 'entity', 'unknown']
     .filter((v, i, a) => a.indexOf(v) === i);
 
-  const editForm = isEntityNode && node.id
+  const editForm = isEntityNode && _isValidUUID(node.id)
     ? `<div id="entity-edit-section" class="hidden mt-2 p-2 rounded border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-900/20 space-y-2">
         <label class="block text-xs text-slate-500">Name
           <input id="entity-edit-name" type="text" value="${escapeHtml(node.label || meta.name || '')}" class="mt-0.5 w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-sm">
@@ -1056,7 +1060,7 @@ function renderNodeModalContent(node, links, detail) {
       </div>`
     : '';
 
-  const editButton = isEntityNode && node.id
+  const editButton = isEntityNode && _isValidUUID(node.id)
     ? `<button id="entity-edit-toggle" type="button" class="px-2 py-1 rounded border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 text-xs font-semibold hover:bg-blue-50 dark:hover:bg-blue-900/30">✏ Edit</button>`
     : '';
 
@@ -1429,13 +1433,13 @@ function _wireManagementTools() {
     setMgmtStatus('Fetching stats…');
     try {
       const base = val('base-url') || '';
-      const res = await fetch(`${base}/api/relationships/stats`, {
+      const res = await fetch(`${base}/api/relationships/confidence-stats`, {
         headers: { 'X-API-Key': els.apiKey?.value || '' },
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      const total = data.total || 0;
-      const types = data.by_type ? Object.keys(data.by_type).length : 0;
+      const total = data.total_relationships || 0;
+      const types = data.top_relation_types ? data.top_relation_types.length : 0;
       setMgmtStatus(`✓ ${total} relationships, ${types} types`);
     } catch (e) { setMgmtStatus('Failed: ' + e.message); }
   });
@@ -1792,6 +1796,7 @@ async function deleteSelectedNodes() {
   if (!confirm(`Delete ${selectedNodes.size} selected node(s)?\n${displayNames}\nThis cannot be undone.`)) return;
   const base = val('base-url') || '';
   for (const [id] of selectedNodes) {
+    if (!_isValidUUID(id)) continue;
     try {
       await fetch(`${base}/api/entities/${encodeURIComponent(id)}`, {
         method: 'DELETE',
