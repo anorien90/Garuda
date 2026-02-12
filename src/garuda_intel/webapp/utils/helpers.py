@@ -57,13 +57,37 @@ def _parse_list_param(val: str | None, default: set[str]) -> set[str]:
     return {v.strip().lower() for v in val.split(",") if v.strip()}
 
 
-def _seeds_from_query(nodes: list[dict], query: str) -> set[str]:
-    """Find seed nodes matching query string."""
+def _seeds_from_query(nodes: list[dict], query: str, semantic_seeds: set[str] | None = None) -> set[str]:
+    """Find seed nodes matching query string.
+
+    When *query* is a UUID the seed set contains only the node whose ``id``
+    matches exactly.  For free-text queries the seeds are nodes whose label
+    or id contains the query **plus** any nodes whose id is listed in
+    *semantic_seeds* (i.e. nodes that matched via semantic/embedding search).
+
+    When no query is given every node is a seed (useful for depth-0 "show
+    all" mode).  When a specific query is given but nothing matches the
+    returned set is **empty** so that ``_filter_by_depth`` correctly
+    produces an empty result instead of silently falling back to the full
+    graph.
+    """
     if not query:
         return {n["id"] for n in nodes}
+
+    # UUID exact match – only the single matching node is a seed
+    if _looks_like_uuid(query):
+        return {n["id"] for n in nodes if str(n.get("id", "")).lower() == query.lower()}
+
     q = query.lower()
+    # Text substring match on label / id
     seeds = {n["id"] for n in nodes if q in str(n.get("label", "")).lower() or q in str(n.get("id", "")).lower()}
-    return seeds or {n["id"] for n in nodes}
+
+    # Include nodes that matched via semantic search
+    if semantic_seeds:
+        node_id_set = {n["id"] for n in nodes}
+        seeds |= (semantic_seeds & node_id_set)
+
+    return seeds
 
 
 def _filter_by_depth(nodes: list[dict], links: list[dict], depth_limit: int, seeds: set[str]) -> tuple[list[dict], list[dict]]:
