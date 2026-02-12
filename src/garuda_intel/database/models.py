@@ -949,6 +949,59 @@ ChatPlan.steps = relationship(
 )
 
 
+class ChatMemoryEntry(BasicDataEntry):
+    """Persistent short-term memory entry for a ChatPlan.
+
+    Each key/value written via the ``store_memory_data`` MCP tool is
+    persisted here so the working memory survives process restarts,
+    can be queried transparently, and is returned to the user.
+    """
+    __tablename__ = "chat_memory_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("chat_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    key: Mapped[str] = mapped_column(String(200), nullable=False)
+    value_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    step_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tool_name: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    plan: Mapped["ChatPlan"] = relationship(
+        "ChatPlan", foreign_keys=[plan_id],
+    )
+
+    __table_args__ = (
+        Index('ix_chat_memory_plan_key', 'plan_id', 'key'),
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "chat_memory_entry",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "plan_id": str(self.plan_id),
+            "key": self.key,
+            "value": self.value_json,
+            "step_index": self.step_index,
+            "tool_name": self.tool_name,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+ChatPlan.memory_entries = relationship(
+    "ChatMemoryEntry",
+    foreign_keys="ChatMemoryEntry.plan_id",
+    cascade="all, delete-orphan",
+    order_by="ChatMemoryEntry.created_at",
+)
+
+
 class StepPattern(BasicDataEntry):
     """Tracks successful step/plan patterns for reuse.
 

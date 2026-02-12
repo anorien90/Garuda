@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from ..database.models import ChatPlan, ChatPlanStep, StepPattern
+from ..database.models import ChatMemoryEntry, ChatPlan, ChatPlanStep, StepPattern
 from ..database.store import PersistenceStore
 from ..extractor.llm import LLMIntelExtractor
 from ..vector.base import VectorStore
@@ -42,6 +42,7 @@ TOOL_NAMES = [
     "reflect_findings",
     "store_memory_data",
     "get_memory_data",
+    "search_memory",
     "create_plan",
     "store_step_to_plan",
     "eval_step_from_plan",
@@ -52,7 +53,10 @@ DEFAULT_MAX_PLAN_CHANGES_PER_CYCLE = 15
 DEFAULT_MAX_CYCLES = 2
 DEFAULT_MAX_TOTAL_STEPS = 100
 DEFAULT_PATTERN_REUSE_THRESHOLD = 0.75
+DEFAULT_MAX_PROMPT_TOKENS = 13000
 STEP_PATTERN_QDRANT_PREFIX = "step_pattern_"
+# Rough chars-per-token factor (conservative for English text)
+CHARS_PER_TOKEN = 4
 
 
 class TaskPlanner:
@@ -67,6 +71,9 @@ class TaskPlanner:
         # Injected helpers for web crawling
         collect_candidates_fn=None,
         explorer_factory=None,
+        # Per-request overrides
+        crawl_enabled: Optional[bool] = None,
+        task_id: Optional[str] = None,
     ):
         self.store = store
         self.llm = llm
@@ -74,6 +81,7 @@ class TaskPlanner:
         self.settings = settings
         self._collect_candidates = collect_candidates_fn
         self._explorer_factory = explorer_factory
+        self._task_id = task_id
 
         # Limits
         self.max_plan_changes_per_cycle = getattr(
@@ -84,6 +92,15 @@ class TaskPlanner:
         self.pattern_reuse_threshold = getattr(
             settings, "chat_pattern_reuse_threshold", DEFAULT_PATTERN_REUSE_THRESHOLD
         )
+        self.max_prompt_tokens = getattr(
+            settings, "chat_max_prompt_tokens", DEFAULT_MAX_PROMPT_TOKENS
+        )
+
+        # Crawl enabled: per-request flag > settings > True
+        if crawl_enabled is not None:
+            self.crawl_enabled = crawl_enabled
+        else:
+            self.crawl_enabled = getattr(settings, "chat_crawl_enabled", True)
 
     # -----------------------------------------------------------------------
     # Public entry-point
@@ -104,9 +121,12 @@ class TaskPlanner:
         memory: Dict[str, Any] = {}
         sources: List[str] = []
         all_context: List[Dict[str, Any]] = []
+        cancelled = False
 
         # Persist the plan row
         self._create_plan_row(plan_id, question, session_id)
+        self._emit("plan_created", f"Plan {plan_id} created for: {question[:80]}",
+                    {"plan_id": plan_id, "question": question})
 
         total_plan_changes = 0
         total_steps = 0
@@ -119,20 +139,34 @@ class TaskPlanner:
         existing_pattern = self._find_matching_pattern(question)
         if existing_pattern:
             logger.info("Found matching step pattern – will try reuse")
+            self._emit("pattern_match", "Reusing successful step pattern",
+                        {"plan_id": plan_id})
 
         for cycle in range(1, self.max_cycles + 1):
             last_cycle = cycle
             plan_changes_this_cycle = 0
 
             while plan_changes_this_cycle < self.max_plan_changes_per_cycle:
+                # --- Cancellation check ---
+                if self._is_cancelled():
+                    logger.info("Plan %s cancelled by user", plan_id)
+                    self._emit("plan_cancelled", f"Plan {plan_id} cancelled",
+                                {"plan_id": plan_id})
+                    cancelled = True
+                    break
+
                 if total_steps >= self.max_total_steps:
                     logger.warning("Total step limit reached (%d)", self.max_total_steps)
+                    self._emit("step_limit", "Total step limit reached",
+                                {"plan_id": plan_id, "limit": self.max_total_steps})
                     break
 
                 # -- 1. Create / recreate the plan --
                 if current_plan is None or not self._has_pending_steps(current_plan):
                     plan_changes_this_cycle += 1
                     total_plan_changes += 1
+                    self._emit("plan_creating", f"Creating plan (revision {total_plan_changes})",
+                                {"plan_id": plan_id, "revision": total_plan_changes})
                     current_plan = self._tool_create_plan(
                         question,
                         entity,
@@ -156,6 +190,13 @@ class TaskPlanner:
                     break
 
                 total_steps += 1
+                tool_name = step.get("tool", "unknown")
+                self._emit("step_executing",
+                           f"Step {total_steps}: {tool_name}",
+                           {"plan_id": plan_id, "step": total_steps,
+                            "tool": tool_name,
+                            "description": step.get("description", "")})
+
                 step_result = self._execute_step(
                     step,
                     question,
@@ -167,6 +208,15 @@ class TaskPlanner:
                 )
                 plan_steps_log.append(step_result)
 
+                # Persist memory snapshot to DB after every step
+                self._persist_memory(plan_id, memory, total_steps, tool_name)
+
+                self._emit("step_completed",
+                           f"Step {total_steps} ({tool_name}): {step_result.get('status', 'unknown')}",
+                           {"plan_id": plan_id, "step": total_steps,
+                            "tool": tool_name,
+                            "status": step_result.get("status")})
+
                 # Collect sources / context
                 step_sources = step_result.get("sources", [])
                 sources.extend(s for s in step_sources if s not in sources)
@@ -176,7 +226,12 @@ class TaskPlanner:
                 # -- 3. Evaluate the step --
                 eval_ok = self._tool_eval_step(step_result, question, memory)
                 if not eval_ok:
-                    # Mark remaining steps stale – force re-plan
+                    # INSUFFICIENT_DATA escalation – force re-plan
+                    self._emit("step_insufficient",
+                               f"Step {total_steps} ({tool_name}) insufficient – re-planning",
+                               {"plan_id": plan_id, "step": total_steps, "tool": tool_name})
+                    self._tool_store_memory(memory, f"_insufficient_step_{total_steps}",
+                                            {"tool": tool_name, "reason": "INSUFFICIENT_DATA"})
                     self._invalidate_remaining(current_plan)
                     continue
 
@@ -191,18 +246,31 @@ class TaskPlanner:
                     final_answer = answer_candidate
                     break
 
-            if final_answer:
+            if final_answer or cancelled:
                 break
 
         # --- Final summarisation step ---
-        if not final_answer:
+        if not final_answer and not cancelled:
+            self._emit("plan_summarizing", "Generating final summary",
+                        {"plan_id": plan_id})
             final_answer = self._final_summary(question, memory, plan_steps_log, sources)
+
+        if cancelled and not final_answer:
+            final_answer = "Task was cancelled by the user."
 
         # --- Persist pattern if successful ---
         self._maybe_store_pattern(question, plan_steps_log, final_answer)
 
         # --- Persist completed plan ---
-        self._complete_plan_row(plan_id, final_answer, sources, memory, total_steps)
+        status = "cancelled" if cancelled else "completed"
+        self._complete_plan_row(plan_id, final_answer, sources, memory, total_steps, status=status)
+
+        # --- Final memory persist ---
+        self._persist_memory(plan_id, memory, total_steps, "_final")
+
+        self._emit("plan_done", f"Plan finished: {status}",
+                    {"plan_id": plan_id, "status": status,
+                     "total_steps": total_steps})
 
         # --- Build response ---
         return self._build_response(
@@ -231,6 +299,7 @@ class TaskPlanner:
         existing_pattern: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Ask the LLM to create / regenerate a plan."""
+        crawl_note = "" if self.crawl_enabled else "\n  NOTE: Online crawling is DISABLED. Do NOT use crawl_external_data.\n"
         tools_desc = (
             "Available tools:\n"
             "- search_local_data(query): Search local RAG, graph, and SQL data\n"
@@ -238,15 +307,18 @@ class TaskPlanner:
             "- reflect_findings(data_key): Reflect on data stored in memory\n"
             "- store_memory_data(key, value): Store a result to working memory\n"
             "- get_memory_data(key): Retrieve data from working memory\n"
+            "- search_memory(query): Search through working memory for relevant entries\n"
+            + crawl_note
         )
 
-        memory_summary = (
+        memory_summary = self._truncate_for_prompt(
             json.dumps(
                 {k: (str(v)[:200] if isinstance(v, str) else v) for k, v in memory.items()},
                 ensure_ascii=False,
             )
             if memory
-            else "{}"
+            else "{}",
+            max_chars=2000,
         )
 
         history_summary = ""
@@ -278,15 +350,18 @@ Previous steps: {history_summary or 'None'}
 
 Rules:
 1. Start with search_local_data to check existing knowledge
-2. If local data is insufficient, use crawl_external_data
+2. If local data is insufficient, use crawl_external_data (if enabled)
 3. Always reflect_findings before finalizing
 4. Use store_memory_data to save intermediate results
 5. Keep the plan concise (3-8 steps)
 6. For multi-part questions, create steps for each sub-question
+7. Use search_memory when memory grows large and you need specific entries
 
 Return JSON array:
 [{{"tool": "<tool_name>", "input": {{"<param>": "<value>"}}, "description": "..."}}]
 """
+        # Apply token budget
+        prompt = self._truncate_for_prompt(prompt, self.max_prompt_tokens * CHARS_PER_TOKEN)
         try:
             payload = {"model": self.llm.model, "prompt": prompt, "stream": False}
             resp = requests.post(self.llm.ollama_url, json=payload, timeout=60)
@@ -302,7 +377,7 @@ Return JSON array:
             logger.warning("Plan creation failed: %s", e)
 
         # Fallback minimal plan
-        return [
+        fallback = [
             {
                 "tool": "search_local_data",
                 "input": {"query": question},
@@ -310,21 +385,23 @@ Return JSON array:
                 "step_index": 0,
                 "description": "Search local knowledge base",
             },
-            {
+        ]
+        if self.crawl_enabled:
+            fallback.append({
                 "tool": "crawl_external_data",
                 "input": {"query": question, "entity": entity},
                 "status": "pending",
                 "step_index": 1,
                 "description": "Crawl web for data",
-            },
-            {
-                "tool": "reflect_findings",
-                "input": {"data_key": "search_results"},
-                "status": "pending",
-                "step_index": 2,
-                "description": "Reflect on gathered data",
-            },
-        ]
+            })
+        fallback.append({
+            "tool": "reflect_findings",
+            "input": {"data_key": "search_results"},
+            "status": "pending",
+            "step_index": len(fallback),
+            "description": "Reflect on gathered data",
+        })
+        return fallback
 
     # -- search_local_data --
     def _tool_search_local(
@@ -487,6 +564,22 @@ Return JSON: {{"sufficient": true/false, "summary": "...", "missing": ["..."], "
             return memory.get(key)
         return memory
 
+    # -- search_memory --
+    @staticmethod
+    def _tool_search_memory(memory: Dict[str, Any], query: str) -> Dict[str, Any]:
+        """Search through working memory for entries matching the query.
+
+        Performs a simple keyword search across memory keys and values,
+        useful when memory is too large to include fully in prompts.
+        """
+        query_lower = query.lower()
+        matches: Dict[str, Any] = {}
+        for key, value in memory.items():
+            val_str = json.dumps(value, ensure_ascii=False, default=str) if not isinstance(value, str) else value
+            if query_lower in key.lower() or query_lower in val_str.lower():
+                matches[key] = value
+        return {"matches": matches, "count": len(matches), "query": query}
+
     # -- eval_step_from_plan --
     def _tool_eval_step(
         self,
@@ -494,7 +587,11 @@ Return JSON: {{"sufficient": true/false, "summary": "...", "missing": ["..."], "
         question: str,
         memory: Dict[str, Any],
     ) -> bool:
-        """Evaluate a single step outcome – returns True if acceptable."""
+        """Evaluate a single step outcome – returns True if acceptable.
+
+        Triggers INSUFFICIENT_DATA escalation (returns False) when a step
+        yields no usable data, so the orchestrator can re-plan.
+        """
         status = step_result.get("status", "failed")
         if status == "failed":
             return False
@@ -505,15 +602,22 @@ Return JSON: {{"sufficient": true/false, "summary": "...", "missing": ["..."], "
             count = 0
             if isinstance(output, dict):
                 count = output.get("count", 0)
+            if count == 0:
+                logger.info("INSUFFICIENT_DATA: search_local_data returned 0 hits")
             return count > 0
 
         if tool == "crawl_external_data":
-            if isinstance(output, dict) and output.get("error"):
-                return False
+            if isinstance(output, dict):
+                if output.get("error") or output.get("skipped"):
+                    return False
             return True
 
         if tool == "reflect_findings":
             if isinstance(output, dict):
+                # If reflection says data is insufficient, escalate
+                if output.get("sufficient") is False:
+                    logger.info("INSUFFICIENT_DATA: reflect_findings says data insufficient")
+                    return False
                 return True
             return False
 
@@ -528,7 +632,11 @@ Return JSON: {{"sufficient": true/false, "summary": "...", "missing": ["..."], "
         plan: List[Dict[str, Any]],
     ) -> Tuple[bool, Optional[str]]:
         """Evaluate the overall plan progress. Return (done, answer_candidate)."""
-        memory_str = json.dumps(memory, ensure_ascii=False, default=str)[:6000]
+        # Budget: reserve half the token window for the evaluation prompt
+        max_memory_chars = (self.max_prompt_tokens * CHARS_PER_TOKEN) // 2
+        memory_str = self._truncate_for_prompt(
+            json.dumps(memory, ensure_ascii=False, default=str), max_memory_chars
+        )
         steps_done = [h for h in history if h.get("status") == "completed"]
 
         prompt = f"""You are evaluating whether enough data has been gathered to answer the user question.
@@ -594,12 +702,17 @@ If more data is needed, return:
                 self._tool_store_memory(memory, "search_results", result.get("hits", []))
 
             elif tool == "crawl_external_data":
-                q = tool_input.get("query", question)
-                e = tool_input.get("entity", entity)
-                result = self._tool_crawl_external(q, e)
-                output = result
-                step_sources.extend(result.get("urls_crawled", []))
-                self._tool_store_memory(memory, "crawl_results", result)
+                if not self.crawl_enabled:
+                    output = {"skipped": True, "reason": "Online crawling is disabled"}
+                    error = "crawl_disabled"
+                    logger.info("Crawl skipped – crawl_enabled=False")
+                else:
+                    q = tool_input.get("query", question)
+                    e = tool_input.get("entity", entity)
+                    result = self._tool_crawl_external(q, e)
+                    output = result
+                    step_sources.extend(result.get("urls_crawled", []))
+                    self._tool_store_memory(memory, "crawl_results", result)
 
             elif tool == "reflect_findings":
                 dk = tool_input.get("data_key", "search_results")
@@ -615,6 +728,10 @@ If more data is needed, return:
             elif tool == "get_memory_data":
                 key = tool_input.get("key")
                 output = self._tool_get_memory(memory, key)
+
+            elif tool == "search_memory":
+                q = tool_input.get("query", question)
+                output = self._tool_search_memory(memory, q)
 
             elif tool == "create_plan":
                 # Handled externally – should not appear inside execution
@@ -689,7 +806,10 @@ If more data is needed, return:
         sources: List[str],
     ) -> str:
         """Produce a final answer by summarising memory and plan outcomes."""
-        memory_str = json.dumps(memory, ensure_ascii=False, default=str)[:8000]
+        max_memory_chars = (self.max_prompt_tokens * CHARS_PER_TOKEN) // 2
+        memory_str = self._truncate_for_prompt(
+            json.dumps(memory, ensure_ascii=False, default=str), max_memory_chars
+        )
         src_str = "\n".join(f"- {s}" for s in sources[:20]) if sources else "No sources."
 
         prompt = f"""Synthesize a final answer to the user question using ALL collected data.
@@ -899,6 +1019,7 @@ Return ONLY the generalized task description as a plain string (no JSON).
         sources: List[str],
         memory: Dict[str, Any],
         total_steps: int,
+        status: str = "completed",
     ) -> None:
         try:
             if hasattr(self.store, "Session"):
@@ -909,7 +1030,7 @@ Return ONLY the generalized task description as a plain string (no JSON).
                         row.sources_json = sources
                         row.memory_json = self._safe_memory(memory)
                         row.total_steps_executed = total_steps
-                        row.status = "completed"
+                        row.status = status
                         row.completed_at = datetime.now(timezone.utc)
                         session.commit()
         except Exception as e:
@@ -1005,6 +1126,7 @@ Return ONLY the generalized task description as a plain string (no JSON).
             "paraphrased_queries": [],
             "live_urls": live_urls,
             "crawl_reason": "Task planner decided to crawl" if online_triggered else None,
+            "crawl_enabled": self.crawl_enabled,
             "rag_hits_count": len(rag_hits),
             "graph_hits_count": len(graph_hits),
             "sql_hits_count": len(sql_hits),
@@ -1018,6 +1140,7 @@ Return ONLY the generalized task description as a plain string (no JSON).
             "total_steps_executed": total_steps,
             "plan_steps": steps_summary,
             "memory_keys": list(memory.keys()),
+            "memory_snapshot": self._safe_memory(memory),
             "sources": sources,
         }
 
@@ -1049,3 +1172,83 @@ Return ONLY the generalized task description as a plain string (no JSON).
                 except Exception:
                     safe[k] = "<unserializable>"
         return safe
+
+    # -----------------------------------------------------------------------
+    # Cancellation, persistence, event, and token-budget helpers
+    # -----------------------------------------------------------------------
+    def _is_cancelled(self) -> bool:
+        """Check if the associated task has been cancelled by the user."""
+        if not self._task_id:
+            return False
+        try:
+            from .task_queue import TaskQueueService
+            task_queue = getattr(self, "_task_queue", None)
+            if task_queue and hasattr(task_queue, "is_cancelled"):
+                return task_queue.is_cancelled(self._task_id)
+            # Fallback: query DB directly
+            if hasattr(self.store, "Session"):
+                from ..database.models import Task
+                with self.store.Session() as session:
+                    task = session.get(Task, uuid.UUID(self._task_id))
+                    return task is not None and task.status == "cancelled"
+        except Exception:
+            pass
+        return False
+
+    def _persist_memory(
+        self,
+        plan_id: str,
+        memory: Dict[str, Any],
+        step_index: int,
+        tool_name: str,
+    ) -> None:
+        """Persist every memory key/value pair to the database."""
+        try:
+            if hasattr(self.store, "Session"):
+                safe = self._safe_memory(memory)
+                with self.store.Session() as session:
+                    for key, value in safe.items():
+                        # Upsert: delete old entry with same plan+key, then insert
+                        from sqlalchemy import select, and_
+                        existing = session.execute(
+                            select(ChatMemoryEntry).where(
+                                and_(
+                                    ChatMemoryEntry.plan_id == uuid.UUID(plan_id),
+                                    ChatMemoryEntry.key == key,
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        if existing:
+                            existing.value_json = self._safe_json(value)
+                            existing.step_index = step_index
+                            existing.tool_name = tool_name
+                        else:
+                            entry = ChatMemoryEntry(
+                                plan_id=uuid.UUID(plan_id),
+                                key=key,
+                                value_json=self._safe_json(value),
+                                step_index=step_index,
+                                tool_name=tool_name,
+                            )
+                            session.add(entry)
+                    session.commit()
+        except Exception as e:
+            logger.warning("Failed to persist memory entries: %s", e)
+
+    def _emit(self, step: str, message: str, payload: Optional[Dict] = None):
+        """Emit an event for UI observability."""
+        try:
+            from ..webapp.services.event_system import emit_event
+            emit_event(step, message, payload=payload)
+        except Exception:
+            pass  # Event system may not be initialized
+
+    @staticmethod
+    def _truncate_for_prompt(text: str, max_chars: int = 8000) -> str:
+        """Truncate text to stay within token budget.
+
+        Uses a simple char-based heuristic since exact tokenization is model-specific.
+        """
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + "… [truncated]"
