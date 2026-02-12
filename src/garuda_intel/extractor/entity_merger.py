@@ -84,65 +84,94 @@ class _DynamicHierarchyDict(dict):
 
     Provides backward-compatible dict access while delegating to the registry
     so that LLM-discovered types are automatically included.
+    Uses simple caching invalidated by registry size changes.
     """
 
+    def __init__(self):
+        super().__init__()
+        self._cache = None
+        self._cache_size = -1
+
+    def _get_data(self):
+        registry = _get_registry()
+        current_size = len(registry.get_all_kinds())
+        if self._cache is None or self._cache_size != current_size:
+            self._cache = _build_hierarchy_from_registry()
+            self._cache_size = current_size
+        return self._cache
+
     def __getitem__(self, key):
-        return _build_hierarchy_from_registry()[key]
+        return self._get_data()[key]
 
     def __contains__(self, key):
-        return key in _build_hierarchy_from_registry()
+        return key in self._get_data()
 
     def get(self, key, default=None):
-        return _build_hierarchy_from_registry().get(key, default)
+        return self._get_data().get(key, default)
 
     def keys(self):
-        return _build_hierarchy_from_registry().keys()
+        return self._get_data().keys()
 
     def values(self):
-        return _build_hierarchy_from_registry().values()
+        return self._get_data().values()
 
     def items(self):
-        return _build_hierarchy_from_registry().items()
+        return self._get_data().items()
 
     def __iter__(self):
-        return iter(_build_hierarchy_from_registry())
+        return iter(self._get_data())
 
     def __len__(self):
-        return len(_build_hierarchy_from_registry())
+        return len(self._get_data())
 
     def __repr__(self):
-        return repr(_build_hierarchy_from_registry())
+        return repr(self._get_data())
 
 
 class _DynamicChildrenDict(dict):
-    """A dict-like object that dynamically reads children from the registry."""
+    """A dict-like object that dynamically reads children from the registry.
+    Uses simple caching invalidated by registry size changes.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._cache = None
+        self._cache_size = -1
+
+    def _get_data(self):
+        registry = _get_registry()
+        current_size = len(registry.get_all_kinds())
+        if self._cache is None or self._cache_size != current_size:
+            self._cache = _build_children_from_registry()
+            self._cache_size = current_size
+        return self._cache
 
     def __getitem__(self, key):
-        return _build_children_from_registry()[key]
+        return self._get_data()[key]
 
     def __contains__(self, key):
-        return key in _build_children_from_registry()
+        return key in self._get_data()
 
     def get(self, key, default=None):
-        return _build_children_from_registry().get(key, default)
+        return self._get_data().get(key, default)
 
     def keys(self):
-        return _build_children_from_registry().keys()
+        return self._get_data().keys()
 
     def values(self):
-        return _build_children_from_registry().values()
+        return self._get_data().values()
 
     def items(self):
-        return _build_children_from_registry().items()
+        return self._get_data().items()
 
     def __iter__(self):
-        return iter(_build_children_from_registry())
+        return iter(self._get_data())
 
     def __len__(self):
-        return len(_build_children_from_registry())
+        return len(self._get_data())
 
     def __repr__(self):
-        return repr(_build_children_from_registry())
+        return repr(self._get_data())
 
 
 # Dynamic hierarchy dicts that delegate to the EntityKindRegistry.
