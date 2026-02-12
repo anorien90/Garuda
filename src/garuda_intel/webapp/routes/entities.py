@@ -737,6 +737,50 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
             return jsonify({"error": str(e)}), 500
 
     # ------------------------------------------------------------------
+    # Update entity (name / kind)
+    # ------------------------------------------------------------------
+    @bp.put("/<entity_id>")
+    @api_key_required
+    def api_update_entity(entity_id):
+        """Update an entity's name and/or kind."""
+        try:
+            uuid_module.UUID(entity_id)
+        except (ValueError, AttributeError):
+            return jsonify({"error": "Invalid entity UUID"}), 400
+
+        body = request.get_json(silent=True) or {}
+        new_name = body.get("name")
+        new_kind = body.get("kind")
+
+        if not new_name and not new_kind:
+            return jsonify({"error": "Provide at least 'name' or 'kind' to update"}), 400
+
+        try:
+            with store.Session() as session:
+                entity = session.query(db_models.Entity).filter_by(id=entity_id).first()
+                if not entity:
+                    return jsonify({"error": "Entity not found"}), 404
+
+                if new_name:
+                    entity.name = str(new_name).strip()
+                if new_kind:
+                    entity.kind = str(new_kind).strip().lower()
+                session.commit()
+
+                result = {
+                    "status": "updated",
+                    "id": str(entity.id),
+                    "name": entity.name,
+                    "kind": entity.kind,
+                }
+
+            emit_event("entity_update", f"updated entity {entity_id}", payload=result)
+            return jsonify(result)
+        except Exception as e:
+            logger.exception("Entity update failed for %s", entity_id)
+            return jsonify({"error": str(e)}), 500
+
+    # ------------------------------------------------------------------
     # Delete a single relationship
     # ------------------------------------------------------------------
     @bp.delete("/<entity_id>/relationships/<relationship_id>")
