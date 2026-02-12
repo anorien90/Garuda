@@ -65,8 +65,9 @@ def init_schema_routes(api_key_required, store):
         """
         Get complete schema including database sync.
         
-        This endpoint syncs with the database to discover any new kinds
-        that were added by crawlers or extractors.
+        This endpoint loads persisted structure learnings from the database,
+        then syncs to discover any new kinds that were added by crawlers
+        or extractors, and finally persists the updated state back.
         
         Returns:
             JSON object with kinds, relations, and sync stats
@@ -74,11 +75,18 @@ def init_schema_routes(api_key_required, store):
         try:
             registry = get_registry()
             
-            # Sync from database to discover new kinds
             new_kinds_count = 0
+            load_stats = {}
+            save_stats = {}
             try:
                 with store.Session() as session:
+                    # Load persisted structure learnings
+                    load_stats = registry.load_from_database(session)
+                    # Discover new kinds from entity table
                     new_kinds_count = registry.sync_from_database(session)
+                    # Persist everything back so new discoveries are saved
+                    save_stats = registry.save_to_database(session)
+                    session.commit()
             except Exception as e:
                 logger.warning(f"Database sync failed: {e}")
             
@@ -93,6 +101,8 @@ def init_schema_routes(api_key_required, store):
                     "total_kinds": len(registry.get_all_kinds()),
                     "total_relations": len(registry.get_all_relations()),
                     "new_kinds_synced": new_kinds_count,
+                    "loaded": load_stats,
+                    "saved": save_stats,
                 },
             })
         except Exception as e:
@@ -135,6 +145,14 @@ def init_schema_routes(api_key_required, store):
                 description=body.get("description", ""),
             )
             
+            # Persist to database
+            try:
+                with store.Session() as session:
+                    registry.save_to_database(session)
+                    session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to persist kind to database: {e}")
+            
             return jsonify({
                 "success": True,
                 "kind": kind_info.to_dict(),
@@ -175,6 +193,14 @@ def init_schema_routes(api_key_required, store):
                 description=body.get("description", ""),
             )
             
+            # Persist to database
+            try:
+                with store.Session() as session:
+                    registry.save_to_database(session)
+                    session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to persist relation to database: {e}")
+            
             return jsonify({
                 "success": True,
                 "relation": rel_info.to_dict(),
@@ -209,4 +235,64 @@ def init_schema_routes(api_key_required, store):
             logger.exception("Failed to normalize kind")
             return jsonify({"error": str(e)}), 500
     
+    # ---- User Settings ----
+
+    @bp.get("/settings")
+    @api_key_required
+    def get_settings():
+        """Get all user settings."""
+        from ...database.models import UserSetting
+        try:
+            with store.Session() as session:
+                rows = session.query(UserSetting).all()
+                return jsonify({
+                    "settings": {r.key: r.to_dict() for r in rows},
+                })
+        except Exception as e:
+            logger.exception("Failed to get settings")
+            return jsonify({"error": str(e)}), 500
+
+    @bp.get("/settings/<key>")
+    @api_key_required
+    def get_setting(key: str):
+        """Get a single user setting by key."""
+        from ...database.models import UserSetting
+        try:
+            with store.Session() as session:
+                row = session.query(UserSetting).filter_by(key=key).first()
+                if not row:
+                    return jsonify({"error": "Setting not found"}), 404
+                return jsonify(row.to_dict())
+        except Exception as e:
+            logger.exception("Failed to get setting")
+            return jsonify({"error": str(e)}), 500
+
+    @bp.put("/settings/<key>")
+    @api_key_required
+    def put_setting(key: str):
+        """Create or update a user setting."""
+        import uuid as _uuid
+        from ...database.models import UserSetting
+        try:
+            body = request.get_json(silent=True) or {}
+            with store.Session() as session:
+                row = session.query(UserSetting).filter_by(key=key).first()
+                if row:
+                    row.value_json = body.get("value")
+                    if "description" in body:
+                        row.description = body["description"]
+                else:
+                    row = UserSetting(
+                        id=_uuid.uuid4(),
+                        key=key,
+                        value_json=body.get("value"),
+                        description=body.get("description"),
+                    )
+                    session.add(row)
+                session.commit()
+                return jsonify(row.to_dict())
+        except Exception as e:
+            logger.exception("Failed to save setting")
+            return jsonify({"error": str(e)}), 500
+
     return bp

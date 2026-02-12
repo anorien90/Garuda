@@ -976,3 +976,107 @@ class StepPattern(BasicDataEntry):
         "polymorphic_identity": "step_pattern",
         "inherit_condition": id == BasicDataEntry.id,
     }
+
+
+# ---------------------------------------------------------------------------
+# Structure learnings: persist entity kinds, relation types, and user settings
+# ---------------------------------------------------------------------------
+
+class StructureKind(BasicDataEntry):
+    """Persisted entity kind definition.
+
+    Stores both builtin and dynamically discovered entity kinds with their
+    colors, priorities, parent hierarchy, and aliases so the knowledge
+    graph structure survives application restarts.
+    """
+    __tablename__ = "structure_kinds"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    color: Mapped[str] = mapped_column(String(30), nullable=False, default="#94a3b8")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=40)
+    parent_kind: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    aliases_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    __mapper_args__ = {
+        "polymorphic_identity": "structure_kind",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "name": self.name,
+            "color": self.color,
+            "priority": self.priority,
+            "parent_kind": self.parent_kind,
+            "aliases": self.aliases_json or [],
+            "description": self.description,
+            "is_builtin": self.is_builtin,
+        }
+
+
+class StructureRelation(BasicDataEntry):
+    """Persisted relation type definition.
+
+    Stores both builtin and dynamically discovered relation types with
+    their colors and directionality.
+    """
+    __tablename__ = "structure_relations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    color: Mapped[str] = mapped_column(String(60), nullable=False, default="rgba(148,163,184,0.20)")
+    directed: Mapped[bool] = mapped_column(Boolean, default=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    __mapper_args__ = {
+        "polymorphic_identity": "structure_relation",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "name": self.name,
+            "color": self.color,
+            "directed": self.directed,
+            "description": self.description,
+            "is_builtin": self.is_builtin,
+        }
+
+
+class UserSetting(BasicDataEntry):
+    """Persisted user/application settings.
+
+    Key-value store for user preferences and application defaults.
+    Values are stored as JSON to support any type.
+    """
+    __tablename__ = "user_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
+    value_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __mapper_args__ = {
+        "polymorphic_identity": "user_setting",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "key": self.key,
+            "value": self.value_json,
+            "description": self.description,
+        }
