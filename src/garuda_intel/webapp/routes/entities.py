@@ -184,9 +184,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store, entity_cra
                 # node so it can serve as a graph root regardless of whether it
                 # appears in intelligence / page data.
                 if q and _looks_like_uuid(q):
-                    _uuid_row = session.query(db_models.Entity).filter_by(id=q).first()
-                    if _uuid_row:
-                        upsert_entity(_uuid_row.name, _uuid_row.kind, 1.0)
+                    uuid_row = session.query(db_models.Entity).filter_by(id=q).first()
+                    if uuid_row:
+                        upsert_entity(uuid_row.name, uuid_row.kind, 1.0)
 
                 semantic_entity_hints = _qdrant_semantic_entity_hints(q, vector_store, llm) if q else set()
 

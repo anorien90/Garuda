@@ -145,7 +145,7 @@ def test_filter_depth_one_expands_to_neighbors():
 
 
 def test_filter_depth_empty_seeds():
-    """When seeds are empty, depth filter returns nothing (for depth < 99)."""
+    """When seeds are empty, depth filter returns nothing for any finite depth."""
     nodes = [_node("A"), _node("B")]
     links = [_link("A", "B")]
     kept_n, kept_l = _filter_by_depth(nodes, links, 1, set())
