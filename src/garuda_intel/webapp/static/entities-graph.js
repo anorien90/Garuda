@@ -44,8 +44,9 @@ const SCHEMA_CACHE_TTL = 60000; // 1 minute cache
 
 const PARTICLE_SPEED = 0.0002;
 const PARTICLE_WIDTH_BASE = 0.45;
-const PARTICLE_PROB = 0.28;
+const PARTICLE_PROB = 0.08;
 const HOVER_MODAL_DELAY = 3500;
+const LABEL_ZOOM_THRESHOLD = 0.4;
 
 let use3D = false;
 let graphInstance = null;
@@ -1475,6 +1476,9 @@ function tuneForces(instance) {
       .distance((l) => 60 + (l.weight || 1) * 12)
       .strength((l) => 0.6 + Math.min(1, (l.weight || 1) * 0.15));
   }
+  // Speed up simulation convergence
+  if (typeof instance.cooldownTicks === 'function') instance.cooldownTicks(150);
+  if (typeof instance.warmupTicks === 'function') instance.warmupTicks(50);
 }
 
 function pseudoRandomFromKey(key) {
@@ -1939,22 +1943,12 @@ async function renderGraph() {
       openNodeModal(n);
     });
 
-  // Custom node rendering for 2D mode: radial gradient glow + selected border
+  // Custom node rendering for 2D mode: selected border + early labels
   if (!use3D) {
     graphInstance.nodeCanvasObject((node, ctx, globalScale) => {
       const r = nodeRadius(node);
       const color = getNodeColor(node);
       const isSelected = selectedNodes.has(node.id);
-
-      // Radial gradient glow backdrop
-      const glowR = r * 2.5;
-      const grad = ctx.createRadialGradient(node.x, node.y, r * 0.3, node.x, node.y, glowR);
-      grad.addColorStop(0, color + '66'); // ~40% opacity center
-      grad.addColorStop(1, color + '00'); // transparent edge
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, glowR, 0, 2 * Math.PI);
-      ctx.fillStyle = grad;
-      ctx.fill();
 
       // Node circle
       ctx.beginPath();
@@ -1969,8 +1963,8 @@ async function renderGraph() {
         ctx.stroke();
       }
 
-      // Label (only when zoomed enough)
-      if (globalScale > 1.2) {
+      // Label (visible at low zoom)
+      if (globalScale > LABEL_ZOOM_THRESHOLD) {
         const label = node.label || node.id || '';
         const fontSize = Math.max(10, 12 / globalScale);
         ctx.font = `${fontSize}px sans-serif`;
@@ -1982,7 +1976,7 @@ async function renderGraph() {
     }).nodePointerAreaPaint((node, color, ctx) => {
       const r = nodeRadius(node);
       ctx.beginPath();
-      ctx.arc(node.x, node.y, r * 2.5, 0, 2 * Math.PI);
+      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
       ctx.fillStyle = color;
       ctx.fill();
     });
