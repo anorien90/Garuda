@@ -1329,6 +1329,8 @@ class SemanticEntityDeduplicator:
         flag_modified(target, 'data')
         
         # Merge metadata_json: source fills gaps in target
+        # Filter out merge-related keys to avoid inheriting stale merge metadata
+        # from previously-merged entities (backward compatibility)
         source_metadata = source.metadata_json or {}
         target_metadata = target.metadata_json or {}
         for key, value in source_metadata.items():
@@ -1439,11 +1441,8 @@ class SemanticEntityDeduplicator:
         session.flush()
         
         # Delete source entity after all intel, relations and structured data transferred
-        # First delete the BasicDataEntry (parent) - cascade will handle Entity
         source_name = source.name
-        source_entry = session.get(Entity, source_id)
-        if source_entry:
-            session.delete(source_entry)
+        session.delete(source)
         
         self.logger.info(f"Merged and deleted entity '{source_name}' ({source_kind}) into '{target.name}' ({target.kind})")
         return True
