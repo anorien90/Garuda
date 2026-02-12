@@ -469,5 +469,175 @@ class TestModels:
         assert hasattr(ChatPlan, "steps")
 
 
+# ---------------------------------------------------------------------------
+# Progress callback tests
+# ---------------------------------------------------------------------------
+
+class TestProgressCallback:
+    """Test the progress_callback feature of TaskPlanner."""
+
+    def test_planner_accepts_progress_callback(self):
+        """progress_callback is stored on the planner."""
+        calls = []
+        planner = _make_planner(progress_callback=lambda p, m: calls.append((p, m)))
+        assert planner._progress_callback is not None
+
+    def test_report_progress_invokes_callback(self):
+        """_report_progress calls the callback with (progress, message)."""
+        calls = []
+        planner = _make_planner(progress_callback=lambda p, m: calls.append((p, m)))
+        planner._report_progress(0.5, "halfway")
+        assert len(calls) == 1
+        assert calls[0] == (0.5, "halfway")
+
+    def test_report_progress_without_callback(self):
+        """_report_progress does nothing when no callback is set."""
+        planner = _make_planner()
+        # Should not raise
+        planner._report_progress(0.5, "test")
+
+    def test_report_progress_handles_callback_error(self):
+        """_report_progress swallows exceptions from the callback."""
+        def bad_cb(p, m):
+            raise RuntimeError("boom")
+        planner = _make_planner(progress_callback=bad_cb)
+        # Should not raise
+        planner._report_progress(0.5, "test")
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_run_invokes_progress_callback(self, mock_post):
+        """run() should call the progress_callback at key milestones."""
+        plan_json = json.dumps([
+            {"tool": "search_local_data", "input": {"query": "test"}, "description": "Search"},
+            {"tool": "reflect_findings", "input": {"data_key": "search_results"}, "description": "Reflect"},
+        ])
+        reflect_json = json.dumps({"sufficient": True, "summary": "ok", "missing": [], "next_action": "none"})
+        eval_json = json.dumps({"done": True, "answer": "The answer."})
+
+        mock_post.side_effect = [
+            _mock_llm_resp(plan_json),
+            _mock_llm_resp(reflect_json),
+            _mock_llm_resp(eval_json),
+            _mock_llm_resp('"Generalized task"'),
+        ]
+
+        progress_calls = []
+        planner = _make_planner(progress_callback=lambda p, m: progress_calls.append((p, m)))
+        planner.run("test question")
+
+        # At minimum: plan_created (0.05), step progress, done (1.0)
+        assert len(progress_calls) >= 3
+        assert progress_calls[0][0] == 0.05  # plan created
+        assert progress_calls[-1][0] == 1.0  # done
+
+
+# ---------------------------------------------------------------------------
+# Crawl-enabled parameter tests
+# ---------------------------------------------------------------------------
+
+class TestCrawlEnabled:
+    """Test crawl_enabled parameter passing."""
+
+    def test_crawl_enabled_defaults_true(self):
+        planner = _make_planner()
+        assert planner.crawl_enabled is True
+
+    def test_crawl_enabled_override_false(self):
+        planner = _make_planner(crawl_enabled=False)
+        assert planner.crawl_enabled is False
+
+    def test_crawl_enabled_override_true(self):
+        planner = _make_planner(crawl_enabled=True)
+        assert planner.crawl_enabled is True
+
+    def test_response_includes_crawl_enabled(self):
+        planner = _make_planner(crawl_enabled=False)
+        resp = planner._build_response(
+            question="test", entity="", answer="a", context=[], sources=[],
+            plan_steps_log=[], memory={}, total_plan_changes=0,
+            total_steps=0, cycle_count=1, plan_id="x",
+        )
+        assert resp["crawl_enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# Task ID and cancellation tests
+# ---------------------------------------------------------------------------
+
+class TestTaskIdCancellation:
+    """Test task_id parameter for cooperative cancellation."""
+
+    def test_planner_stores_task_id(self):
+        planner = _make_planner(task_id="abc-123")
+        assert planner._task_id == "abc-123"
+
+    def test_planner_without_task_id_not_cancelled(self):
+        planner = _make_planner()
+        assert planner._is_cancelled() is False
+
+    def test_response_includes_memory_snapshot(self):
+        """Response must include memory_snapshot for UI transparency."""
+        planner = _make_planner()
+        resp = planner._build_response(
+            question="q", entity="", answer="a", context=[], sources=[],
+            plan_steps_log=[], memory={"key1": "val1"},
+            total_plan_changes=0, total_steps=0, cycle_count=1, plan_id="x",
+        )
+        assert "memory_snapshot" in resp
+        assert resp["memory_snapshot"]["key1"] == "val1"
+
+    def test_response_includes_sources(self):
+        """Response must include sources list for transparency."""
+        planner = _make_planner()
+        resp = planner._build_response(
+            question="q", entity="", answer="a", context=[], sources=["https://example.com"],
+            plan_steps_log=[], memory={},
+            total_plan_changes=0, total_steps=0, cycle_count=1, plan_id="x",
+        )
+        assert "sources" in resp
+        assert "https://example.com" in resp["sources"]
+
+
+# ---------------------------------------------------------------------------
+# Search memory tool tests
+# ---------------------------------------------------------------------------
+
+class TestSearchMemoryTool:
+    """Test the search_memory MCP tool for large memory queries."""
+
+    def test_search_finds_matching_key(self):
+        memory = {"nvidia_gpus": [{"name": "RTX 4090"}], "amd_gpus": [{"name": "RX 7900"}]}
+        result = TaskPlanner._tool_search_memory(memory, "nvidia")
+        assert result["count"] == 1
+        assert "nvidia_gpus" in result["matches"]
+
+    def test_search_finds_matching_value(self):
+        memory = {"results": "NVIDIA RTX 4090 is a flagship GPU"}
+        result = TaskPlanner._tool_search_memory(memory, "flagship")
+        assert result["count"] == 1
+
+    def test_search_returns_empty_on_no_match(self):
+        memory = {"key1": "value1"}
+        result = TaskPlanner._tool_search_memory(memory, "nonexistent")
+        assert result["count"] == 0
+
+    def test_search_case_insensitive(self):
+        memory = {"GPU_Data": "some data"}
+        result = TaskPlanner._tool_search_memory(memory, "gpu_data")
+        assert result["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Helper for mock LLM responses used by new tests
+# ---------------------------------------------------------------------------
+
+def _mock_llm_resp(text):
+    mock = MagicMock()
+    mock.status_code = 200
+    mock.json.return_value = {"response": text}
+    mock.raise_for_status = MagicMock()
+    return mock
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
