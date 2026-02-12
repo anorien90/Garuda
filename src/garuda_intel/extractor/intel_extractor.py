@@ -236,11 +236,19 @@ class IntelExtractor:
             This includes:
             - ALL persons mentioned (executives, founders, employees, board members, etc.)
             - ALL organizations/companies mentioned (competitors, partners, subsidiaries, etc.)
-            - ALL products and services mentioned
-            - ALL locations mentioned (headquarters, offices, cities, countries)
+            - ALL products and services mentioned with ALL available details (specifications, prices, providers, versions, SKUs, ratings, weights, dimensions, etc.)
+            - ALL locations mentioned with ALL available details (street, city, postal_code, state, country, latitude, longitude, etc.)
             - ALL financial metrics (revenue, profit, market cap, etc.)
             - ALL events (acquisitions, launches, announcements, etc.)
             - ALL relationships between any entities mentioned in the text
+            - ANY other structured data or attributes present (certifications, awards, patents, licenses, categories, tags, etc.)
+            
+            IMPORTANT: Capture as many additional attributes as possible for each entity.
+            For products: include specifications, prices, providers, versions, dimensions, weights, ratings, availability, etc.
+            For locations: include street, postal_code, state, latitude, longitude, phone, fax, etc.
+            For persons: include email, phone, social media, education, nationality, etc.
+            For organizations: include registration_number, tax_id, employee_count, revenue, certifications, etc.
+            Include ALL key-value pairs you can extract, even if not in the schema below - add them to an "additional_attributes" dict.
             
             For relationships, extract EVERY explicit or implicit connection:
             - Employment: "Person X works at Company Y" -> source: Person X, target: Company Y, relation_type: employed_by
@@ -250,6 +258,7 @@ class IntelExtractor:
             - Competition: "Competes with" -> source: Company A, target: Company B, relation_type: competes_with
             - Location: "Headquartered in" -> source: Company, target: Location, relation_type: headquartered_in
             - Product ownership: "Developed by" -> source: Product, target: Company, relation_type: developed_by
+            - ANY other relationship type found in the text (e.g., supplies_to, regulates, certifies, sponsors, etc.)
             """
 
         prompt = f"""
@@ -268,17 +277,17 @@ class IntelExtractor:
         === TEXT TO ANALYZE ===
         {text_chunk}
 
-        Return ONLY JSON with the following schema (omit empty fields):
+        Return ONLY JSON with the following schema (omit empty fields, include any additional attributes you find):
         {{
-          "basic_info": {{"official_name":"","ticker":"","industry":"","description":"","founded":"","website":""}},
-          "persons": [ {{"name":"","title":"","role":"","bio":"","organization":""}} ],
+          "basic_info": {{"official_name":"","ticker":"","industry":"","description":"","founded":"","website":"","additional_attributes":{{}}}},
+          "persons": [ {{"name":"","title":"","role":"","bio":"","organization":"","email":"","phone":"","social_media":"","education":"","nationality":"","additional_attributes":{{}}}} ],
           "jobs": [ {{"title":"","location":"","description":""}} ],
           "metrics": [ {{"type":"","value":"","unit":"","date":"","entity":""}} ],
-          "locations": [ {{"address":"","city":"","country":"","type":"","associated_entity":""}} ],
+          "locations": [ {{"address":"","street":"","city":"","state":"","postal_code":"","country":"","type":"","associated_entity":"","latitude":"","longitude":"","phone":"","fax":"","additional_attributes":{{}}}} ],
           "financials": [ {{"year":"","revenue":"","currency":"","profit":"","entity":""}} ],
-          "products": [ {{"name":"","description":"","status":"","manufacturer":""}} ],
+          "products": [ {{"name":"","description":"","status":"","manufacturer":"","price":"","currency":"","provider":"","version":"","specifications":{{}},"category":"","sku":"","rating":"","weight":"","dimensions":"","availability":"","additional_attributes":{{}}}} ],
           "events": [ {{"title":"","date":"","description":"","participants":[]}} ],
-          "organizations": [ {{"name":"","type":"","industry":"","description":""}} ],
+          "organizations": [ {{"name":"","type":"","industry":"","description":"","registration_number":"","tax_id":"","employee_count":"","certifications":[],"additional_attributes":{{}}}} ],
           "relationships": [ {{"source":"","target":"","relation_type":"","description":"","source_type":"","target_type":""}} ]
         }}
         
@@ -361,8 +370,12 @@ class IntelExtractor:
             # Normalize kind through registry
             kind = self.kind_registry.normalize_kind(kind)
             
-            # Store all basic info as entity data
+            # Store all basic info as entity data, including any additional attributes
             entity_data = {k: v for k, v in basic_info.items() if v and k != "official_name"}
+            # Merge additional_attributes into entity_data
+            for ak, av in basic_info.get("additional_attributes", {}).items():
+                if av and ak not in entity_data:
+                    entity_data[ak] = av
             
             # Get inherited fields from parent kind if applicable
             kind_info = self.kind_registry.get_kind(kind)
@@ -398,9 +411,25 @@ class IntelExtractor:
                     "role": p.get("role"),
                     "bio": p.get("bio"),
                     "organization": p.get("organization"),
+                    "email": p.get("email"),
+                    "phone": p.get("phone"),
+                    "social_media": p.get("social_media"),
+                    "education": p.get("education"),
+                    "nationality": p.get("nationality"),
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
+                # Merge any additional_attributes from extraction
+                for ak, av in p.get("additional_attributes", {}).items():
+                    if av and ak not in entity_data:
+                        entity_data[ak] = av
+                # Capture any other keys not yet tracked
+                _known_person_keys = {"name", "title", "role", "bio", "organization",
+                                      "email", "phone", "social_media", "education",
+                                      "nationality", "additional_attributes"}
+                for pk, pv in p.items():
+                    if pv and pk not in _known_person_keys and pk not in entity_data:
+                        entity_data[pk] = pv
                 
                 entity_dict = {
                     "name": p["name"],
@@ -436,9 +465,32 @@ class IntelExtractor:
                     "status": prod.get("status"),
                     "category": prod.get("category"),
                     "manufacturer": prod.get("manufacturer"),
+                    "price": prod.get("price"),
+                    "currency": prod.get("currency"),
+                    "provider": prod.get("provider"),
+                    "version": prod.get("version"),
+                    "specifications": prod.get("specifications"),
+                    "sku": prod.get("sku"),
+                    "rating": prod.get("rating"),
+                    "weight": prod.get("weight"),
+                    "dimensions": prod.get("dimensions"),
+                    "availability": prod.get("availability"),
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
+                # Merge any additional_attributes from extraction
+                for ak, av in prod.get("additional_attributes", {}).items():
+                    if av and ak not in entity_data:
+                        entity_data[ak] = av
+                # Capture any other keys not yet tracked
+                _known_product_keys = {"name", "description", "status", "category",
+                                       "manufacturer", "price", "currency", "provider",
+                                       "version", "specifications", "sku", "rating",
+                                       "weight", "dimensions", "availability",
+                                       "additional_attributes"}
+                for pk, pv in prod.items():
+                    if pv and pk not in _known_product_keys and pk not in entity_data:
+                        entity_data[pk] = pv
                 
                 entity_dict = {
                     "name": prod["name"],
@@ -476,14 +528,31 @@ class IntelExtractor:
                 # Store all location attributes as entity data
                 entity_data = {
                     "address": loc.get("address"),
+                    "street": loc.get("street"),
                     "city": loc.get("city"),
+                    "state": loc.get("state"),
+                    "postal_code": loc.get("postal_code"),
                     "country": loc.get("country"),
                     "type": loc.get("type"),
                     "latitude": loc.get("latitude"),
                     "longitude": loc.get("longitude"),
+                    "phone": loc.get("phone"),
+                    "fax": loc.get("fax"),
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
+                # Merge any additional_attributes from extraction
+                for ak, av in loc.get("additional_attributes", {}).items():
+                    if av and ak not in entity_data:
+                        entity_data[ak] = av
+                # Capture any other keys not yet tracked
+                _known_location_keys = {"name", "address", "street", "city", "state",
+                                        "postal_code", "country", "type",
+                                        "associated_entity", "latitude", "longitude",
+                                        "phone", "fax", "additional_attributes"}
+                for lk, lv in loc.items():
+                    if lv and lk not in _known_location_keys and lk not in entity_data:
+                        entity_data[lk] = lv
                 
                 entity_dict = {
                     "name": label,
@@ -533,6 +602,12 @@ class IntelExtractor:
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
+                # Capture any other keys not yet tracked
+                _known_event_keys = {"title", "date", "description", "type",
+                                     "participants", "additional_attributes"}
+                for ek, ev in evt.items():
+                    if ev and ek not in _known_event_keys and ek not in entity_data:
+                        entity_data[ek] = ev
                 
                 entity_dict = {
                     "name": evt["title"],
@@ -583,9 +658,24 @@ class IntelExtractor:
                     "type": org.get("type"),
                     "industry": org.get("industry"),
                     "description": org.get("description"),
+                    "registration_number": org.get("registration_number"),
+                    "tax_id": org.get("tax_id"),
+                    "employee_count": org.get("employee_count"),
+                    "certifications": org.get("certifications"),
                 }
                 # Remove None values
                 entity_data = {k: v for k, v in entity_data.items() if v}
+                # Merge any additional_attributes from extraction
+                for ak, av in org.get("additional_attributes", {}).items():
+                    if av and ak not in entity_data:
+                        entity_data[ak] = av
+                # Capture any other keys not yet tracked
+                _known_org_keys = {"name", "type", "industry", "description",
+                                   "registration_number", "tax_id", "employee_count",
+                                   "certifications", "additional_attributes"}
+                for ok, ov in org.items():
+                    if ov and ok not in _known_org_keys and ok not in entity_data:
+                        entity_data[ok] = ov
                 
                 entity_dict = {
                     "name": org["name"],

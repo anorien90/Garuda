@@ -1284,6 +1284,10 @@ class SemanticEntityDeduplicator:
     def _merge_entities(self, session: Session, source_id: str, target_id: str) -> bool:
         """Merge source entity into target entity.
         
+        The higher-ranked entity (target) wins and inherits ALL structured data,
+        relations, and associated records from the source entity. After all intel
+        is transferred, the source entity is deleted.
+        
         Ensures:
         - The most specific kind (highest in hierarchy) is preserved
         - The richest name (longest) is preserved
@@ -1292,6 +1296,7 @@ class SemanticEntityDeduplicator:
         - All associated records (Intelligence, Page, MediaItem, etc.) are transferred
         - Self-referential relationships are removed
         - Duplicate relationships are deduplicated
+        - Source entity is deleted after all data is transferred
         """
         source = session.execute(
             select(Entity).where(Entity.id == source_id)
@@ -1314,7 +1319,7 @@ class SemanticEntityDeduplicator:
         if source.name and target.name and len(source.name.strip()) > len(target.name.strip()):
             target.name = source.name.strip()
         
-        # Merge data
+        # Merge data: target (higher ranked) keeps its values, source fills gaps
         source_data = source.data or {}
         target_data = target.data or {}
         for key, value in source_data.items():
@@ -1323,11 +1328,11 @@ class SemanticEntityDeduplicator:
         target.data = target_data
         flag_modified(target, 'data')
         
-        # Merge metadata_json (source fills gaps in target)
+        # Merge metadata_json: source fills gaps in target
         source_metadata = source.metadata_json or {}
         target_metadata = target.metadata_json or {}
         for key, value in source_metadata.items():
-            if key != "merged_from" and value and not target_metadata.get(key):
+            if key not in ("merged_from", "merged_into", "merged_at") and value and not target_metadata.get(key):
                 target_metadata[key] = value
         target.metadata_json = target_metadata
         flag_modified(target, 'metadata_json')
@@ -1362,22 +1367,30 @@ class SemanticEntityDeduplicator:
         ).scalars().all():
             log.entity_id = target_id
         
-        # Redirect relationships
+        # Redirect relationships (skip any that would become self-referential)
         for rel in session.execute(
             select(Relationship).where(Relationship.source_id == source_id)
         ).scalars().all():
-            rel.source_id = target_id
+            if str(rel.target_id) == str(target_id):
+                # This would become self-referential, delete it
+                session.delete(rel)
+            else:
+                rel.source_id = target_id
         
         for rel in session.execute(
             select(Relationship).where(Relationship.target_id == source_id)
         ).scalars().all():
-            rel.target_id = target_id
+            if str(rel.source_id) == str(target_id):
+                # This would become self-referential, delete it
+                session.delete(rel)
+            else:
+                rel.target_id = target_id
         
-        # CRITICAL: Flush to persist relationship redirects BEFORE deleting source entity
-        # This prevents CASCADE delete from wiping relationships
+        # CRITICAL: Flush to persist all transfers BEFORE deleting source entity
+        # This prevents CASCADE delete from wiping transferred records
         session.flush()
         
-        # Remove self-referential relationships (where source == target after redirect)
+        # Remove any remaining self-referential relationships
         self_refs = session.execute(
             select(Relationship).where(
                 Relationship.source_id == target_id,
@@ -1422,41 +1435,17 @@ class SemanticEntityDeduplicator:
         target.metadata_json["merged_from"] = merge_history
         flag_modified(target, 'metadata_json')
         
-        # Soft-merge: keep the source entity as a subordinate, not deleted
-        # Mark source as merged into target
-        merge_timestamp = datetime.now(timezone.utc).isoformat()
-        if not source.metadata_json:
-            source.metadata_json = {}
-        source.metadata_json["merged_into"] = str(target_id)
-        source.metadata_json["merged_at"] = merge_timestamp
-        flag_modified(source, 'metadata_json')
+        # Flush before delete to ensure metadata is persisted
+        session.flush()
         
-        # Create "duplicate_of" relationship from source → target
-        # Check it doesn't already exist
-        existing_dup_rel = session.execute(
-            select(Relationship).where(
-                Relationship.source_id == source_id,
-                Relationship.target_id == target_id,
-                Relationship.relation_type == "duplicate_of",
-            )
-        ).scalar_one_or_none()
-        if not existing_dup_rel:
-            dup_rel = Relationship(
-                id=uuid.uuid4(),
-                source_id=source_id,
-                target_id=target_id,
-                relation_type="duplicate_of",
-                source_type="entity",
-                target_type="entity",
-                metadata_json={
-                    "merged_at": merge_timestamp,
-                    "original_name": source.name,
-                    "original_kind": source.kind,
-                },
-            )
-            session.add(dup_rel)
+        # Delete source entity after all intel, relations and structured data transferred
+        # First delete the BasicDataEntry (parent) - cascade will handle Entity
+        source_name = source.name
+        source_entry = session.get(Entity, source_id)
+        if source_entry:
+            session.delete(source_entry)
         
-        self.logger.info(f"Merged entity '{source.name}' ({source_kind}) into '{target.name}' ({target.kind})")
+        self.logger.info(f"Merged and deleted entity '{source_name}' ({source_kind}) into '{target.name}' ({target.kind})")
         return True
 
 
