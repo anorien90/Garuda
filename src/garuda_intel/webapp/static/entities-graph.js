@@ -970,26 +970,57 @@ function renderNodeModalContent(node, links, detail) {
   }
 
   // Render relationships from API if available
-  const relationshipsSection = detail?.relationships && detail.relationships.length > 0
+  const rels = detail?.relationships || [];
+  const relationshipsSection = rels.length > 0
     ? `
       <div>
-        <div class="text-xs uppercase text-slate-500 mb-1">Relationships (${detail.relationships.length})</div>
-        <ul class="text-xs space-y-1">
-          ${detail.relationships.map(r => {
+        <div class="flex items-center justify-between mb-1">
+          <div class="text-xs uppercase text-slate-500">Relationships (${rels.length})</div>
+          ${isEntityNode && node.id ? `<button id="modal-add-relation-toggle" type="button" class="text-[10px] px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-800 transition font-semibold">+ Add</button>` : ''}
+        </div>
+        <input id="modal-relation-search" type="text" placeholder="Filter relations…" class="w-full mb-1 rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
+        <ul id="modal-relation-list" class="text-xs space-y-1 max-h-48 overflow-y-auto">
+          ${rels.map(r => {
             const direction = r.direction === 'outgoing' ? '→' : '←';
-            const other = r.direction === 'outgoing' 
-              ? `<b class="text-blue-600">${escapeHtml(r.target_name || 'Unknown')}</b> <span class="text-slate-400">(${escapeHtml(r.target_kind || 'entity')})</span>`
-              : `<b class="text-blue-600">${escapeHtml(r.source_name || 'Unknown')}</b> <span class="text-slate-400">(${escapeHtml(r.source_kind || 'entity')})</span>`;
+            const otherName = r.direction === 'outgoing' ? (r.target_name || 'Unknown') : (r.source_name || 'Unknown');
+            const otherKind = r.direction === 'outgoing' ? (r.target_kind || 'entity') : (r.source_kind || 'entity');
+            const other = `<b class="text-blue-600">${escapeHtml(otherName)}</b> <span class="text-slate-400">(${escapeHtml(otherKind)})</span>`;
             const relType = escapeHtml(formatRelationType(r.type || 'related'));
             const confidence = r.confidence ? ` <span class="text-slate-400">confidence: ${r.confidence}</span>` : '';
             const deleteRelBtn = r.id
               ? `<button data-delete-rel="${escapeHtml(r.id)}" data-entity-id="${escapeHtml(node.id)}" class="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-800 transition" title="Delete relationship">✕</button>`
               : '';
-            return `<li class="py-1 border-b border-slate-100 dark:border-slate-800 last:border-0 flex items-center gap-1">${direction} <span class="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[10px]">${relType}</span> ${other}${confidence}${deleteRelBtn}</li>`;
+            return `<li class="py-1 border-b border-slate-100 dark:border-slate-800 last:border-0 flex items-center gap-1" data-rel-name="${escapeHtml(otherName.toLowerCase())}" data-rel-type="${escapeHtml((r.type || '').toLowerCase())}">${direction} <span class="px-1 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[10px]">${relType}</span> ${other}${confidence}${deleteRelBtn}</li>`;
           }).join('')}
         </ul>
       </div>
     `
+    : (isEntityNode && node.id
+      ? `<div>
+          <div class="flex items-center justify-between mb-1">
+            <div class="text-xs uppercase text-slate-500">Relationships (0)</div>
+            <button id="modal-add-relation-toggle" type="button" class="text-[10px] px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-800 transition font-semibold">+ Add</button>
+          </div>
+          <div class="text-xs text-slate-500">No relationships</div>
+        </div>`
+      : '');
+
+  // Inline add-relation form for the modal
+  const addRelationForm = isEntityNode && node.id
+    ? `<div id="modal-add-relation-section" class="hidden mt-1 p-2 rounded border border-green-200 dark:border-green-800 bg-green-50/60 dark:bg-green-900/20 space-y-2 text-xs">
+        <div class="font-semibold text-green-700 dark:text-green-400">Add Relation from "${escapeHtml(node.label || node.id)}"</div>
+        <input id="modal-add-relation-target" type="text" placeholder="Search target entity…" class="w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs">
+        <div id="modal-add-relation-results" class="max-h-24 overflow-y-auto space-y-0.5"></div>
+        <input id="modal-add-relation-type" type="text" placeholder="Relation type (e.g. works_at, owns)" list="modal-add-relation-type-list" class="w-full rounded border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs">
+        <datalist id="modal-add-relation-type-list">
+          ${[...allDbEdgeKinds].map(k => `<option value="${escapeHtml(k)}">`).join('')}
+        </datalist>
+        <div class="flex gap-2">
+          <button id="modal-add-relation-save" type="button" class="px-3 py-1 rounded bg-green-600 text-white text-xs font-semibold hover:bg-green-500 disabled:opacity-40" disabled>Save Relation</button>
+          <button id="modal-add-relation-cancel" type="button" class="px-3 py-1 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-300">Cancel</button>
+        </div>
+        <div id="modal-add-relation-status" class="text-[10px] text-slate-400 italic"></div>
+      </div>`
     : '';
 
   // Delete entity button (only for entities with a valid UUID id)
@@ -999,6 +1030,10 @@ function renderNodeModalContent(node, links, detail) {
         <button data-delete-entity="${escapeHtml(node.id)}" class="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-500 transition">Delete Entity</button>
        </div>`
     : '';
+
+  // Get kind from meta or node type (must be before editForm which references it)
+  const kind = meta.kind || node.type || 'entity';
+  const kindColor = COLORS[kind] || COLORS.entity;
 
   // Inline edit form for entity nodes
   const kindOptions = [...allDbNodeKinds, 'person', 'org', 'location', 'product', 'event', 'entity', 'unknown']
@@ -1025,10 +1060,6 @@ function renderNodeModalContent(node, links, detail) {
     ? `<button id="entity-edit-toggle" type="button" class="px-2 py-1 rounded border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 text-xs font-semibold hover:bg-blue-50 dark:hover:bg-blue-900/30">✏ Edit</button>`
     : '';
 
-  // Get kind from meta or node type
-  const kind = meta.kind || node.type || 'entity';
-  const kindColor = COLORS[kind] || COLORS.entity;
-
   return `
     <div class="space-y-3">
       <div class="flex items-center gap-2">
@@ -1046,6 +1077,7 @@ function renderNodeModalContent(node, links, detail) {
         ${metaTable}
       </div>
       ${relationshipsSection}
+      ${addRelationForm}
       <div>
         <div class="text-xs uppercase text-slate-500 mb-1">Graph Connections (${connections.length})</div>
         ${connList}
@@ -1162,6 +1194,20 @@ function _wireDeleteButtons(node) {
       const saveBtn = document.getElementById('entity-edit-save');
       if (saveBtn) saveBtn.onclick = () => _saveEntityEdit(node);
     }
+    // Relation search filter
+    const relSearch = document.getElementById('modal-relation-search');
+    if (relSearch) {
+      relSearch.oninput = () => {
+        const q = relSearch.value.toLowerCase().trim();
+        document.querySelectorAll('#modal-relation-list li').forEach(li => {
+          const name = li.dataset.relName || '';
+          const type = li.dataset.relType || '';
+          li.style.display = (!q || name.includes(q) || type.includes(q)) ? '' : 'none';
+        });
+      };
+    }
+    // Add relation toggle & form in modal
+    _wireModalAddRelation(node);
   }, 50);
 }
 
@@ -1207,6 +1253,192 @@ async function _saveEntityEdit(node) {
   } catch (e) {
     alert('Update failed: ' + e.message);
   }
+}
+
+// --- Modal add-relation wiring ---
+let _modalAddRelationTargetId = null;
+
+function _wireModalAddRelation(node) {
+  const toggleBtn = document.getElementById('modal-add-relation-toggle');
+  const section = document.getElementById('modal-add-relation-section');
+  if (!toggleBtn || !section) return;
+
+  toggleBtn.onclick = () => section.classList.toggle('hidden');
+
+  const cancelBtn = document.getElementById('modal-add-relation-cancel');
+  if (cancelBtn) cancelBtn.onclick = () => { section.classList.add('hidden'); _modalAddRelationTargetId = null; };
+
+  const targetInput = document.getElementById('modal-add-relation-target');
+  const resultsDiv = document.getElementById('modal-add-relation-results');
+  const typeInput = document.getElementById('modal-add-relation-type');
+  const saveBtn = document.getElementById('modal-add-relation-save');
+
+  function updateSaveState() {
+    if (saveBtn) saveBtn.disabled = !_modalAddRelationTargetId || !(typeInput?.value?.trim());
+  }
+
+  if (typeInput) typeInput.oninput = updateSaveState;
+
+  let searchTimeout = null;
+  if (targetInput && resultsDiv) {
+    targetInput.oninput = () => {
+      clearTimeout(searchTimeout);
+      const q = targetInput.value.trim();
+      if (q.length < 2) { resultsDiv.innerHTML = ''; _modalAddRelationTargetId = null; updateSaveState(); return; }
+      searchTimeout = setTimeout(() => {
+        const matches = filteredNodes
+          .filter(n => n.id !== node.id && (n.label || '').toLowerCase().includes(q.toLowerCase()))
+          .slice(0, 8);
+        resultsDiv.innerHTML = matches.map(n =>
+          `<div class="px-2 py-1 rounded cursor-pointer hover:bg-green-100 dark:hover:bg-green-800/30 text-xs" data-target-id="${escapeHtml(n.id)}">${escapeHtml(n.label || n.id)} <span class="text-slate-400">(${escapeHtml(n.type || 'entity')})</span></div>`
+        ).join('') || '<div class="text-[10px] text-slate-400 px-2">No matches in graph</div>';
+        resultsDiv.querySelectorAll('[data-target-id]').forEach(el => {
+          el.onclick = () => {
+            _modalAddRelationTargetId = el.dataset.targetId;
+            targetInput.value = el.textContent.trim();
+            resultsDiv.innerHTML = '';
+            updateSaveState();
+          };
+        });
+      }, 200);
+    };
+  }
+
+  if (saveBtn) saveBtn.onclick = () => _saveModalRelation(node);
+}
+
+async function _saveModalRelation(sourceNode) {
+  const typeInput = document.getElementById('modal-add-relation-type');
+  const statusDiv = document.getElementById('modal-add-relation-status');
+  const relType = typeInput?.value?.trim();
+  if (!_modalAddRelationTargetId || !relType) return;
+
+  const base = val('base-url') || '';
+  try {
+    const res = await fetch(`${base}/api/relationships/record`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+      body: JSON.stringify({
+        source_id: sourceNode.id,
+        target_id: _modalAddRelationTargetId,
+        relation_type: relType,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      if (statusDiv) statusDiv.textContent = 'Failed: ' + err;
+      return;
+    }
+    if (statusDiv) statusDiv.innerHTML = '<span class="text-green-600">✓ Relation saved</span>';
+    _modalAddRelationTargetId = null;
+    const targetInput = document.getElementById('modal-add-relation-target');
+    if (targetInput) targetInput.value = '';
+    const saveBtn = document.getElementById('modal-add-relation-save');
+    if (saveBtn) saveBtn.disabled = true;
+    setStatus('Relation added');
+
+    // Refresh the modal by re-fetching node detail
+    const detail = await fetchNodeDetail(sourceNode);
+    if (activeModalNodeId === sourceNode.id && activeModalId) {
+      const content = renderNodeModalContent(sourceNode, filteredLinks, detail || {});
+      updateModal(activeModalId, { title: sourceNode.label || sourceNode.id || 'Node detail', content });
+      _wireDeleteButtons(sourceNode);
+    }
+  } catch (e) {
+    if (statusDiv) statusDiv.textContent = 'Failed: ' + e.message;
+  }
+}
+
+// --- Management tools panel wiring ---
+function _wireManagementTools() {
+  const toggleBtn = document.getElementById('entities-graph-mgmt-toggle');
+  const body = document.getElementById('entities-graph-mgmt-body');
+  const arrow = document.getElementById('entities-graph-mgmt-arrow');
+  if (toggleBtn && body) {
+    toggleBtn.onclick = () => {
+      body.classList.toggle('hidden');
+      if (arrow) arrow.textContent = body.classList.contains('hidden') ? '▸' : '▾';
+    };
+  }
+
+  const mgmtStatus = document.getElementById('entities-graph-mgmt-status');
+  function setMgmtStatus(msg) { if (mgmtStatus) mgmtStatus.textContent = msg; }
+
+  document.getElementById('entities-graph-validate-rels')?.addEventListener('click', async () => {
+    setMgmtStatus('Validating…');
+    try {
+      const base = val('base-url') || '';
+      const res = await fetch(`${base}/api/relationships/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+        body: JSON.stringify({ fix: true }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setMgmtStatus(`✓ Validated: ${data.total_checked || 0} checked, ${data.issues_fixed || 0} fixed`);
+    } catch (e) { setMgmtStatus('Failed: ' + e.message); }
+  });
+
+  document.getElementById('entities-graph-dedup-rels')?.addEventListener('click', async () => {
+    setMgmtStatus('Deduplicating relationships…');
+    try {
+      const base = val('base-url') || '';
+      const res = await fetch(`${base}/api/relationships/deduplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setMgmtStatus(`✓ Removed ${data.duplicates_removed || 0} duplicates`);
+    } catch (e) { setMgmtStatus('Failed: ' + e.message); }
+  });
+
+  document.getElementById('entities-graph-infer-rels')?.addEventListener('click', async () => {
+    const entityIds = [...selectedNodes.keys()];
+    if (entityIds.length === 0) { setMgmtStatus('Select nodes first to infer relationships'); return; }
+    setMgmtStatus('Inferring relationships…');
+    try {
+      const base = val('base-url') || '';
+      const res = await fetch(`${base}/api/relationships/infer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+        body: JSON.stringify({ entity_ids: entityIds }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setMgmtStatus(`✓ Inferred ${data.relationships_found || 0} relationships`);
+    } catch (e) { setMgmtStatus('Failed: ' + e.message); }
+  });
+
+  document.getElementById('entities-graph-dedup-entities')?.addEventListener('click', async () => {
+    setMgmtStatus('Scanning for duplicates…');
+    try {
+      const base = val('base-url') || '';
+      const res = await fetch(`${base}/api/entities/deduplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': els.apiKey?.value || '' },
+        body: JSON.stringify({ threshold: 0.85 }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setMgmtStatus(`✓ Found ${data.duplicates_found || data.groups?.length || 0} duplicates`);
+    } catch (e) { setMgmtStatus('Failed: ' + e.message); }
+  });
+
+  document.getElementById('entities-graph-rel-stats')?.addEventListener('click', async () => {
+    setMgmtStatus('Fetching stats…');
+    try {
+      const base = val('base-url') || '';
+      const res = await fetch(`${base}/api/relationships/stats`, {
+        headers: { 'X-API-Key': els.apiKey?.value || '' },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const total = data.total || 0;
+      const types = data.by_type ? Object.keys(data.by_type).length : 0;
+      setMgmtStatus(`✓ ${total} relationships, ${types} types`);
+    } catch (e) { setMgmtStatus('Failed: ' + e.message); }
+  });
 }
 
 function wireHoverModal(graph) {
@@ -2111,6 +2343,9 @@ export async function initEntitiesGraph() {
 
   // Init rectangle selection
   _initRectangleSelection();
+
+  // Management tools panel toggle and buttons
+  _wireManagementTools();
 
   await loadAndRender();
 }
