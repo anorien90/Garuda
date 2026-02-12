@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from ..database.store import PersistenceStore
 from ..database.models import Entity, Relationship, Intelligence, Page, EntityFieldValue, MediaItem, FieldDiscoveryLog
 from ..extractor.llm import LLMIntelExtractor
-from ..extractor.entity_merger import EntityMerger, SemanticEntityDeduplicator, GraphSearchEngine, ENTITY_TYPE_HIERARCHY, ENTITY_TYPE_CHILDREN
+from ..extractor.entity_merger import EntityMerger, SemanticEntityDeduplicator, GraphSearchEngine, ENTITY_TYPE_HIERARCHY, ENTITY_TYPE_CHILDREN, _get_registry, _build_children_from_registry
 from ..vector.base import VectorStore
 
 
@@ -557,18 +557,24 @@ class AgentService:
     def _get_kind_specificity_rank(self, kind: str) -> int:
         """Return a numeric rank for entity kind specificity.
         
+        Uses the EntityKindRegistry to determine specificity.
         Higher rank means more specific:
         - 0: generic types (entity, general, empty)
-        - 1: parent types (person, address, company, organization)
-        - 2: specialized child types (ceo, founder, headquarters, etc.)
+        - 1: base/mid-level types that have children (person, location, company, org)
+        - 2: leaf specialized types that have a parent but no children (ceo, founder, headquarters)
         """
         kind = (kind or "").lower().strip()
-        if kind in ("", "entity", "general"):
+        if kind in ("", "entity", "general", "unknown"):
             return 0
-        if kind in ENTITY_TYPE_HIERARCHY:
-            return 2  # child/specialized types
-        if kind in ENTITY_TYPE_CHILDREN:
-            return 1  # parent types
+        registry = _get_registry()
+        kind_info = registry.get_kind(kind)
+        children = _build_children_from_registry()
+        has_parent = kind_info and kind_info.parent_kind
+        has_children = kind in children
+        if has_parent and not has_children:
+            return 2  # Leaf specialized type
+        if has_children or has_parent:
+            return 1  # Mid-level type
         return 1  # any other concrete type
     
     # =========================================================================

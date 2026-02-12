@@ -27,26 +27,7 @@ from ..database.models import (
     Page,
     MediaItem,
 )
-
-
-# Entity type hierarchy: maps specific types to their parent types
-ENTITY_TYPE_HIERARCHY = {
-    "headquarters": "address",
-    "branch_office": "address",
-    "registered_address": "address",
-    "mailing_address": "address",
-    "billing_address": "address",
-    "shipping_address": "address",
-    "ceo": "person",
-    "founder": "person",
-    "executive": "person",
-    "employee": "person",
-    "board_member": "person",
-    "subsidiary": "company",
-    "parent_company": "company",
-    "division": "organization",
-    "department": "organization",
-}
+from ..types.entity.registry import EntityKindRegistry
 
 # Additional mappings for flexible type handling
 # These treat similar types as equivalent for parent/child relationships
@@ -55,17 +36,120 @@ EQUIVALENT_TYPES = {
     "location": ["address"],
 }
 
-# Reverse mapping: parent type to list of child types
-ENTITY_TYPE_CHILDREN = {}
-for child, parent in ENTITY_TYPE_HIERARCHY.items():
-    if parent not in ENTITY_TYPE_CHILDREN:
-        ENTITY_TYPE_CHILDREN[parent] = []
-    ENTITY_TYPE_CHILDREN[parent].append(child)
-    # Also add children to equivalent parent types
-    for equiv in EQUIVALENT_TYPES.get(parent, []):
-        if equiv not in ENTITY_TYPE_CHILDREN:
-            ENTITY_TYPE_CHILDREN[equiv] = []
-        ENTITY_TYPE_CHILDREN[equiv].append(child)
+
+def _get_registry() -> EntityKindRegistry:
+    """Get the global EntityKindRegistry instance."""
+    return EntityKindRegistry.instance()
+
+
+def _build_hierarchy_from_registry() -> Dict[str, str]:
+    """Build an ENTITY_TYPE_HIERARCHY-compatible dict from the registry.
+
+    Returns a child->parent mapping for all kinds that have a parent_kind.
+    This is used for backward compatibility with code that reads the dict.
+    """
+    registry = _get_registry()
+    hierarchy = {}
+    for kind_info in registry.get_all_kinds():
+        if kind_info.parent_kind:
+            hierarchy[kind_info.name] = kind_info.parent_kind
+    return hierarchy
+
+
+def _build_children_from_registry() -> Dict[str, List[str]]:
+    """Build an ENTITY_TYPE_CHILDREN-compatible dict from the registry.
+
+    Returns a parent->children mapping derived from registry parent_kind data.
+    """
+    registry = _get_registry()
+    children: Dict[str, List[str]] = {}
+    for kind_info in registry.get_all_kinds():
+        if kind_info.parent_kind:
+            parent = kind_info.parent_kind
+            if parent not in children:
+                children[parent] = []
+            if kind_info.name not in children[parent]:
+                children[parent].append(kind_info.name)
+            # Also add children to equivalent parent types
+            for equiv in EQUIVALENT_TYPES.get(parent, []):
+                if equiv not in children:
+                    children[equiv] = []
+                if kind_info.name not in children[equiv]:
+                    children[equiv].append(kind_info.name)
+    return children
+
+
+class _DynamicHierarchyDict(dict):
+    """A dict-like object that dynamically reads hierarchy from the registry.
+
+    Provides backward-compatible dict access while delegating to the registry
+    so that LLM-discovered types are automatically included.
+    """
+
+    def __getitem__(self, key):
+        return _build_hierarchy_from_registry()[key]
+
+    def __contains__(self, key):
+        return key in _build_hierarchy_from_registry()
+
+    def get(self, key, default=None):
+        return _build_hierarchy_from_registry().get(key, default)
+
+    def keys(self):
+        return _build_hierarchy_from_registry().keys()
+
+    def values(self):
+        return _build_hierarchy_from_registry().values()
+
+    def items(self):
+        return _build_hierarchy_from_registry().items()
+
+    def __iter__(self):
+        return iter(_build_hierarchy_from_registry())
+
+    def __len__(self):
+        return len(_build_hierarchy_from_registry())
+
+    def __repr__(self):
+        return repr(_build_hierarchy_from_registry())
+
+
+class _DynamicChildrenDict(dict):
+    """A dict-like object that dynamically reads children from the registry."""
+
+    def __getitem__(self, key):
+        return _build_children_from_registry()[key]
+
+    def __contains__(self, key):
+        return key in _build_children_from_registry()
+
+    def get(self, key, default=None):
+        return _build_children_from_registry().get(key, default)
+
+    def keys(self):
+        return _build_children_from_registry().keys()
+
+    def values(self):
+        return _build_children_from_registry().values()
+
+    def items(self):
+        return _build_children_from_registry().items()
+
+    def __iter__(self):
+        return iter(_build_children_from_registry())
+
+    def __len__(self):
+        return len(_build_children_from_registry())
+
+    def __repr__(self):
+        return repr(_build_children_from_registry())
+
+
+# Dynamic hierarchy dicts that delegate to the EntityKindRegistry.
+# These are backward-compatible: code can still do `if kind in ENTITY_TYPE_HIERARCHY`
+# but the data comes from the registry, so LLM-discovered types are included.
+ENTITY_TYPE_HIERARCHY = _DynamicHierarchyDict()
+ENTITY_TYPE_CHILDREN = _DynamicChildrenDict()
 
 
 class EntityMerger:
@@ -1248,18 +1332,24 @@ class SemanticEntityDeduplicator:
     def _get_kind_specificity_rank(self, kind: str) -> int:
         """Return a numeric rank for entity kind specificity.
         
+        Uses the EntityKindRegistry to determine specificity.
         Higher rank means more specific:
         - 0: generic types (entity, general, empty)
-        - 1: parent types (person, address, company, organization)
-        - 2: specialized child types (ceo, founder, headquarters, etc.)
+        - 1: base/mid-level types that have children (person, location, company, org)
+        - 2: leaf specialized types that have a parent but no children (ceo, founder, headquarters)
         """
         kind = (kind or "").lower().strip()
-        if kind in ("", "entity", "general"):
+        if kind in ("", "entity", "general", "unknown"):
             return 0
-        if kind in ENTITY_TYPE_HIERARCHY:
-            return 2  # child/specialized types
-        if kind in ENTITY_TYPE_CHILDREN:
-            return 1  # parent types
+        registry = _get_registry()
+        kind_info = registry.get_kind(kind)
+        children = _build_children_from_registry()
+        has_parent = kind_info and kind_info.parent_kind
+        has_children = kind in children
+        if has_parent and not has_children:
+            return 2  # Leaf specialized type (e.g., ceo, founder, headquarters)
+        if has_children or has_parent:
+            return 1  # Mid-level type (e.g., company is child of org but parent of subsidiary)
         return 1  # any other concrete type
     
     def _select_canonical_entity(self, entities: List[Entity]) -> Entity:

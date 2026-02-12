@@ -94,10 +94,22 @@ class EntityKindRegistry:
         "founder": {"color": "#0369a1", "priority": 70, "parent_kind": "person", "aliases": {"co-founder"}, "description": "Founder"},
         "executive": {"color": "#0891b2", "priority": 65, "parent_kind": "person", "description": "Executive/leadership"},
         "board_member": {"color": "#06b6d4", "priority": 65, "parent_kind": "person", "description": "Board member"},
+        "employee": {"color": "#38bdf8", "priority": 55, "parent_kind": "person", "description": "Employee/staff member"},
         
         # Specialized location types (high priority - override 'location')
         "headquarters": {"color": "#9333ea", "priority": 60, "parent_kind": "location", "aliases": {"hq"}, "description": "Headquarters"},
         "office": {"color": "#7c3aed", "priority": 55, "parent_kind": "location", "description": "Office location"},
+        "branch_office": {"color": "#6d28d9", "priority": 55, "parent_kind": "location", "description": "Branch office"},
+        "registered_address": {"color": "#5b21b6", "priority": 55, "parent_kind": "location", "description": "Registered address"},
+        "mailing_address": {"color": "#4c1d95", "priority": 55, "parent_kind": "location", "description": "Mailing address"},
+        "billing_address": {"color": "#7e22ce", "priority": 55, "parent_kind": "location", "description": "Billing address"},
+        "shipping_address": {"color": "#6b21a8", "priority": 55, "parent_kind": "location", "description": "Shipping address"},
+        
+        # Specialized organization types (high priority - override 'org'/'company')
+        "subsidiary": {"color": "#059669", "priority": 60, "parent_kind": "company", "description": "Subsidiary company"},
+        "parent_company": {"color": "#047857", "priority": 60, "parent_kind": "company", "description": "Parent company"},
+        "division": {"color": "#065f46", "priority": 55, "parent_kind": "org", "description": "Organization division"},
+        "department": {"color": "#064e3b", "priority": 55, "parent_kind": "org", "description": "Organization department"},
         
         # Content/media types
         "page": {"color": "#4366f1", "priority": 20, "description": "Web page"},
