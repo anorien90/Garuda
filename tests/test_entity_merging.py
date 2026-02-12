@@ -2079,3 +2079,292 @@ class TestMergeInheritsAllStructuredData:
                 select(Intelligence).where(Intelligence.id == intel_id)
             ).scalar_one()
             assert str(intel.entity_id) == target_id
+
+
+class TestDynamicEntityTypeDiscovery:
+    """Test that entity types can be discovered dynamically via LLM extraction."""
+
+    def test_llm_entity_type_registers_new_kind(self):
+        """Test that an LLM-provided entity_type gets registered in the registry."""
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+
+        finding = {
+            "organizations": [
+                {
+                    "name": "Red Cross",
+                    "type": "nonprofit",
+                    "description": "Humanitarian organization",
+                    "entity_type": "humanitarian_ngo",
+                    "parent_type": "org",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        assert entities[0]["kind"] == "humanitarian_ngo"
+
+        # Verify it was registered in the registry
+        registry = EntityKindRegistry.instance()
+        kind_info = registry.get_kind("humanitarian_ngo")
+        assert kind_info is not None
+        assert kind_info.parent_kind == "org"
+
+    def test_llm_entity_type_for_person(self):
+        """Test that an LLM-provided entity_type for a person gets registered."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+
+        finding = {
+            "persons": [
+                {
+                    "name": "Dr. Jane Doe",
+                    "title": "Chief Medical Officer",
+                    "role": "CMO",
+                    "entity_type": "cmo",
+                    "parent_type": "person",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        assert entities[0]["kind"] == "cmo"
+
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+        registry = EntityKindRegistry.instance()
+        kind_info = registry.get_kind("cmo")
+        assert kind_info is not None
+        assert kind_info.parent_kind == "person"
+
+    def test_llm_entity_type_for_product(self):
+        """Test that an LLM-provided entity_type for a product gets registered."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+
+        finding = {
+            "products": [
+                {
+                    "name": "CloudWatch Pro",
+                    "description": "Monitoring SaaS",
+                    "entity_type": "saas",
+                    "parent_type": "product",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        assert entities[0]["kind"] == "saas"
+
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+        registry = EntityKindRegistry.instance()
+        kind_info = registry.get_kind("saas")
+        assert kind_info is not None
+        assert kind_info.parent_kind == "product"
+
+    def test_llm_entity_type_for_location(self):
+        """Test that an LLM-provided entity_type for a location gets registered."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+
+        finding = {
+            "locations": [
+                {
+                    "address": "Building 42, Data Center Park",
+                    "city": "Ashburn",
+                    "country": "USA",
+                    "entity_type": "data_center",
+                    "parent_type": "location",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        assert entities[0]["kind"] == "data_center"
+
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+        registry = EntityKindRegistry.instance()
+        kind_info = registry.get_kind("data_center")
+        assert kind_info is not None
+        assert kind_info.parent_kind == "location"
+
+    def test_llm_entity_type_for_event(self):
+        """Test that an LLM-provided entity_type for an event gets registered."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+            enable_comprehensive_extraction=True,
+        )
+
+        finding = {
+            "events": [
+                {
+                    "title": "Microsoft acquires Activision",
+                    "date": "2023",
+                    "entity_type": "merger",
+                    "parent_type": "event",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        assert entities[0]["kind"] == "merger"
+
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+        registry = EntityKindRegistry.instance()
+        kind_info = registry.get_kind("merger")
+        assert kind_info is not None
+        assert kind_info.parent_kind == "event"
+
+    def test_dynamic_hierarchy_visible_in_global_dicts(self):
+        """Test that dynamically registered kinds show up in ENTITY_TYPE_HIERARCHY."""
+        from garuda_intel.types.entity.registry import EntityKindRegistry
+
+        registry = EntityKindRegistry.instance()
+        # Register a completely new kind
+        registry.register_kind(
+            name="test_dynamic_kind_xyz",
+            parent_kind="person",
+            description="Test dynamic kind",
+        )
+
+        # Now check: the dynamic hierarchy should include this new kind
+        assert "test_dynamic_kind_xyz" in ENTITY_TYPE_HIERARCHY
+        assert ENTITY_TYPE_HIERARCHY["test_dynamic_kind_xyz"] == "person"
+
+    def test_fallback_to_detection_when_no_entity_type(self):
+        """Test that when entity_type is not provided, existing detection logic is used."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+            extract_related_entities=True,
+        )
+
+        finding = {
+            "persons": [
+                {
+                    "name": "Jane Smith",
+                    "title": "CEO",
+                    "role": "chief executive officer",
+                }
+            ]
+        }
+
+        entities = extractor.extract_entities_from_finding(finding)
+        assert len(entities) == 1
+        # Should detect CEO from title/role without entity_type field
+        assert entities[0]["kind"] == "ceo"
+
+
+class TestFillerValueSanitization:
+    """Test that filler/placeholder values are stripped from LLM responses."""
+
+    def test_sanitize_simple_fillers(self):
+        """Test that common filler strings are stripped."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+        )
+
+        data = {
+            "basic_info": {
+                "official_name": "Acme Corp",
+                "ticker": "not mentioned",
+                "industry": "Technology",
+                "description": "N/A",
+                "founded": "not available",
+                "website": "https://acme.com",
+            }
+        }
+
+        result = extractor._sanitize_filler_values(data)
+        basic_info = result["basic_info"]
+        assert basic_info.get("official_name") == "Acme Corp"
+        assert "ticker" not in basic_info  # "not mentioned" should be removed
+        assert basic_info.get("industry") == "Technology"
+        assert "description" not in basic_info  # "N/A" should be removed
+        assert "founded" not in basic_info  # "not available" should be removed
+        assert basic_info.get("website") == "https://acme.com"
+
+    def test_sanitize_nested_fillers(self):
+        """Test that filler values are stripped from nested structures."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+        )
+
+        data = {
+            "persons": [
+                {
+                    "name": "John Doe",
+                    "title": "not mentioned in the text",
+                    "role": "Engineer",
+                    "bio": "unknown",
+                    "email": "Not Specified",
+                },
+                {
+                    "name": "not mentioned",
+                },
+            ]
+        }
+
+        result = extractor._sanitize_filler_values(data)
+        # The second person should be removed since name becomes empty
+        persons = result["persons"]
+        assert len(persons) == 1
+        person = persons[0]
+        assert person["name"] == "John Doe"
+        assert "title" not in person
+        assert person["role"] == "Engineer"
+        assert "bio" not in person
+        assert "email" not in person
+
+    def test_sanitize_preserves_valid_data(self):
+        """Test that valid data is not stripped."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+        )
+
+        data = {
+            "basic_info": {
+                "official_name": "None Corp",
+                "industry": "Technology",
+                "founded": "2020",
+            },
+            "products": [
+                {"name": "Widget", "price": "$29.99"},
+            ],
+        }
+
+        # "None Corp" should NOT be stripped - it looks like a real name
+        result = extractor._sanitize_filler_values(data)
+        assert result["basic_info"]["official_name"] == "None Corp"
+        assert result["basic_info"]["industry"] == "Technology"
+        assert len(result["products"]) == 1
+
+    def test_sanitize_handles_empty_input(self):
+        """Test that empty/null inputs are handled gracefully."""
+        extractor = IntelExtractor(
+            enable_entity_merging=False,
+        )
+
+        assert extractor._sanitize_filler_values({}) == {}
+        assert extractor._sanitize_filler_values([]) == []
+        assert extractor._sanitize_filler_values("") == ""
+        assert extractor._sanitize_filler_values(None) is None
+        assert extractor._sanitize_filler_values(42) == 42
