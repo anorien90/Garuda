@@ -506,7 +506,7 @@ Return JSON array:
         top_k: int,
         entity: str,
     ) -> Dict[str, Any]:
-        """Search local RAG + SQL + graph data."""
+        """Search local RAG + SQL + graph + snippet data."""
         hits: List[Dict[str, Any]] = []
         sources: List[str] = []
 
@@ -524,12 +524,31 @@ Return JSON array:
                             "source": "rag",
                             "kind": r.payload.get("kind", "unknown"),
                             "entity": r.payload.get("entity", ""),
+                            "data": r.payload.get("data") or {},
+                            "page_id": r.payload.get("sql_page_id"),
                         }
                         hits.append(hit)
                         if hit["url"]:
                             sources.append(hit["url"])
             except Exception as e:
                 logger.warning("Vector search failed: %s", e)
+
+        # SQL snippet search (semantic_snippets table)
+        try:
+            snippet_results = self.store.search_snippets(keyword=query, limit=top_k)
+            for r in snippet_results:
+                hits.append({
+                    "url": r.get("source_url", ""),
+                    "snippet": r.get("text", ""),
+                    "score": 0,
+                    "source": "snippet_sql",
+                    "kind": "semantic-snippet",
+                    "entity": "",
+                    "data": r,
+                    "page_id": r.get("page_id"),
+                })
+        except Exception as e:
+            logger.debug("Snippet SQL search failed: %s", e)
 
         # SQL search
         try:
@@ -554,6 +573,13 @@ Return JSON array:
                 no_url.append(h)
         merged = sorted(seen.values(), key=lambda x: float(x.get("score", 0) or 0), reverse=True)
         merged = merged[:top_k] + no_url[: top_k // 4]
+
+        # Expand snippet windows for hits that are semantic-snippets
+        try:
+            from ..search.snippet_expander import expand_snippet_hits
+            merged = expand_snippet_hits(merged, self.store)
+        except Exception as e:
+            logger.debug("Snippet expansion failed: %s", e)
 
         return {"hits": merged, "sources": sources, "count": len(merged)}
 

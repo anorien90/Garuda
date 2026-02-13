@@ -246,30 +246,128 @@ class SemanticEngine:
         entity_id_map: Dict[tuple, Any],
         page_uuid: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Build embeddings for extracted entities."""
+        """Build embeddings for extracted entities.
+
+        Instead of embedding a single JSON string for each entity, this
+        produces separate embeddings for the entity name and each meaningful
+        attribute.  This dramatically improves lookup/search quality because
+        the vector space aligns with individual facts rather than a noisy
+        serialised blob.
+        """
         entries: List[Dict[str, Any]] = []
         primary_id = page_uuid or source_url
         for ent in entities:
-            text = json.dumps({"name": ent.get("name"), **(ent.get("attrs") or {})}, ensure_ascii=False)
+            ent_name = ent.get("name", "")
+            ent_kind = ent.get("kind", "entity")
+            sql_ent_id = entity_id_map.get((ent_name, ent_kind))
+            attrs = ent.get("attrs") or {}
+
+            # 1) Embed the entity name on its own
+            name_vec = self.embed_text(ent_name)
+            if name_vec:
+                entries.append(
+                    self._make_entry(
+                        base_id=primary_id,
+                        suffix=f"entity-{ent_kind}-{ent_name}-name",
+                        vector=name_vec,
+                        kind="entity",
+                        url=source_url,
+                        page_type=ent_kind,
+                        entity_name=ent_name,
+                        entity_type=ent_kind,
+                        text=ent_name,
+                        data=ent,
+                        sql_entity_id=sql_ent_id,
+                        sql_page_id=page_uuid,
+                    )
+                )
+
+            # 2) Embed each non-trivial attribute individually
+            for attr_key, attr_val in attrs.items():
+                if attr_key in ("name", "entity_type", "parent_type", "additional_attributes"):
+                    continue
+                if not attr_val:
+                    continue
+                # Stringify complex values
+                if isinstance(attr_val, (dict, list)):
+                    attr_text = json.dumps(attr_val, ensure_ascii=False)
+                else:
+                    attr_text = str(attr_val)
+                if len(attr_text) < self.min_text_length_for_embedding:
+                    continue
+                vec = self.embed_text(f"{attr_key}: {attr_text}")
+                if vec:
+                    entries.append(
+                        self._make_entry(
+                            base_id=primary_id,
+                            suffix=f"entity-{ent_kind}-{ent_name}-{attr_key}",
+                            vector=vec,
+                            kind="entity_field",
+                            url=source_url,
+                            page_type=ent_kind,
+                            entity_name=ent_name,
+                            entity_type=ent_kind,
+                            text=f"{attr_key}: {attr_text}",
+                            data=ent,
+                            sql_entity_id=sql_ent_id,
+                            sql_page_id=page_uuid,
+                        )
+                    )
+        return entries
+
+    def build_snippet_embeddings(
+        self,
+        snippets: List[Any],
+        source_url: str,
+        page_type: str,
+        entity_name: str,
+        entity_type: Any,
+        page_uuid: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Build embeddings for semantic snippets (1-3 sentence chunks).
+
+        Each snippet is embedded independently so that fine-grained RAG
+        retrieval can match at sentence-level resolution.
+
+        Args:
+            snippets: List of :class:`TextChunk` snippet objects.
+            source_url: URL of the source page.
+            page_type: Page type classification.
+            entity_name: Name of the primary entity.
+            entity_type: Type of the primary entity.
+            page_uuid: Optional SQL page ID for alignment.
+
+        Returns:
+            List of embedding entry dicts ready for Qdrant upsert.
+        """
+        entries: List[Dict[str, Any]] = []
+        primary_id = page_uuid or source_url
+        for snippet in snippets:
+            text = getattr(snippet, "text", "")
+            if not text or len(text) < self.min_text_length_for_embedding:
+                continue
             vec = self.embed_text(text)
             if not vec:
                 continue
-            ent_kind = ent.get("kind", "entity")
-            suffix = f"entity-{ent_kind}-{ent.get('name','')}"
-            sql_ent_id = entity_id_map.get((ent.get("name"), ent_kind))
+            idx = getattr(snippet, "chunk_index", 0) or 0
             entries.append(
                 self._make_entry(
                     base_id=primary_id,
-                    suffix=suffix,
+                    suffix=f"snippet-{idx}",
                     vector=vec,
-                    kind="entity",
+                    kind="semantic-snippet",
                     url=source_url,
-                    page_type=ent_kind,
-                    entity_name=ent.get("name", ""),
-                    entity_type=ent_kind,
+                    page_type=page_type,
+                    entity_name=entity_name,
+                    entity_type=entity_type,
                     text=text,
-                    data=ent,
-                    sql_entity_id=sql_ent_id,
+                    data={
+                        "chunk_index": idx,
+                        "prev_context": getattr(snippet, "prev_context", None),
+                        "next_context": getattr(snippet, "next_context", None),
+                        "topic_context": getattr(snippet, "topic_context", None),
+                        "entity_refs": getattr(snippet, "entity_refs", None),
+                    },
                     sql_page_id=page_uuid,
                 )
             )

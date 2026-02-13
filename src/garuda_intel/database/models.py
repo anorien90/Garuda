@@ -1133,3 +1133,53 @@ class UserSetting(BasicDataEntry):
             "value": self.value_json,
             "description": self.description,
         }
+
+
+class SemanticSnippet(BasicDataEntry):
+    """Fine-grained 1-3 sentence snippet for high-resolution RAG search.
+
+    Each snippet captures a small piece of text together with references to
+    its neighbours, source page/entity and any entity mentions it contains.
+    This enables precise deep-RAG retrieval across entities and documents.
+    """
+    __tablename__ = "semantic_snippets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("entries.id", ondelete="CASCADE"), primary_key=True
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    prev_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    next_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    topic_context: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    source_url: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    page_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("entities.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    entity_refs_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index('ix_snippet_page_entity', 'page_id', 'entity_id'),
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "semantic_snippet",
+        "inherit_condition": id == BasicDataEntry.id,
+    }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "text": self.text,
+            "chunk_index": self.chunk_index,
+            "prev_context": self.prev_context,
+            "next_context": self.next_context,
+            "topic_context": self.topic_context,
+            "source_url": self.source_url,
+            "page_id": str(self.page_id) if self.page_id else None,
+            "entity_id": str(self.entity_id) if self.entity_id else None,
+            "entity_refs": self.entity_refs_json or [],
+        }

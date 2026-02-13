@@ -61,7 +61,7 @@ class AdaptiveCrawlerService:
         self,
         entity_name: str,
         entity_type: Optional[str] = None,
-        max_pages: int = 50,
+        max_pages: int = 20,
         max_depth: int = 2,
         additional_queries: Optional[list] = None,
     ) -> Dict[str, Any]:
