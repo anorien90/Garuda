@@ -455,12 +455,8 @@ class TestConsecutiveInsufficientLimit:
             {"tool": "search_local_data", "input": {"query": "test"}, "description": "Search"},
             {"tool": "reflect_findings", "input": {"data_key": "search_results"}, "description": "Reflect"},
         ])
-        reflect_json = json.dumps({
-            "sufficient": False, "summary": "", "missing": ["data"], "next_action": "crawl"
-        })
-        summary_json = "Based on limited data available."
 
-        # Return plan + reflect responses in a cycle, then a final summary
+        # Return plan responses in a cycle
         mock_post.return_value = _mock_llm_resp(plan_json)
 
         planner = _make_planner()
