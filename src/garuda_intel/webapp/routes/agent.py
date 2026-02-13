@@ -223,6 +223,50 @@ def init_agent_routes(api_key_required, settings, store, llm, vector_store):
             logger.exception("Multidimensional search failed")
             return jsonify({"error": str(e)}), 500
     
+    @bp_agent.post("/chat/feedback")
+    @api_key_required
+    def api_agent_chat_feedback():
+        """
+        Submit user feedback (thumbs up / thumbs down) for a chat response.
+
+        The reward is applied to the step pattern associated with the plan,
+        training the planner to prefer successful strategies and avoid poor ones.
+
+        Request body (JSON):
+            plan_id: UUID of the completed plan (required)
+            rating: 'up' or 'down' (required)
+
+        Returns:
+            Confirmation with updated flag
+        """
+        body = request.get_json(silent=True) or {}
+        plan_id = body.get("plan_id", "").strip()
+        rating = body.get("rating", "").strip().lower()
+
+        if not plan_id:
+            return jsonify({"error": "plan_id required"}), 400
+        if rating not in ("up", "down"):
+            return jsonify({"error": "rating must be 'up' or 'down'"}), 400
+
+        reward = 1.0 if rating == "up" else -1.0
+
+        try:
+            from ...services.task_planner import TaskPlanner
+            planner = TaskPlanner(
+                store=store,
+                llm=llm,
+                vector_store=vector_store,
+                settings=settings,
+            )
+            updated = planner.apply_reward(plan_id, reward)
+            emit_event("agent", f"chat feedback: {rating}", payload={
+                "plan_id": plan_id, "rating": rating, "updated": updated,
+            })
+            return jsonify({"ok": True, "updated": updated, "plan_id": plan_id, "rating": rating})
+        except Exception as e:
+            logger.exception("Chat feedback failed")
+            return jsonify({"error": str(e)}), 500
+
     @bp_agent.post("/chat")
     @api_key_required
     def api_agent_chat():

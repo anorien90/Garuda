@@ -402,11 +402,19 @@ class TaskPlanner:
 
         # Build a note about already-discovered entities so the planner
         # can generate individual look-up steps for each one.
+        # Filter out entities that have already been searched to avoid
+        # infinite follow-up loops.
         discovered_note = ""
         discovered = memory.get("_discovered_entities", [])
-        if discovered:
+        searched = memory.get("_searched_entities", [])
+        searched_lower = {s.lower() for s in searched} if searched else set()
+        pending_entities = [
+            e for e in discovered
+            if e.lower() not in searched_lower
+        ] if discovered else []
+        if pending_entities:
             discovered_note = (
-                f"\nDiscovered entities to look up individually: {json.dumps(discovered[:20], ensure_ascii=False)}\n"
+                f"\nDiscovered entities to look up individually: {json.dumps(pending_entities[:20], ensure_ascii=False)}\n"
                 "Create a search_local_data step for EACH entity above to get its details "
                 "(price, specs, role, etc.).\n"
             )
@@ -614,11 +622,17 @@ Return JSON array:
 
         # Include info about discovered but not yet looked-up entities
         discovered = memory.get("_discovered_entities", [])
+        searched = memory.get("_searched_entities", [])
+        searched_lower = {s.lower() for s in searched} if searched else set()
+        pending_entities = [
+            e for e in discovered
+            if e.lower() not in searched_lower
+        ] if discovered else []
         entity_note = ""
-        if discovered:
+        if pending_entities:
             entity_note = (
                 f"\nDiscovered entities still needing individual look-up: "
-                f"{json.dumps(discovered[:20], ensure_ascii=False)}\n"
+                f"{json.dumps(pending_entities[:20], ensure_ascii=False)}\n"
                 "If these have not all been searched for details yet, data is NOT sufficient.\n"
             )
 
@@ -840,6 +854,18 @@ If more data is needed, return:
                         )
                     result = {"hits": all_hits, "sources": all_sources, "count": len(all_hits)}
 
+                # --- Track searched entities ---
+                # Record the query so we know which entities have already
+                # been looked up.  This prevents the planner from
+                # re-searching entities that are already in memory.
+                searched: list = list(memory.get("_searched_entities", []))
+                searched_lower = {s.lower() for s in searched}
+                q_norm = q.strip().lower()
+                if q_norm and q_norm not in searched_lower:
+                    searched.append(q.strip())
+                    searched_lower.add(q_norm)
+                    self._tool_store_memory(memory, "_searched_entities", searched)
+
                 # --- Entity list extraction ---
                 # When results contain a list of entities (e.g. GPU names,
                 # person names), extract them so the planner can look up
@@ -847,13 +873,21 @@ If more data is needed, return:
                 if is_exhaustive and all_hits:
                     entities_found = self._extract_entity_list_from_results(all_hits, question)
                     if entities_found:
+                        # Merge with already-discovered entities and filter
+                        # out any that have already been searched.
+                        existing_discovered = set(memory.get("_discovered_entities", []))
+                        all_candidates = existing_discovered | set(entities_found)
+                        pending = [
+                            e for e in all_candidates
+                            if e.lower() not in searched_lower
+                        ]
                         self._tool_store_memory(
-                            memory, "_discovered_entities", entities_found
+                            memory, "_discovered_entities", pending
                         )
                         logger.info(
                             "Extracted %d entities for follow-up: %s",
-                            len(entities_found),
-                            entities_found[:5],
+                            len(pending),
+                            pending[:5],
                         )
 
                 output = result
