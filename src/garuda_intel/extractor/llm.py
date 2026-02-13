@@ -427,6 +427,25 @@ class LLMIntelExtractor:
             page_uuid=page_uuid,
         )
 
+    def build_snippet_embeddings(
+        self,
+        snippets: List[Any],
+        source_url: str,
+        page_type: str,
+        entity_name: str,
+        entity_type: Any,
+        page_uuid: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Build embeddings for semantic snippets (1-3 sentence chunks)."""
+        return self.semantic_engine.build_snippet_embeddings(
+            snippets=snippets,
+            source_url=source_url,
+            page_type=page_type,
+            entity_name=entity_name,
+            entity_type=entity_type,
+            page_uuid=page_uuid,
+        )
+
     # ---------- Query helpers ----------
     def generate_seed_queries(self, user_question: str, entity_name: str = "") -> List[str]:
         """Generates 3-4 specific search strings to find new data online."""
