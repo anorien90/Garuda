@@ -18,6 +18,11 @@ class TextChunk:
     start_index: int
     end_index: int
     topic_context: Optional[str] = None  # Heading or topic for this chunk
+    chunk_index: Optional[int] = None  # Position of this chunk in the sequence
+    prev_context: Optional[str] = None  # Brief context from the previous chunk
+    next_context: Optional[str] = None  # Brief context from the next chunk
+    source_url: Optional[str] = None  # Source URL of the page
+    entity_refs: Optional[List[str]] = None  # Entity names referenced in this chunk
     
 
 class SemanticChunker:
@@ -552,3 +557,80 @@ class SemanticChunker:
             List of text strings
         """
         return [chunk.text for chunk in chunks]
+
+    # ------------------------------------------------------------------
+    # Semantic snippet generation (1-3 sentence micro-chunks)
+    # ------------------------------------------------------------------
+
+    SNIPPET_MAX_SENTENCES = 3
+    SNIPPET_CONTEXT_CHARS = 80  # Max chars for prev/next context
+
+    def chunk_into_snippets(
+        self,
+        text: str,
+        source_url: Optional[str] = None,
+        max_sentences: int = 3,
+    ) -> List[TextChunk]:
+        """Create fine-grained 1-3 sentence snippets with prev/next context.
+
+        Each snippet carries:
+        - ``chunk_index``: ordinal position
+        - ``prev_context`` / ``next_context``: first/last ~80 chars of neighbours
+        - ``source_url``: originating page URL
+
+        These are intended to be stored as *semantic-snippet* records for
+        high-resolution RAG search.
+
+        Args:
+            text: Full text to split.
+            source_url: URL of the source page (attached to each snippet).
+            max_sentences: Maximum number of sentences per snippet (1-3).
+
+        Returns:
+            List of :class:`TextChunk` snippets.
+        """
+        if not text:
+            return []
+
+        max_sentences = max(1, min(max_sentences, self.SNIPPET_MAX_SENTENCES))
+
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        # Drop empty sentences
+        sentences = [s for s in sentences if s.strip()]
+
+        if not sentences:
+            return []
+
+        snippets: List[TextChunk] = []
+        offset = 0
+
+        for i in range(0, len(sentences), max_sentences):
+            group = sentences[i : i + max_sentences]
+            snippet_text = " ".join(group)
+            start_idx = offset
+            end_idx = offset + len(snippet_text)
+            offset = end_idx + 1  # account for split whitespace
+
+            snippets.append(
+                TextChunk(
+                    text=snippet_text,
+                    start_index=start_idx,
+                    end_index=end_idx,
+                    chunk_index=len(snippets),
+                    source_url=source_url,
+                )
+            )
+
+        # Fill prev/next context references
+        for idx, snippet in enumerate(snippets):
+            if idx > 0:
+                prev_text = snippets[idx - 1].text
+                snippet.prev_context = prev_text[: self.SNIPPET_CONTEXT_CHARS]
+            if idx < len(snippets) - 1:
+                next_text = snippets[idx + 1].text
+                snippet.next_context = next_text[: self.SNIPPET_CONTEXT_CHARS]
+
+        self.logger.debug(
+            f"Created {len(snippets)} semantic snippets from {len(sentences)} sentences"
+        )
+        return snippets

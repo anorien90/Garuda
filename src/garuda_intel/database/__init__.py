@@ -27,6 +27,7 @@ from .models import (
     FieldDiscoveryLog,
     Task,
     ChatMemoryEntry,
+    SemanticSnippet,
 )
 from .engine import SQLAlchemyStore
 from .store import PersistenceStore
@@ -55,6 +56,8 @@ __all__ = [
     "Task",
     # Chat memory model
     "ChatMemoryEntry",
+    # Semantic snippet model
+    "SemanticSnippet",
     # Storage
     "SQLAlchemyStore",
     "PersistenceStore",

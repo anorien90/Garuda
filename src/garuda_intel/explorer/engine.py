@@ -695,7 +695,7 @@ class IntelligentExplorer:
             
             finding_ids.append((finding, intel_id, primary_entity_id))
 
-        # 4) Persist embeddings (page + entities + findings)
+        # 4) Persist embeddings (page + entities + findings + semantic snippets)
         if self.vector_store and self.llm_extractor:
             try:
                 self.logger.info(f"Generating embeddings for page: {url}")
@@ -720,6 +720,17 @@ class IntelligentExplorer:
                             page_uuid=page_uuid,
                         )
                     )
+
+                # 4b) Generate fine-grained semantic snippets (1-3 sentences)
+                snippet_entries = self._generate_and_store_snippets(
+                    text_content=text_content,
+                    url=url,
+                    page_type=page_type,
+                    page_uuid=page_uuid,
+                    primary_entity_id=primary_entity_id,
+                    extracted_entities=extracted_entities,
+                )
+                entries.extend(snippet_entries)
                 
                 self.logger.info(f"Upserting {len(entries)} embeddings to Qdrant for page: {url}")
                 for entry in entries:
@@ -737,6 +748,94 @@ class IntelligentExplorer:
             self.logger.warning(f"LLM extractor not available - skipping embedding generation for {url}")
 
         return page_record
+
+    # ------------------------------------------------------------------
+    # Semantic snippet helpers
+    # ------------------------------------------------------------------
+
+    def _generate_and_store_snippets(
+        self,
+        text_content: str,
+        url: str,
+        page_type: str,
+        page_uuid: Optional[str],
+        primary_entity_id: Optional[str],
+        extracted_entities: List[Dict],
+    ) -> List[Dict[str, Any]]:
+        """Create 1-3 sentence semantic snippets, persist to DB, return
+        embedding entries for the vector store."""
+        from ..extractor.semantic_chunker import SemanticChunker
+
+        chunker = SemanticChunker()
+        snippets = chunker.chunk_into_snippets(
+            text_content or "",
+            source_url=url,
+            max_sentences=3,
+        )
+        if not snippets:
+            return []
+
+        # Collect entity names for cross-referencing
+        entity_names = [e.get("name", "").lower() for e in extracted_entities if e.get("name")]
+
+        # Annotate snippets with entity refs found in their text
+        for snippet in snippets:
+            refs = [n for n in entity_names if n and n in snippet.text.lower()]
+            snippet.entity_refs = refs if refs else None
+
+        # Persist snippets to SQL (best-effort)
+        if self.store:
+            try:
+                self._persist_snippets_to_db(
+                    snippets, page_uuid, primary_entity_id,
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to persist semantic snippets to DB: {e}")
+
+        # Build Qdrant embedding entries
+        snippet_entries = self.llm_extractor.build_snippet_embeddings(
+            snippets=snippets,
+            source_url=url,
+            page_type=page_type,
+            entity_name=self.profile.name,
+            entity_type=self.profile.entity_type,
+            page_uuid=page_uuid,
+        )
+        self.logger.info(
+            f"Generated {len(snippet_entries)} semantic-snippet embeddings for {url}"
+        )
+        return snippet_entries
+
+    def _persist_snippets_to_db(
+        self,
+        snippets,
+        page_uuid: Optional[str],
+        entity_id: Optional[str],
+    ):
+        """Store semantic snippets in the SQL database."""
+        import uuid as _uuid
+        from ..database.models import SemanticSnippet
+
+        session_maker = getattr(self.store, "Session", None)
+        if not session_maker:
+            return
+
+        with session_maker() as session:
+            for snippet in snippets:
+                row = SemanticSnippet(
+                    id=_uuid.uuid4(),
+                    text=snippet.text,
+                    chunk_index=snippet.chunk_index or 0,
+                    prev_context=snippet.prev_context,
+                    next_context=snippet.next_context,
+                    topic_context=snippet.topic_context,
+                    source_url=snippet.source_url,
+                    page_id=_uuid.UUID(page_uuid) if page_uuid else None,
+                    entity_id=_uuid.UUID(entity_id) if entity_id else None,
+                    entity_refs_json=snippet.entity_refs,
+                )
+                session.add(row)
+            session.commit()
 
     def _enqueue_new_links(self, frontier, base_url, html, links, depth, page_text):
         if depth >= self.max_depth:

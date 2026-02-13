@@ -10,17 +10,22 @@ def generate_seeds(profile: EntityProfile, llm: LLMIntelExtractor) -> List[str]:
     """
     Ensures a non-empty seed list by combining heuristics, 
     LLM queries, and similarity-based filtering with fallbacks.
+
+    Returns a focused set of seeds (capped at MAX_SEED_QUERIES) to avoid
+    over-crawling while still covering the entity from multiple angles.
     """
+    # Maximum number of seed queries to return per crawl
+    MAX_SEED_QUERIES = 4
+
     base_queries = []
     
-    # 1. Apply Type-Specific Heuristics
+    # 1. Apply Type-Specific Heuristics (one focused query per type)
     if profile.entity_type == EntityType.COMPANY:
-        base_queries = [f"{profile.name} official site", f"{profile.name} investor relations"]
+        base_queries = [f"{profile.name} official site"]
     elif profile.entity_type == EntityType.PERSON:
-        base_queries = [f"{profile.name} biography", f"{profile.name} linkedin"]
+        base_queries = [f"{profile.name} biography"]
     elif profile.entity_type == EntityType.TOPIC:
-        # Better topic heuristics
-        base_queries = [f"{profile.name} wiki", f"{profile.name} research paper", f"{profile.name} explained"]
+        base_queries = [f"{profile.name} wiki"]
     else:
         base_queries = [f"{profile.name} overview"]
 
@@ -52,4 +57,4 @@ def generate_seeds(profile: EntityProfile, llm: LLMIntelExtractor) -> List[str]:
         logger.warning("All queries filtered out. Falling back to base query.")
         final_queries = [profile.name]
 
-    return final_queries
+    return final_queries[:MAX_SEED_QUERIES]

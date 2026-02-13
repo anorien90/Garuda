@@ -65,7 +65,7 @@ def collect_candidates_simple(queries, limit=5) -> list:
     def _search_query(q):
         try:
             with DDGS() as ddgs:
-                results = list(ddgs.text(q, max_results=3))
+                results = list(ddgs.text(q, max_results=2))
                 # Return full result dicts, not just hrefs
                 query_results = []
                 for r in results:
