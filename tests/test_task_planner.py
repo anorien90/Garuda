@@ -660,12 +660,12 @@ class TestPatternStorage:
 
         # vector_store.upsert should have been called with 3 positional args
         planner.vector_store.upsert.assert_called_once()
-        args = planner.vector_store.upsert.call_args
-        # First arg is point_id (str), second is vector (list), third is payload (dict)
-        assert isinstance(args[0][0], str)  # point_id
-        assert isinstance(args[0][1], list)  # vector
-        assert isinstance(args[0][2], dict)  # payload
-        assert args[0][2]["kind"] == "step_pattern"
+        call_args = planner.vector_store.upsert.call_args
+        point_id, vector, payload = call_args[0]
+        assert isinstance(point_id, str)
+        assert isinstance(vector, list)
+        assert isinstance(payload, dict)
+        assert payload["kind"] == "step_pattern"
 
     @patch("garuda_intel.services.task_planner.requests.post")
     def test_upsert_not_called_for_insufficient_answer(self, mock_post):

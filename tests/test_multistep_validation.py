@@ -562,9 +562,14 @@ class TestTaskDecomposition:
             plan = planner._tool_create_plan("Show me all leaders of Nvidia", "Nvidia", {}, [])
             call_args = mock_post.call_args
             prompt_sent = call_args[1]["json"]["prompt"] if call_args else ""
+            prompt_lower = prompt_sent.lower()
             # Must mention searching broadly and not stopping early
-            assert "full list" in prompt_sent.lower() or "do not stop" in prompt_sent.lower() \
-                or "each item individually" in prompt_sent.lower()
+            has_full_list = "full list" in prompt_lower
+            has_do_not_stop = "do not stop" in prompt_lower
+            has_each_item = "each item individually" in prompt_lower
+            assert has_full_list or has_do_not_stop or has_each_item, (
+                "Plan prompt must include comprehensive search rules for 'all' queries"
+            )
 
 
 # ---------------------------------------------------------------------------
