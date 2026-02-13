@@ -29,6 +29,7 @@ from garuda_intel.services.task_planner import (
     TaskPlanner,
     TOOL_NAMES,
     DEFAULT_MAX_PROMPT_TOKENS,
+    DEFAULT_MAX_CONSECUTIVE_INSUFFICIENT,
     CHARS_PER_TOKEN,
 )
 
@@ -402,6 +403,173 @@ class TestResponseFormat:
             "crawl_enabled",
         ]:
             assert key in resp, f"Missing key: {key}"
+
+
+# ---------------------------------------------------------------------------
+# Helper for mock LLM responses used by new tests
+# ---------------------------------------------------------------------------
+
+def _mock_llm_resp(text):
+    mock = MagicMock()
+    mock.status_code = 200
+    mock.json.return_value = {"response": text}
+    mock.raise_for_status = MagicMock()
+    return mock
+
+
+# ---------------------------------------------------------------------------
+# Consecutive insufficient limit
+# ---------------------------------------------------------------------------
+
+class TestConsecutiveInsufficientLimit:
+    """Test that consecutive INSUFFICIENT_DATA re-plans are capped."""
+
+    def test_default_max_consecutive_insufficient(self):
+        s = Settings()
+        assert s.chat_max_consecutive_insufficient == 3
+
+    @patch.dict("os.environ", {
+        "GARUDA_CHAT_MAX_CONSECUTIVE_INSUFFICIENT": "5",
+    })
+    def test_config_from_env(self):
+        s = Settings.from_env()
+        assert s.chat_max_consecutive_insufficient == 5
+
+    def test_planner_reads_config(self):
+        planner = _make_planner()
+        assert planner.max_consecutive_insufficient == 3
+
+    def test_custom_max_consecutive_insufficient(self):
+        settings = Settings()
+        settings.chat_max_consecutive_insufficient = 5
+        planner = _make_planner(settings=settings)
+        assert planner.max_consecutive_insufficient == 5
+
+    def test_default_constant_value(self):
+        assert DEFAULT_MAX_CONSECUTIVE_INSUFFICIENT == 3
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_run_stops_after_consecutive_insufficient_limit(self, mock_post):
+        """After N consecutive INSUFFICIENT_DATA, the planner should stop re-planning."""
+        plan_json = json.dumps([
+            {"tool": "search_local_data", "input": {"query": "test"}, "description": "Search"},
+            {"tool": "reflect_findings", "input": {"data_key": "search_results"}, "description": "Reflect"},
+        ])
+
+        # Return plan responses in a cycle
+        mock_post.return_value = _mock_llm_resp(plan_json)
+
+        planner = _make_planner()
+        planner.max_consecutive_insufficient = 2
+        planner.max_plan_changes_per_cycle = 10
+        planner.max_cycles = 1
+
+        # Mock reflect to always return insufficient
+        with patch.object(planner, '_tool_reflect', return_value={"sufficient": False, "summary": "", "missing": ["data"]}):
+            result = planner.run("test question")
+
+        # Should have stopped after the consecutive insufficient limit
+        # The key check: we should NOT see 10+ plan changes (the old behavior)
+        assert result["total_plan_changes"] <= 3  # Should stop early
+        assert "_insufficient_limit_reached" in result.get("memory_snapshot", {}) or \
+               result["total_plan_changes"] <= 2 + 1  # max_consecutive_insufficient(2) + 1 initial plan
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_consecutive_counter_resets_on_success(self, mock_post):
+        """Counter should reset to 0 when a step succeeds."""
+        # Plan: search → reflect(sufficient=true) → evaluate(done)
+        plan_json = json.dumps([
+            {"tool": "search_local_data", "input": {"query": "test"}, "description": "Search"},
+            {"tool": "reflect_findings", "input": {"data_key": "search_results"}, "description": "Reflect"},
+        ])
+        reflect_json = json.dumps({
+            "sufficient": True, "summary": "Found data", "missing": [], "next_action": "none"
+        })
+        eval_json = json.dumps({"done": True, "answer": "The answer."})
+
+        mock_post.side_effect = [
+            _mock_llm_resp(plan_json),
+            _mock_llm_resp(reflect_json),
+            _mock_llm_resp(eval_json),
+            _mock_llm_resp('"Generalized task"'),
+        ]
+
+        planner = _make_planner()
+
+        # Make vector store return results so search_local_data yields count > 0
+        mock_result = MagicMock()
+        mock_result.score = 0.8
+        mock_result.payload = {"url": "https://example.com", "text": "data", "kind": "page", "entity": "E"}
+        planner.vector_store.search.return_value = [mock_result]
+
+        result = planner.run("test question")
+
+        # Should complete normally without hitting insufficient limit
+        assert "answer" in result
+        assert "_insufficient_limit_reached" not in result.get("memory_snapshot", {})
+
+
+# ---------------------------------------------------------------------------
+# Task decomposition in plan creation
+# ---------------------------------------------------------------------------
+
+class TestTaskDecomposition:
+    """Test that plan creation includes task decomposition guidance."""
+
+    def test_plan_prompt_includes_decomposition_rule(self):
+        """Verify the plan creation prompt includes task decomposition instructions."""
+        planner = _make_planner()
+        # Force fallback by making LLM request raise an exception and capture the prompt
+        with patch("garuda_intel.services.task_planner.requests.post") as mock_post:
+            mock_post.side_effect = Exception("timeout")
+            plan = planner._tool_create_plan("Show me all RTX GPUs with details", "Nvidia", {}, [])
+            # The fallback plan is returned, but we can verify the prompt was constructed
+            # by checking the call args
+            call_args = mock_post.call_args
+            prompt_sent = call_args[1]["json"]["prompt"] if call_args else ""
+            assert "decompose" in prompt_sent.lower() or "sub-task" in prompt_sent.lower()
+
+    def test_plan_prompt_warns_about_insufficient_history(self):
+        """When there are insufficient steps in memory, the prompt warns about them."""
+        planner = _make_planner()
+        memory = {
+            "_insufficient_step_1": {"tool": "reflect_findings", "reason": "INSUFFICIENT_DATA"},
+            "_insufficient_step_3": {"tool": "reflect_findings", "reason": "INSUFFICIENT_DATA"},
+        }
+        with patch("garuda_intel.services.task_planner.requests.post") as mock_post:
+            mock_post.side_effect = Exception("timeout")
+            plan = planner._tool_create_plan("test question", "", memory, [])
+            call_args = mock_post.call_args
+            prompt_sent = call_args[1]["json"]["prompt"] if call_args else ""
+            assert "INSUFFICIENT_DATA" in prompt_sent or "WARNING" in prompt_sent
+
+    def test_plan_prompt_no_warning_when_no_insufficient(self):
+        """When there are no insufficient steps, no warning is included."""
+        planner = _make_planner()
+        memory = {"search_results": [{"score": 0.9}]}
+        with patch("garuda_intel.services.task_planner.requests.post") as mock_post:
+            mock_post.side_effect = Exception("timeout")
+            plan = planner._tool_create_plan("test question", "", memory, [])
+            call_args = mock_post.call_args
+            prompt_sent = call_args[1]["json"]["prompt"] if call_args else ""
+            assert "WARNING" not in prompt_sent
+
+    def test_plan_prompt_includes_comprehensive_search_rules(self):
+        """Plan creation prompt should include rules for exhaustive 'all' queries."""
+        planner = _make_planner()
+        with patch("garuda_intel.services.task_planner.requests.post") as mock_post:
+            mock_post.side_effect = Exception("timeout")
+            plan = planner._tool_create_plan("Show me all leaders of Nvidia", "Nvidia", {}, [])
+            call_args = mock_post.call_args
+            prompt_sent = call_args[1]["json"]["prompt"] if call_args else ""
+            prompt_lower = prompt_sent.lower()
+            # Must mention searching broadly and not stopping early
+            has_full_list = "full list" in prompt_lower
+            has_do_not_stop = "do not stop" in prompt_lower
+            has_each_item = "each item individually" in prompt_lower
+            assert has_full_list or has_do_not_stop or has_each_item, (
+                "Plan prompt must include comprehensive search rules for 'all' queries"
+            )
 
 
 # ---------------------------------------------------------------------------

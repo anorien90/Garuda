@@ -639,5 +639,177 @@ def _mock_llm_resp(text):
     return mock
 
 
+# ---------------------------------------------------------------------------
+# Pattern storage (upsert fix)
+# ---------------------------------------------------------------------------
+
+class TestPatternStorage:
+    """Test that _maybe_store_pattern calls vector_store.upsert correctly."""
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_upsert_called_with_positional_args(self, mock_post):
+        """upsert must be called as upsert(point_id, vector, payload), not with a list."""
+        mock_post.return_value = _mock_llm_resp('"Generalized task"')
+        planner = _make_planner()
+
+        history = [
+            {"tool_name": "search_local_data", "status": "completed", "input": {"query": "q"}},
+            {"tool_name": "reflect_findings", "status": "completed", "input": {"data_key": "search_results"}},
+        ]
+        planner._maybe_store_pattern("test question", history, "Good answer")
+
+        # vector_store.upsert should have been called with 3 positional args
+        planner.vector_store.upsert.assert_called_once()
+        call_args = planner.vector_store.upsert.call_args
+        point_id, vector, payload = call_args[0]
+        assert isinstance(point_id, str)
+        assert isinstance(vector, list)
+        assert isinstance(payload, dict)
+        assert payload["kind"] == "step_pattern"
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_upsert_not_called_for_insufficient_answer(self, mock_post):
+        """Pattern should not be stored when answer indicates failure."""
+        planner = _make_planner()
+        history = [
+            {"tool_name": "search_local_data", "status": "completed", "input": {}},
+            {"tool_name": "reflect_findings", "status": "completed", "input": {}},
+        ]
+        planner._maybe_store_pattern("test", history, "I could not find the answer")
+        planner.vector_store.upsert.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# User reward / debuff
+# ---------------------------------------------------------------------------
+
+class TestApplyReward:
+    """Test the apply_reward method for user feedback."""
+
+    def test_apply_reward_updates_pattern(self):
+        """Positive reward should increase reward_score."""
+        store = MagicMock()
+        session_mock = MagicMock()
+        session_mock.__enter__ = Mock(return_value=session_mock)
+        session_mock.__exit__ = Mock(return_value=False)
+
+        # Mock plan row
+        plan_row = MagicMock()
+        plan_row.original_prompt = "Show me all leaders of Nvidia"
+        session_mock.get.return_value = plan_row
+
+        # Mock pattern
+        pattern = MagicMock()
+        pattern.generalized_task = "find leaders of organization"
+        pattern.reward_score = 1.0
+        pattern.times_used = 1
+        pattern.times_succeeded = 1
+        pattern.id = uuid.uuid4()
+        pattern.tool_sequence = [{"tool": "search_local_data"}]
+        session_mock.execute.return_value.scalars.return_value.all.return_value = [pattern]
+
+        store.Session.return_value = session_mock
+
+        planner = _make_planner(store=store)
+        result = planner.apply_reward(str(uuid.uuid4()), 1.0)
+
+        assert result is True
+        assert pattern.reward_score == 2.0
+        assert pattern.times_used == 2
+        assert pattern.times_succeeded == 2
+
+    def test_apply_reward_negative_debuff(self):
+        """Negative reward should decrease reward_score (floored at 0)."""
+        store = MagicMock()
+        session_mock = MagicMock()
+        session_mock.__enter__ = Mock(return_value=session_mock)
+        session_mock.__exit__ = Mock(return_value=False)
+
+        plan_row = MagicMock()
+        plan_row.original_prompt = "Find GPU specs"
+        session_mock.get.return_value = plan_row
+
+        pattern = MagicMock()
+        pattern.generalized_task = "find hardware specs"
+        pattern.reward_score = 0.5
+        pattern.times_used = 3
+        pattern.times_succeeded = 2
+        pattern.id = uuid.uuid4()
+        pattern.tool_sequence = []
+        session_mock.execute.return_value.scalars.return_value.all.return_value = [pattern]
+
+        store.Session.return_value = session_mock
+
+        planner = _make_planner(store=store)
+        result = planner.apply_reward(str(uuid.uuid4()), -1.0)
+
+        assert result is True
+        # reward_score should be max(0.0, 0.5 + (-1.0)) = 0.0
+        assert pattern.reward_score == 0.0
+        # times_used incremented, but times_succeeded NOT incremented for negative reward
+        assert pattern.times_used == 4
+        assert pattern.times_succeeded == 2
+
+    def test_apply_reward_no_matching_plan(self):
+        """Return False when plan_id is not found."""
+        store = MagicMock()
+        session_mock = MagicMock()
+        session_mock.__enter__ = Mock(return_value=session_mock)
+        session_mock.__exit__ = Mock(return_value=False)
+        session_mock.get.return_value = None
+        store.Session.return_value = session_mock
+
+        planner = _make_planner(store=store)
+        result = planner.apply_reward(str(uuid.uuid4()), 1.0)
+        assert result is False
+
+    def test_apply_reward_no_matching_pattern(self):
+        """Return False when no pattern matches the plan's question."""
+        store = MagicMock()
+        session_mock = MagicMock()
+        session_mock.__enter__ = Mock(return_value=session_mock)
+        session_mock.__exit__ = Mock(return_value=False)
+
+        plan_row = MagicMock()
+        plan_row.original_prompt = "very specific unique question"
+        session_mock.get.return_value = plan_row
+        session_mock.execute.return_value.scalars.return_value.all.return_value = []
+
+        store.Session.return_value = session_mock
+
+        planner = _make_planner(store=store)
+        result = planner.apply_reward(str(uuid.uuid4()), 1.0)
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Plan evaluation – comprehensive coverage
+# ---------------------------------------------------------------------------
+
+class TestPlanEvaluationPrompt:
+    """Test that plan evaluation prompt enforces comprehensive coverage."""
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_eval_prompt_includes_comprehensive_rules(self, mock_post):
+        """The evaluation prompt should instruct against early escape for 'all' queries."""
+        planner = _make_planner()
+        # Capture the prompt sent to the LLM
+        mock_post.return_value = _mock_llm_resp(json.dumps({"done": False, "reason": "need more"}))
+
+        planner._tool_evaluate_plan(
+            "Show me all Nvidia RTX GPUs",
+            {"search_results": [{"name": "RTX 4090"}]},
+            [{"status": "completed"}],
+            [],
+        )
+
+        call_args = mock_post.call_args
+        prompt = call_args[1]["json"]["prompt"]
+        # Must mention comprehensive / exhaustive coverage rules
+        assert "all" in prompt.lower()
+        assert "comprehensive" in prompt.lower() or "exhaustive" in prompt.lower()
+        assert "1-2 items" in prompt.lower() or "not sufficient" in prompt.lower()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -83,6 +83,7 @@ class Settings:
     chat_pattern_reuse_threshold: float = 0.75  # Similarity threshold for pattern matching
     chat_crawl_enabled: bool = True  # Toggle for online crawling (can be disabled per-request)
     chat_max_prompt_tokens: int = 13000  # Max token budget for prompt + state + findings
+    chat_max_consecutive_insufficient: int = 3  # Max consecutive INSUFFICIENT_DATA re-plans before escalating
     
     # LLM timeout settings (in seconds) - default 15 minutes for long operations
     llm_summarize_timeout: int = 900  # 15 minutes
@@ -177,6 +178,7 @@ class Settings:
             chat_pattern_reuse_threshold=float(os.environ.get("GARUDA_CHAT_PATTERN_REUSE_THRESHOLD", "0.75")),
             chat_crawl_enabled=_as_bool(os.environ.get("GARUDA_CHAT_CRAWL_ENABLED"), True),
             chat_max_prompt_tokens=int(os.environ.get("GARUDA_CHAT_MAX_PROMPT_TOKENS", "13000")),
+            chat_max_consecutive_insufficient=int(os.environ.get("GARUDA_CHAT_MAX_CONSECUTIVE_INSUFFICIENT", "3")),
             # LLM timeout settings
             llm_summarize_timeout=int(os.environ.get("GARUDA_LLM_SUMMARIZE_TIMEOUT", "900")),
             llm_extract_timeout=int(os.environ.get("GARUDA_LLM_EXTRACT_TIMEOUT", "900")),

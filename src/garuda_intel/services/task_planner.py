@@ -54,6 +54,7 @@ DEFAULT_MAX_CYCLES = 2
 DEFAULT_MAX_TOTAL_STEPS = 100
 DEFAULT_PATTERN_REUSE_THRESHOLD = 0.75
 DEFAULT_MAX_PROMPT_TOKENS = 13000
+DEFAULT_MAX_CONSECUTIVE_INSUFFICIENT = 3
 STEP_PATTERN_QDRANT_PREFIX = "step_pattern_"
 # Rough chars-per-token factor (conservative for English text)
 CHARS_PER_TOKEN = 4
@@ -97,6 +98,9 @@ class TaskPlanner:
         self.max_prompt_tokens = getattr(
             settings, "chat_max_prompt_tokens", DEFAULT_MAX_PROMPT_TOKENS
         )
+        self.max_consecutive_insufficient = getattr(
+            settings, "chat_max_consecutive_insufficient", DEFAULT_MAX_CONSECUTIVE_INSUFFICIENT
+        )
 
         # Crawl enabled: per-request flag > settings > True
         if crawl_enabled is not None:
@@ -133,6 +137,7 @@ class TaskPlanner:
 
         total_plan_changes = 0
         total_steps = 0
+        consecutive_insufficient = 0
         plan_steps_log: List[Dict[str, Any]] = []
         current_plan: Optional[List[Dict[str, Any]]] = None
         final_answer: Optional[str] = None
@@ -235,6 +240,30 @@ class TaskPlanner:
                 # -- 3. Evaluate the step --
                 eval_ok = self._tool_eval_step(step_result, question, memory)
                 if not eval_ok:
+                    consecutive_insufficient += 1
+
+                    # Check if we've hit the consecutive insufficient limit
+                    if consecutive_insufficient >= self.max_consecutive_insufficient:
+                        logger.warning(
+                            "Consecutive insufficient limit reached (%d) – "
+                            "stopping re-plan loop and proceeding with available data",
+                            consecutive_insufficient,
+                        )
+                        self._emit(
+                            "insufficient_limit_reached",
+                            f"Consecutive insufficient limit ({consecutive_insufficient}) reached – moving on",
+                            {"plan_id": plan_id, "step": total_steps,
+                             "consecutive_insufficient": consecutive_insufficient},
+                        )
+                        self._tool_store_memory(
+                            memory, "_insufficient_limit_reached",
+                            {"count": consecutive_insufficient,
+                             "last_tool": tool_name,
+                             "action": "proceeding_with_available_data"},
+                        )
+                        self._invalidate_remaining(current_plan)
+                        break
+
                     # INSUFFICIENT_DATA escalation – force re-plan
                     self._emit("step_insufficient",
                                f"Step {total_steps} ({tool_name}) insufficient – re-planning",
@@ -243,6 +272,9 @@ class TaskPlanner:
                                             {"tool": tool_name, "reason": "INSUFFICIENT_DATA"})
                     self._invalidate_remaining(current_plan)
                     continue
+
+                # Step was sufficient – reset the consecutive counter
+                consecutive_insufficient = 0
 
                 # -- 4. Evaluate entire plan --
                 plan_done, answer_candidate = self._tool_evaluate_plan(
@@ -340,6 +372,17 @@ class TaskPlanner:
                 for h in recent
             )
 
+        # Build a summary of previously failed insufficient steps to avoid repeating them
+        insufficient_note = ""
+        insufficient_keys = [k for k in memory if k.startswith("_insufficient_step_")]
+        if insufficient_keys:
+            insufficient_note = (
+                f"\nWARNING: {len(insufficient_keys)} previous steps returned INSUFFICIENT_DATA. "
+                "Do NOT repeat the same search queries or reflect on the same data. "
+                "Try a DIFFERENT approach: use different search terms, crawl for external data, "
+                "or proceed with the data already available.\n"
+            )
+
         pattern_hint = ""
         if existing_pattern:
             seq = existing_pattern.get("tool_sequence", [])
@@ -354,19 +397,27 @@ using ONLY the tools listed below. Return ONLY a JSON array of step objects.
 
 {tools_desc}
 {pattern_hint}
+{insufficient_note}
 User request: "{question}"
 Entity context: "{entity}"
 Current memory: {memory_summary}
 Previous steps: {history_summary or 'None'}
 
 Rules:
-1. Start with search_local_data to check existing knowledge
-2. If local data is insufficient, use crawl_external_data (if enabled)
-3. Always reflect_findings before finalizing
-4. Use store_memory_data to save intermediate results
-5. Keep the plan concise (3-8 steps)
-6. For multi-part questions, create steps for each sub-question
+1. FIRST decompose the user request into distinct sub-tasks (e.g. "find all X", "get details for each", "sort by date")
+2. Create search_local_data steps with SPECIFIC queries for each sub-task
+3. If local data is insufficient, use crawl_external_data (if enabled) with targeted queries
+4. Use store_memory_data to save intermediate results for each sub-task
+5. Only use reflect_findings ONCE near the end, after gathering data for all sub-tasks
+6. Keep the plan concise (3-8 steps)
 7. Use search_memory when memory grows large and you need specific entries
+8. Do NOT repeat queries that already failed – try different search terms or approaches
+9. When the user asks for "all", "every", or a complete list of something:
+   a. First search broadly to discover what items/entities exist
+   b. Store the discovered list to memory
+   c. Then search for EACH item individually to get details
+   d. Do NOT stop after finding just 1-2 items – cover the full list
+   e. Try different search angles (e.g. by name, by category, by related entity)
 
 Return JSON array:
 [{{"tool": "<tool_name>", "input": {{"<param>": "<value>"}}, "description": "..."}}]
@@ -657,6 +708,16 @@ Memory (collected data):
 {memory_str}
 Steps completed: {len(steps_done)}
 
+IMPORTANT evaluation rules:
+- If the question asks for "all", "every", or "list" of something, you MUST verify that the
+  data covers a COMPREHENSIVE set of entities, not just one or two examples.
+- Finding only 1-2 items when the user asked for "all" is NOT sufficient.
+  Return done=false and explain what categories or items are still missing.
+- If the data contains a partial list (e.g. names without details), request
+  detail-gathering for each listed item before declaring done.
+- Only return done=true when the answer would satisfy someone who explicitly
+  asked for comprehensive / exhaustive coverage.
+
 If there is enough information to compose a final answer, return:
 {{"done": true, "answer": "<your synthesized answer using the data in memory>"}}
 
@@ -939,18 +1000,14 @@ Instructions:
                 if vec:
                     point_id = str(uuid.uuid4())
                     self.vector_store.upsert(
-                        [
-                            {
-                                "id": point_id,
-                                "vector": vec,
-                                "payload": {
-                                    "kind": "step_pattern",
-                                    "generalized_task": generalized,
-                                    "tool_sequence": tool_sequence,
-                                    "reward_score": 1.0,
-                                },
-                            }
-                        ]
+                        point_id,
+                        vec,
+                        {
+                            "kind": "step_pattern",
+                            "generalized_task": generalized,
+                            "tool_sequence": tool_sequence,
+                            "reward_score": 1.0,
+                        },
                     )
         except Exception as e:
             logger.warning("Pattern storage failed (non-critical): %s", e)
@@ -973,6 +1030,95 @@ Return ONLY the generalized task description as a plain string (no JSON).
         except Exception:
             pass
         return question
+
+    def apply_reward(self, plan_id: str, reward: float) -> bool:
+        """Apply user reward/debuff feedback to the plan's associated step pattern.
+
+        Args:
+            plan_id: The UUID of the completed plan.
+            reward: Positive value (e.g. 1.0) to reward, negative (e.g. -1.0) to debuff.
+
+        Returns:
+            True if the pattern was updated, False otherwise.
+        """
+        if not hasattr(self.store, "Session"):
+            return False
+        try:
+            with self.store.Session() as session:
+                # Look up the plan to get the original question
+                plan_row = session.get(ChatPlan, uuid.UUID(plan_id))
+                if not plan_row:
+                    logger.warning("apply_reward: plan %s not found", plan_id)
+                    return False
+
+                # Find the most recent StepPattern that was created around
+                # the same time the plan completed
+                from sqlalchemy import select, desc
+                stmt = (
+                    select(StepPattern)
+                    .order_by(desc(StepPattern.last_used_at))
+                    .limit(10)
+                )
+                patterns = session.execute(stmt).scalars().all()
+
+                # Match by generalised task similarity (simple substring for now)
+                question = plan_row.original_prompt or ""
+                matched = None
+                for pat in patterns:
+                    gen_task = (pat.generalized_task or "").lower()
+                    if gen_task and (
+                        gen_task in question.lower()
+                        or question.lower() in gen_task
+                        or any(
+                            word in gen_task
+                            for word in question.lower().split()
+                            if len(word) > 3
+                        )
+                    ):
+                        matched = pat
+                        break
+
+                if not matched:
+                    logger.info("apply_reward: no matching pattern for plan %s", plan_id)
+                    return False
+
+                # Apply reward / debuff
+                matched.reward_score = max(0.0, matched.reward_score + reward)
+                matched.times_used += 1
+                if reward > 0:
+                    matched.times_succeeded += 1
+                matched.last_used_at = datetime.now(timezone.utc)
+                session.commit()
+
+                logger.info(
+                    "apply_reward: pattern %s updated – reward_score=%.2f, "
+                    "times_used=%d, times_succeeded=%d",
+                    matched.id, matched.reward_score,
+                    matched.times_used, matched.times_succeeded,
+                )
+
+                # Update Qdrant embedding payload if available
+                if self.vector_store:
+                    try:
+                        vec = self.llm.embed_text(matched.generalized_task)
+                        if vec:
+                            self.vector_store.upsert(
+                                str(matched.id),
+                                vec,
+                                {
+                                    "kind": "step_pattern",
+                                    "generalized_task": matched.generalized_task,
+                                    "tool_sequence": matched.tool_sequence,
+                                    "reward_score": matched.reward_score,
+                                },
+                            )
+                    except Exception as e:
+                        logger.debug("apply_reward: Qdrant update failed (non-critical): %s", e)
+
+                return True
+        except Exception as e:
+            logger.warning("apply_reward failed: %s", e)
+            return False
 
     # -----------------------------------------------------------------------
     # Persistence helpers
