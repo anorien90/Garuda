@@ -1,4 +1,5 @@
 import { els } from './config.js';
+import { fetchWithAuth } from './api.js';
 import { pill, collapsible } from './ui.js';
 
 const MEMORY_PREVIEW_MAX_CHARS = 300;
@@ -221,6 +222,20 @@ export function renderChat(payload, targetEl) {
         <p>${answer.replace(/\n/g, '<br>')}</p>
     </div>
 
+    ${payload.plan_id ? `
+    <div class="flex items-center gap-3 mt-1" id="chat-feedback-${payload.plan_id}">
+      <span class="text-xs text-slate-500 dark:text-slate-400">Was this helpful?</span>
+      <button data-plan-id="${payload.plan_id}" data-rating="up"
+        class="chat-feedback-btn inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium border border-green-300 dark:border-green-700 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors">
+        👍 Yes
+      </button>
+      <button data-plan-id="${payload.plan_id}" data-rating="down"
+        class="chat-feedback-btn inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium border border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/30 transition-colors">
+        👎 No
+      </button>
+    </div>
+    ` : ''}
+
     ${liveUrls.length ? `
       <div>
         <h5 class="text-xs font-bold uppercase text-slate-500 mb-2">Live URLs Crawled</h5>
@@ -268,6 +283,30 @@ export function renderChat(payload, targetEl) {
     </div>
   `;
   el.appendChild(div);
+
+  // Attach feedback button handlers
+  div.querySelectorAll('.chat-feedback-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const planId = btn.dataset.planId;
+      const rating = btn.dataset.rating;
+      const container = document.getElementById(`chat-feedback-${planId}`);
+      if (!container) return;
+      // Disable both buttons immediately
+      container.querySelectorAll('.chat-feedback-btn').forEach(b => { b.disabled = true; });
+      try {
+        const res = await fetchWithAuth('/api/agent/chat/feedback', {
+          method: 'POST',
+          body: JSON.stringify({ plan_id: planId, rating }),
+        });
+        const data = await res.json();
+        container.innerHTML = rating === 'up'
+          ? '<span class="text-xs text-green-600 dark:text-green-400">👍 Thanks for the feedback!</span>'
+          : '<span class="text-xs text-rose-600 dark:text-rose-400">👎 Thanks – we\'ll improve!</span>';
+      } catch (err) {
+        container.innerHTML = '<span class="text-xs text-slate-400">Feedback failed – please try again.</span>';
+      }
+    });
+  });
 }
 
 export function renderAutonomousInChat(data) {

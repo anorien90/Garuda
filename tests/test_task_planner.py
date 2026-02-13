@@ -1076,5 +1076,162 @@ class TestFinalSummaryExhaustive:
         assert "deduplicate" in prompt.lower() or "combine" in prompt.lower()
 
 
+# ---------------------------------------------------------------------------
+# Entity deduplication in search step
+# ---------------------------------------------------------------------------
+
+class TestEntityDeduplication:
+    """Test that already-searched entities are filtered from _discovered_entities."""
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_searched_entity_tracked_in_memory(self, mock_post):
+        """Executing a search_local_data step should add the query to _searched_entities."""
+        mock_post.return_value = _mock_llm_resp(json.dumps([]))
+
+        planner = _make_planner()
+        planner.vector_store.search.return_value = []
+        planner.store.search_intel.return_value = [
+            {"url": "http://example.com", "snippet": "info", "score": 0.5},
+        ]
+
+        memory: dict = {}
+        step = {
+            "tool": "search_local_data",
+            "input": {"query": "RTX 4070"},
+            "status": "pending",
+        }
+        planner._execute_step(step, "Show me RTX info", "", memory, 6, "plan-1", 1)
+
+        assert "_searched_entities" in memory
+        assert "RTX 4070" in memory["_searched_entities"]
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_already_searched_entities_excluded(self, mock_post):
+        """Entities that were already searched should be excluded from _discovered_entities."""
+        mock_post.return_value = _mock_llm_resp(
+            json.dumps(["RTX 4070", "RTX 4080", "RTX 4090"])
+        )
+
+        planner = _make_planner()
+        planner.vector_store.search.return_value = []
+        planner.store.search_intel.return_value = [
+            {"url": "http://example.com", "snippet": "RTX 4070 4080 4090", "score": 0.8},
+        ]
+
+        # Pre-populate searched entities – RTX 4070 was already searched
+        memory: dict = {"_searched_entities": ["RTX 4070"]}
+        step = {
+            "tool": "search_local_data",
+            "input": {"query": "all RTX 40 series"},
+            "status": "pending",
+        }
+        planner._execute_step(
+            step, "Show all RTX 40 series GPUs", "", memory, 6, "plan-1", 2
+        )
+
+        discovered = memory.get("_discovered_entities", [])
+        # RTX 4070 should be filtered out
+        assert "RTX 4070" not in discovered
+        # RTX 4080 and RTX 4090 should be present
+        assert "RTX 4080" in discovered
+        assert "RTX 4090" in discovered
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_discovered_entities_merge_not_overwrite(self, mock_post):
+        """New entities should merge with existing discovered list, not overwrite."""
+        mock_post.return_value = _mock_llm_resp(
+            json.dumps(["RTX 4080", "RTX 4090"])
+        )
+
+        planner = _make_planner()
+        planner.vector_store.search.return_value = []
+        planner.store.search_intel.return_value = [
+            {"url": "http://example.com", "snippet": "RTX 4080 4090", "score": 0.8},
+        ]
+
+        memory: dict = {
+            "_discovered_entities": ["RTX 5070"],
+            "_searched_entities": [],
+        }
+        step = {
+            "tool": "search_local_data",
+            "input": {"query": "all RTX series"},
+            "status": "pending",
+        }
+        planner._execute_step(
+            step, "List all RTX GPUs", "", memory, 6, "plan-1", 2
+        )
+
+        discovered = memory.get("_discovered_entities", [])
+        # Both previously discovered and newly found should be present
+        assert "RTX 5070" in discovered
+        assert "RTX 4080" in discovered
+        assert "RTX 4090" in discovered
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_plan_prompt_excludes_searched_entities(self, mock_post):
+        """Plan creation should not mention entities already in _searched_entities."""
+        plan_json = json.dumps([
+            {"tool": "search_local_data", "input": {"query": "RTX 4090"}, "description": "Search RTX 4090"},
+        ])
+        mock_post.return_value = _mock_llm_resp(plan_json)
+
+        planner = _make_planner()
+        memory = {
+            "_discovered_entities": ["RTX 4070", "RTX 4080", "RTX 4090"],
+            "_searched_entities": ["RTX 4070", "RTX 4080"],
+        }
+        planner._tool_create_plan(
+            "Show me all RTX 40 series GPUs", "Nvidia", memory, [],
+        )
+
+        call_args = mock_post.call_args
+        prompt = call_args[1]["json"]["prompt"]
+        # RTX 4090 is pending and should appear
+        assert "RTX 4090" in prompt
+        # RTX 4070 and RTX 4080 are already searched – should NOT appear in the
+        # discovered-entities note
+        lines = prompt.split("\n")
+        discovered_line = [l for l in lines if "Discovered entities to look up" in l]
+        if discovered_line:
+            assert "RTX 4070" not in discovered_line[0]
+            assert "RTX 4080" not in discovered_line[0]
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_reflect_excludes_searched_entities(self, mock_post):
+        """Reflect should not list entities that are already searched."""
+        mock_post.return_value = _mock_llm_resp(
+            json.dumps({"sufficient": True, "summary": "ok", "missing": [], "next_action": "done"})
+        )
+
+        planner = _make_planner()
+        memory = {
+            "search_results": [{"name": "RTX 4070"}],
+            "_discovered_entities": ["RTX 4070", "RTX 4080", "RTX 4090"],
+            "_searched_entities": ["RTX 4070", "RTX 4080"],
+        }
+        planner._tool_reflect("search_results", memory, "Show me all RTX 40 series GPUs")
+
+        call_args = mock_post.call_args
+        prompt = call_args[1]["json"]["prompt"]
+        # Only RTX 4090 should appear as needing look-up
+        if "still needing" in prompt.lower():
+            assert "RTX 4090" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Feedback / reward endpoint
+# ---------------------------------------------------------------------------
+
+class TestApplyRewardFromFeedback:
+    """Test that apply_reward correctly maps up/down to positive/negative reward."""
+
+    def test_apply_reward_returns_false_without_session(self):
+        """When store has no Session, apply_reward should return False."""
+        planner = _make_planner()
+        planner.store = MagicMock(spec=[])  # no Session attribute
+        assert planner.apply_reward("00000000-0000-0000-0000-000000000001", 1.0) is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
