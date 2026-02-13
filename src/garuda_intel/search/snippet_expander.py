@@ -100,7 +100,6 @@ def expand_snippet_window(
             break  # no more snippets in either direction
 
         # Build combined text and check sufficiency
-        combined_parts_before.sort(key=lambda _t: 0)  # keep insertion order
         combined_text = " ".join(
             combined_parts_before + [snippet_text] + combined_parts_after
         )
