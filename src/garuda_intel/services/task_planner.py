@@ -74,6 +74,7 @@ class TaskPlanner:
         # Per-request overrides
         crawl_enabled: Optional[bool] = None,
         task_id: Optional[str] = None,
+        progress_callback=None,
     ):
         self.store = store
         self.llm = llm
@@ -82,6 +83,7 @@ class TaskPlanner:
         self._collect_candidates = collect_candidates_fn
         self._explorer_factory = explorer_factory
         self._task_id = task_id
+        self._progress_callback = progress_callback
 
         # Limits
         self.max_plan_changes_per_cycle = getattr(
@@ -127,6 +129,7 @@ class TaskPlanner:
         self._create_plan_row(plan_id, question, session_id)
         self._emit("plan_created", f"Plan {plan_id} created for: {question[:80]}",
                     {"plan_id": plan_id, "question": question})
+        self._report_progress(0.05, "Plan created, analysing question")
 
         total_plan_changes = 0
         total_steps = 0
@@ -191,6 +194,12 @@ class TaskPlanner:
 
                 total_steps += 1
                 tool_name = step.get("tool", "unknown")
+                # Estimate progress: reserve 0.05-0.90 for step execution
+                step_progress = 0.05 + (0.85 * total_steps / max(self.max_total_steps, total_steps + 1))
+                self._report_progress(
+                    min(step_progress, 0.90),
+                    f"Step {total_steps}: {tool_name} – {step.get('description', '')[:60]}",
+                )
                 self._emit("step_executing",
                            f"Step {total_steps}: {tool_name}",
                            {"plan_id": plan_id, "step": total_steps,
@@ -251,6 +260,7 @@ class TaskPlanner:
 
         # --- Final summarisation step ---
         if not final_answer and not cancelled:
+            self._report_progress(0.90, "Generating final summary")
             self._emit("plan_summarizing", "Generating final summary",
                         {"plan_id": plan_id})
             final_answer = self._final_summary(question, memory, plan_steps_log, sources)
@@ -271,6 +281,7 @@ class TaskPlanner:
         self._emit("plan_done", f"Plan finished: {status}",
                     {"plan_id": plan_id, "status": status,
                      "total_steps": total_steps})
+        self._report_progress(1.0, f"Plan finished: {status}")
 
         # --- Build response ---
         return self._build_response(
@@ -1242,6 +1253,14 @@ Return ONLY the generalized task description as a plain string (no JSON).
             emit_event(step, message, payload=payload)
         except Exception:
             pass  # Event system may not be initialized
+
+    def _report_progress(self, progress: float, message: str) -> None:
+        """Report progress via the optional callback (used by task queue)."""
+        if self._progress_callback:
+            try:
+                self._progress_callback(progress, message)
+            except Exception:
+                pass
 
     @staticmethod
     def _truncate_for_prompt(text: str, max_chars: int = 8000) -> str:

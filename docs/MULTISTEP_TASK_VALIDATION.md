@@ -8,11 +8,13 @@ using MCP-style tools. The dynamic task planner now supports:
 - **Persistent short-term memory** stored in the selected database
 - **Configurable online crawl toggle** (disable/enable per request)
 - **`search_memory` MCP tool** for searching large working memory
-- **Cancellation/interruption** via task queue integration
+- **Cancellation/interruption** via task queue integration (task_id wired through)
 - **INSUFFICIENT_DATA escalation** triggering correct re-planning
 - **Event-driven transparency** with SSE emissions per step
 - **Token budget management** (~13000 token prompt window)
 - **Full memory snapshot** returned in response for user transparency
+- **Step-level progress reporting** via progress_callback for task queue integration
+- **Aligned UI** across both popup and search-tab chat interfaces
 
 ## Architecture
 
@@ -123,15 +125,36 @@ Each insufficient escalation stores a marker in memory:
 
 ## UI Changes
 
-### New Checkbox: Online Crawl Toggle
-Both chat forms (popup and search tab) now include a "🌐 Online Crawl"
-checkbox that is checked by default. Unchecking it disables web crawling
-for that request.
+### Aligned Chat Interfaces
+Both chat forms (popup overlay and search-tab AI Chat mode) now have
+identical capabilities and consistent styling:
+- Larger text areas (4 rows) for complex multi-part questions
+- Description banner explaining multi-step planning, memory, and cancellation
+- Matching green "💬 Ask AI" submit buttons
+- All toggles: 🧩 Planner, 🤖 Auto, 🌐 Online Crawl
+
+### Step-by-Step Plan Visualization
+The response UI now renders each plan step as a detailed card with:
+- Status icon (✅ completed, ❌ failed, ⏭️ skipped, ⏳ pending)
+- Tool name badge, step number, and description
+- Colour-coded borders per status
+- Summary line (e.g. "5 – 3 completed, 1 failed, 1 skipped")
 
 ### Enhanced Memory Display
 The response now includes `memory_snapshot` (full key/value pairs)
 instead of just `memory_keys`. The UI renders each memory entry
-with a preview of its value (up to 200 chars) in a collapsible section.
+with a preview of its value (up to 300 chars) in a collapsible section.
+Insufficient-data markers (`_insufficient_step_N`) are highlighted in red.
+
+### Sources Referenced Section
+All sources consulted during the plan are listed in a collapsible section
+for full transparency of the research path.
+
+### Progress During Execution
+While the task is running (queued execution via task queue):
+- Progress bar shows percentage (5 % → 90 % → 100 %)
+- Step-level messages display tool badges (e.g. "Step 3: reflect findings")
+- Cancel button allows the user to interrupt execution at any time
 
 ### Crawl Disabled Badge
 When crawl is disabled, a "🚫 Crawl Disabled" badge is shown in the
@@ -147,3 +170,17 @@ Every step emits SSE events that appear in the event stream:
 - `plan_cancelled` - User cancelled the task
 - `plan_summarizing` - Final summary being generated
 - `plan_done` - Plan finished with final status
+
+## Task Queue Integration
+
+The task queue handler (`_handle_agent_chat`) now uses the TaskPlanner
+directly instead of legacy `chat_async`. This means queued chat tasks:
+
+1. Use the full multi-step planner with all MCP tools
+2. Pass `task_id` for cooperative cancellation checks at every step
+3. Pass `crawl_enabled` from the user's request
+4. Report step-level progress via `progress_callback` → `tq.update_progress()`
+5. Fall back to legacy `chat_async` only if the planner fails
+
+The `/api/agent/chat` route also passes `crawl_enabled` to the planner
+in both direct (non-queued) and queued execution paths.

@@ -98,13 +98,13 @@
     <div id="chat-search-form-container" class="hidden">
       <div class="p-3 mb-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
         <p class="text-xs text-green-800 dark:text-green-200">
-          <strong>💬 AI Chat Mode</strong> - Deep RAG Chat combines embedding similarity, entity graph traversal, and SQL keyword search with autonomous web crawling if needed.
+          <strong>💬 Multi-Step AI Chat</strong> – Deep RAG with planning, memory, reflection, and optional web crawling. Multi-part questions are broken into sub-tasks automatically. Progress is shown step-by-step and can be cancelled at any time.
         </p>
       </div>
       <form id="search-tab-chat-form" class="space-y-3">
         <label class="space-y-2 text-sm font-medium text-slate-800 dark:text-slate-100">
           Question
-          <textarea id="search-tab-chat-q" rows="3" placeholder="Ask a question about collected intel" class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"></textarea>
+          <textarea id="search-tab-chat-q" rows="4" placeholder="Ask a complex question – multi-step planning will break it into sub-tasks automatically..." class="w-full rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-500 focus:ring-brand-500"></textarea>
         </label>
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="space-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">

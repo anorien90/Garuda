@@ -1,6 +1,8 @@
 import { els } from './config.js';
 import { pill, collapsible } from './ui.js';
 
+const MEMORY_PREVIEW_MAX_CHARS = 300;
+
 export function renderChat(payload, targetEl) {
   const el = targetEl || els.searchTabChatAnswer || els.popupChatAnswer;
   if (!el) return;
@@ -124,17 +126,41 @@ export function renderChat(payload, targetEl) {
     `;
   }
 
-  // Plan steps section (task planner)
+  // Plan steps section (task planner) – detailed timeline
   let planStepsSection = '';
   const planSteps = Array.isArray(payload.plan_steps) ? payload.plan_steps : [];
   if (planSteps.length > 0) {
-    const stepsList = planSteps.map(s => {
+    const completedCount = planSteps.filter(s => s.status === 'completed').length;
+    const failedCount = planSteps.filter(s => s.status === 'failed').length;
+    const skippedCount = planSteps.filter(s => s.status === 'skipped').length;
+
+    const stepsList = planSteps.map((s, idx) => {
       const statusIcon = s.status === 'completed' ? '✅' : s.status === 'failed' ? '❌' : s.status === 'skipped' ? '⏭️' : '⏳';
-      return `<li class="text-xs text-slate-700 dark:text-slate-300">${statusIcon} <strong>${s.tool}</strong>: ${s.description || ''} <span class="text-slate-400">(${s.status})</span></li>`;
+      const toolLabel = (s.tool || '').replace(/_/g, ' ');
+      let borderClass = 'border-slate-200 dark:border-slate-700';
+      if (s.status === 'completed') borderClass = 'border-green-300 dark:border-green-800';
+      else if (s.status === 'failed') borderClass = 'border-rose-300 dark:border-rose-800';
+      else if (s.status === 'skipped') borderClass = 'border-amber-300 dark:border-amber-800';
+      return `<div class="flex items-start gap-2 p-2 rounded border ${borderClass} bg-white/50 dark:bg-slate-800/50">
+        <span class="text-sm leading-none mt-0.5">${statusIcon}</span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-xs font-bold text-slate-800 dark:text-slate-200">Step ${s.step ?? (idx + 1)}</span>
+            <span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">${toolLabel}</span>
+            <span class="text-[10px] text-slate-400">${s.status}</span>
+          </div>
+          ${s.description ? `<p class="text-xs text-slate-600 dark:text-slate-400 mt-0.5 truncate">${s.description}</p>` : ''}
+        </div>
+      </div>`;
     }).join('');
+
+    const summaryLine = `${completedCount} completed` +
+      (failedCount ? `, ${failedCount} failed` : '') +
+      (skippedCount ? `, ${skippedCount} skipped` : '');
+
     planStepsSection = collapsible(
-      `🧩 Plan Steps (${planSteps.length})`,
-      `<ul class="list-none space-y-1 ml-2">${stepsList}</ul>`
+      `🧩 Plan Steps (${planSteps.length} – ${summaryLine})`,
+      `<div class="space-y-1.5 ml-1">${stepsList}</div>`
     );
   }
 
@@ -144,16 +170,36 @@ export function renderChat(payload, targetEl) {
   const memoryKeys = Array.isArray(payload.memory_keys) ? payload.memory_keys : [];
   if (memorySnapshot && Object.keys(memorySnapshot).length > 0) {
     const memoryItems = Object.entries(memorySnapshot).map(([k, v]) => {
-      const valPreview = typeof v === 'string' ? v.slice(0, 200) : JSON.stringify(v).slice(0, 200);
-      return `<div class="mb-1"><span class="inline-block bg-slate-200 dark:bg-slate-700 rounded px-1.5 py-0.5 text-xs font-semibold mr-1">${k}</span><span class="text-xs text-slate-600 dark:text-slate-400">${valPreview}${valPreview.length >= 200 ? '…' : ''}</span></div>`;
+      const isInsufficient = k.startsWith('_insufficient');
+      const keyClass = isInsufficient
+        ? 'bg-rose-200 dark:bg-rose-800 text-rose-900 dark:text-rose-200'
+        : 'bg-slate-200 dark:bg-slate-700';
+      const valPreview = typeof v === 'string' ? v.slice(0, MEMORY_PREVIEW_MAX_CHARS) : JSON.stringify(v).slice(0, MEMORY_PREVIEW_MAX_CHARS);
+      return `<div class="mb-1.5 p-1.5 rounded bg-white/60 dark:bg-slate-800/60">
+        <span class="inline-block ${keyClass} rounded px-1.5 py-0.5 text-xs font-semibold mr-1">${k}</span>
+        <span class="text-xs text-slate-600 dark:text-slate-400 break-all">${valPreview}${valPreview.length >= MEMORY_PREVIEW_MAX_CHARS ? '…' : ''}</span>
+      </div>`;
     }).join('');
     memorySection = collapsible(
       `🗃️ Working Memory (${Object.keys(memorySnapshot).length} entries)`,
-      `<div class="ml-2 space-y-0.5">${memoryItems}</div>`
+      `<div class="ml-1 space-y-0.5">${memoryItems}</div>`
     );
   } else if (memoryKeys.length > 0) {
     const keysList = memoryKeys.map(k => `<span class="inline-block bg-slate-200 dark:bg-slate-700 rounded px-1.5 py-0.5 text-xs mr-1 mb-1">${k}</span>`).join('');
     memorySection = `<div class="text-xs text-slate-500 mt-1">🗃️ Memory: ${keysList}</div>`;
+  }
+
+  // Sources section (from planner)
+  let planSourcesSection = '';
+  const planSources = Array.isArray(payload.sources) ? payload.sources : [];
+  if (planSources.length > 0) {
+    const sourcesList = planSources.map(s =>
+      `<li class="text-xs text-brand-600 dark:text-brand-400 truncate"><a class="underline" href="${s}" target="_blank" rel="noreferrer">${s}</a></li>`
+    ).join('');
+    planSourcesSection = collapsible(
+      `📎 Sources Referenced (${planSources.length})`,
+      `<ul class="list-disc list-inside space-y-0.5 ml-2">${sourcesList}</ul>`
+    );
   }
 
   // Crawl enabled status
@@ -169,6 +215,7 @@ export function renderChat(payload, targetEl) {
     ${paraphrasedSection}
     ${planStepsSection}
     ${memorySection}
+    ${planSourcesSection}
 
     <div class="prose prose-sm dark:prose-invert max-w-none bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg border border-slate-100 dark:border-slate-800">
         <p>${answer.replace(/\n/g, '<br>')}</p>
