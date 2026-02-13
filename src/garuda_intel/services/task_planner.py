@@ -62,6 +62,10 @@ CHARS_PER_TOKEN = 4
 DEFAULT_QUERY_EXPANSION_THRESHOLD = 2
 # Keywords that signal the user wants exhaustive / comprehensive results
 EXHAUSTIVE_KEYWORDS = {"all", "every", "each", "complete", "full", "list", "entire"}
+# Maximum number of query variants to generate
+MAX_QUERY_VARIANTS = 6
+# Maximum number of entities to extract from search results
+MAX_EXTRACTED_ENTITIES = 20
 
 
 class TaskPlanner:
@@ -425,7 +429,7 @@ Rules:
 3. If local data is insufficient, use crawl_external_data (if enabled) with targeted queries
 4. Use store_memory_data to save intermediate results for each sub-task
 5. Only use reflect_findings ONCE near the end, after gathering data for all sub-tasks
-6. Keep the plan concise but THOROUGH (3-15 steps if needed for exhaustive queries)
+6. Keep the plan concise but THOROUGH (3-12 steps if needed for exhaustive queries)
 7. Use search_memory when memory grows large and you need specific entries
 8. Do NOT repeat queries that already failed – try different search terms or approaches
 9. When the user asks for "all", "every", or a complete list of something:
@@ -434,7 +438,7 @@ Rules:
    c. Then search for EACH item individually to get details
    d. Do NOT stop after finding just 1-2 items – cover the full list
    e. Try different search angles (e.g. by name, by category, by related entity)
-   f. Search with MULTIPLE query variations (e.g. "RTX 3000" AND "RTX 3060" AND "RTX 3070" etc.)
+   f. Search with MULTIPLE query variations (e.g. search for "RTX 3000", then "RTX 3060", then "RTX 3070", etc.)
 10. When a direct query finds nothing, ABSTRACT the request:
     e.g. "leaders of Nvidia" → search "Nvidia people", "Nvidia executives", "Nvidia board members",
     "Nvidia CTO", "Nvidia CEO", "Nvidia CFO", etc.
@@ -1548,7 +1552,7 @@ Return ONLY a JSON array of query strings, for example:
                     if vl and vl not in seen:
                         seen.add(vl)
                         unique.append(v.strip() if isinstance(v, str) else v)
-                return unique[:6]
+                return unique[:MAX_QUERY_VARIANTS]
         except Exception as e:
             logger.debug("Query variant generation failed (non-critical): %s", e)
         return [question]
@@ -1593,7 +1597,7 @@ Example: ["RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090"]
             raw = resp.json().get("response", "")
             entities = self.llm.text_processor.safe_json_loads(raw, fallback=[])
             if isinstance(entities, list):
-                return [e for e in entities if isinstance(e, str) and e.strip()][:20]
+                return [e for e in entities if isinstance(e, str) and e.strip()][:MAX_EXTRACTED_ENTITIES]
         except Exception as e:
             logger.debug("Entity list extraction failed (non-critical): %s", e)
         return []
