@@ -811,5 +811,270 @@ class TestPlanEvaluationPrompt:
         assert "1-2 items" in prompt.lower() or "not sufficient" in prompt.lower()
 
 
+# ---------------------------------------------------------------------------
+# Exhaustive query detection
+# ---------------------------------------------------------------------------
+
+class TestExhaustiveQueryDetection:
+    """Test _is_exhaustive_query for detecting 'all/every/list' type queries."""
+
+    def test_all_keyword(self):
+        assert TaskPlanner._is_exhaustive_query("Show me all Nvidia GPUs") is True
+
+    def test_every_keyword(self):
+        assert TaskPlanner._is_exhaustive_query("List every leader of Nvidia") is True
+
+    def test_list_keyword(self):
+        assert TaskPlanner._is_exhaustive_query("Give me a list of RTX 3000 models") is True
+
+    def test_complete_keyword(self):
+        assert TaskPlanner._is_exhaustive_query("I need the complete specs") is True
+
+    def test_no_exhaustive_keyword(self):
+        assert TaskPlanner._is_exhaustive_query("Who is the CEO of Nvidia?") is False
+
+    def test_case_insensitive(self):
+        assert TaskPlanner._is_exhaustive_query("Show me ALL RTX GPUs") is True
+
+
+# ---------------------------------------------------------------------------
+# Query variant generation
+# ---------------------------------------------------------------------------
+
+class TestQueryVariantGeneration:
+    """Test _generate_query_variants for multi-angle search."""
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_generates_variants(self, mock_post):
+        """LLM should return a list of query variants."""
+        variants = ["RTX 3000 series", "RTX 3060 specs", "RTX 3070 price"]
+        mock_post.return_value = _mock_llm_resp(json.dumps(variants))
+
+        planner = _make_planner()
+        result = planner._generate_query_variants("RTX 3000 details", "Nvidia")
+
+        assert len(result) >= 2
+        # Original query should be included
+        assert any("RTX 3000" in v for v in result)
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_fallback_on_failure(self, mock_post):
+        """On LLM failure, should return the original query."""
+        mock_post.side_effect = Exception("LLM timeout")
+
+        planner = _make_planner()
+        result = planner._generate_query_variants("RTX 3000 details", "Nvidia")
+
+        assert result == ["RTX 3000 details"]
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_deduplicates_variants(self, mock_post):
+        """Variants should be deduplicated."""
+        variants = ["RTX 3000", "RTX 3000", "rtx 3000", "RTX 3060"]
+        mock_post.return_value = _mock_llm_resp(json.dumps(variants))
+
+        planner = _make_planner()
+        result = planner._generate_query_variants("RTX 3000", "Nvidia")
+
+        lowered = [v.lower() for v in result]
+        assert len(lowered) == len(set(lowered))
+
+
+# ---------------------------------------------------------------------------
+# Entity list extraction from results
+# ---------------------------------------------------------------------------
+
+class TestEntityListExtraction:
+    """Test _extract_entity_list_from_results."""
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_extracts_entities(self, mock_post):
+        """Should extract entity names from search result snippets."""
+        mock_post.return_value = _mock_llm_resp(
+            json.dumps(["RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090"])
+        )
+
+        planner = _make_planner()
+        hits = [
+            {"snippet": "The RTX 3060, RTX 3070, RTX 3080, and RTX 3090 are part of the RTX 3000 series."},
+        ]
+        result = planner._extract_entity_list_from_results(hits, "Show me all RTX 3000 GPUs")
+
+        assert len(result) >= 3
+        assert "RTX 3060" in result
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_returns_empty_on_failure(self, mock_post):
+        """On LLM failure, should return empty list."""
+        mock_post.side_effect = Exception("timeout")
+
+        planner = _make_planner()
+        result = planner._extract_entity_list_from_results(
+            [{"snippet": "some text"}], "query"
+        )
+        assert result == []
+
+    def test_returns_empty_for_no_hits(self):
+        planner = _make_planner()
+        result = planner._extract_entity_list_from_results([], "query")
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Search expansion in execute_step
+# ---------------------------------------------------------------------------
+
+class TestSearchExpansion:
+    """Test that exhaustive queries trigger query expansion and entity extraction."""
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_exhaustive_query_triggers_expansion(self, mock_post):
+        """For 'all' queries with sparse results, query expansion should run."""
+        # LLM calls: generate_query_variants, extract_entity_list
+        mock_post.side_effect = [
+            _mock_llm_resp(json.dumps(["RTX 3060", "RTX 3070 specs"])),  # variants
+            _mock_llm_resp(json.dumps(["RTX 3060", "RTX 3070"])),  # entity extraction
+        ]
+
+        planner = _make_planner()
+        # Mock search to return 1 hit (below threshold)
+        planner.vector_store.search.return_value = []
+        planner.store.search_intel.return_value = [
+            {"url": "http://example.com/gpu", "snippet": "RTX 3060 is great", "score": 0.8},
+        ]
+
+        memory: dict = {}
+        step = {
+            "tool": "search_local_data",
+            "input": {"query": "all RTX 3000 GPUs"},
+            "status": "pending",
+        }
+        result = planner._execute_step(
+            step, "Show me all RTX 3000 GPUs", "", memory, 6, "plan-1", 1
+        )
+
+        assert result["status"] == "completed"
+        # Memory should contain discovered entities
+        assert "_discovered_entities" in memory
+
+    def test_non_exhaustive_query_skips_expansion(self):
+        """Non-exhaustive queries should not trigger query expansion."""
+        planner = _make_planner()
+        planner.vector_store.search.return_value = []
+        planner.store.search_intel.return_value = []
+
+        memory: dict = {}
+        step = {
+            "tool": "search_local_data",
+            "input": {"query": "CEO of Nvidia"},
+            "status": "pending",
+        }
+        result = planner._execute_step(
+            step, "Who is the CEO of Nvidia?", "", memory, 6, "plan-1", 1
+        )
+
+        assert result["status"] == "completed"
+        # No entity extraction for non-exhaustive queries
+        assert "_discovered_entities" not in memory
+
+
+# ---------------------------------------------------------------------------
+# Reflect with exhaustive query context
+# ---------------------------------------------------------------------------
+
+class TestReflectExhaustive:
+    """Test that reflect_findings is aware of exhaustive query requirements."""
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_reflect_prompt_mentions_discovered_entities(self, mock_post):
+        """When discovered entities exist, reflect prompt should mention them."""
+        mock_post.return_value = _mock_llm_resp(
+            json.dumps({"sufficient": False, "summary": "partial", "missing": ["RTX 3080"], "next_action": "search"})
+        )
+
+        planner = _make_planner()
+        memory = {
+            "search_results": [{"name": "RTX 3060"}],
+            "_discovered_entities": ["RTX 3060", "RTX 3070", "RTX 3080"],
+        }
+        planner._tool_reflect("search_results", memory, "Show me all RTX 3000 GPUs")
+
+        call_args = mock_post.call_args
+        prompt = call_args[1]["json"]["prompt"]
+        assert "discovered entities" in prompt.lower() or "_discovered_entities" in prompt
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_reflect_prompt_warns_about_exhaustive(self, mock_post):
+        """For exhaustive queries, reflect should warn about comprehensive coverage."""
+        mock_post.return_value = _mock_llm_resp(
+            json.dumps({"sufficient": False, "summary": "need more", "missing": [], "next_action": "search"})
+        )
+
+        planner = _make_planner()
+        memory = {"search_results": [{"name": "RTX 3060"}]}
+        planner._tool_reflect("search_results", memory, "Show me all RTX 3000 GPUs")
+
+        call_args = mock_post.call_args
+        prompt = call_args[1]["json"]["prompt"]
+        assert "all" in prompt.lower() or "comprehensive" in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# Plan creation with discovered entities
+# ---------------------------------------------------------------------------
+
+class TestPlanCreationWithEntities:
+    """Test that plan creation uses discovered entities."""
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_plan_prompt_includes_discovered_entities(self, mock_post):
+        """When memory has _discovered_entities, plan prompt should mention them."""
+        plan_json = json.dumps([
+            {"tool": "search_local_data", "input": {"query": "RTX 3060"}, "description": "Search RTX 3060"},
+        ])
+        mock_post.return_value = _mock_llm_resp(plan_json)
+
+        planner = _make_planner()
+        memory = {"_discovered_entities": ["RTX 3060", "RTX 3070", "RTX 3080"]}
+        result = planner._tool_create_plan(
+            "Show me all RTX 3000 GPUs",
+            "Nvidia",
+            memory,
+            [],
+        )
+
+        call_args = mock_post.call_args
+        prompt = call_args[1]["json"]["prompt"]
+        assert "RTX 3060" in prompt
+        assert "RTX 3070" in prompt
+        assert "EACH entity" in prompt or "each entity" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Final summary for exhaustive queries
+# ---------------------------------------------------------------------------
+
+class TestFinalSummaryExhaustive:
+    """Test final summary prompt improvements."""
+
+    @patch("garuda_intel.services.task_planner.requests.post")
+    def test_summary_prompt_requests_comprehensive_output(self, mock_post):
+        """Final summary should instruct LLM to present every entity found."""
+        mock_post.return_value = _mock_llm_resp("Here are all the GPUs found...")
+
+        planner = _make_planner()
+        planner._final_summary(
+            "Show me all RTX 3000 GPUs",
+            {"search_results": [{"name": "RTX 3060"}]},
+            [{"status": "completed"}],
+            ["https://example.com"],
+        )
+
+        call_args = mock_post.call_args
+        prompt = call_args[1]["json"]["prompt"]
+        assert "every" in prompt.lower() or "every entity" in prompt.lower()
+        assert "deduplicate" in prompt.lower() or "combine" in prompt.lower()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

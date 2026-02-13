@@ -58,6 +58,14 @@ DEFAULT_MAX_CONSECUTIVE_INSUFFICIENT = 3
 STEP_PATTERN_QDRANT_PREFIX = "step_pattern_"
 # Rough chars-per-token factor (conservative for English text)
 CHARS_PER_TOKEN = 4
+# Minimum hits before query expansion kicks in for exhaustive queries
+DEFAULT_QUERY_EXPANSION_THRESHOLD = 2
+# Keywords that signal the user wants exhaustive / comprehensive results
+EXHAUSTIVE_KEYWORDS = {"all", "every", "each", "complete", "full", "list", "entire"}
+# Maximum number of query variants to generate
+MAX_QUERY_VARIANTS = 6
+# Maximum number of entities to extract from search results
+MAX_EXTRACTED_ENTITIES = 20
 
 
 class TaskPlanner:
@@ -392,12 +400,24 @@ class TaskPlanner:
                 "Try this approach first, but adapt if needed.\n"
             )
 
+        # Build a note about already-discovered entities so the planner
+        # can generate individual look-up steps for each one.
+        discovered_note = ""
+        discovered = memory.get("_discovered_entities", [])
+        if discovered:
+            discovered_note = (
+                f"\nDiscovered entities to look up individually: {json.dumps(discovered[:20], ensure_ascii=False)}\n"
+                "Create a search_local_data step for EACH entity above to get its details "
+                "(price, specs, role, etc.).\n"
+            )
+
         prompt = f"""You are a task planner. Given the user request and context, create a step-by-step plan 
 using ONLY the tools listed below. Return ONLY a JSON array of step objects.
 
 {tools_desc}
 {pattern_hint}
 {insufficient_note}
+{discovered_note}
 User request: "{question}"
 Entity context: "{entity}"
 Current memory: {memory_summary}
@@ -409,7 +429,7 @@ Rules:
 3. If local data is insufficient, use crawl_external_data (if enabled) with targeted queries
 4. Use store_memory_data to save intermediate results for each sub-task
 5. Only use reflect_findings ONCE near the end, after gathering data for all sub-tasks
-6. Keep the plan concise (3-8 steps)
+6. Keep the plan concise but THOROUGH (3-12 steps if needed for exhaustive queries)
 7. Use search_memory when memory grows large and you need specific entries
 8. Do NOT repeat queries that already failed – try different search terms or approaches
 9. When the user asks for "all", "every", or a complete list of something:
@@ -418,6 +438,12 @@ Rules:
    c. Then search for EACH item individually to get details
    d. Do NOT stop after finding just 1-2 items – cover the full list
    e. Try different search angles (e.g. by name, by category, by related entity)
+   f. Search with MULTIPLE query variations (e.g. search for "RTX 3000", then "RTX 3060", then "RTX 3070", etc.)
+10. When a direct query finds nothing, ABSTRACT the request:
+    e.g. "leaders of Nvidia" → search "Nvidia people", "Nvidia executives", "Nvidia board members",
+    "Nvidia CTO", "Nvidia CEO", "Nvidia CFO", etc.
+11. Correct likely typos in user queries (e.g. "RXT" → "RTX")
+12. If memory contains _discovered_entities, create search steps for EACH entity in that list
 
 Return JSON array:
 [{{"tool": "<tool_name>", "input": {{"<param>": "<value>"}}, "description": "..."}}]
@@ -586,11 +612,33 @@ Return JSON array:
         data = memory.get(data_key, memory)
         data_str = json.dumps(data, ensure_ascii=False, default=str)[:4000]
 
+        # Include info about discovered but not yet looked-up entities
+        discovered = memory.get("_discovered_entities", [])
+        entity_note = ""
+        if discovered:
+            entity_note = (
+                f"\nDiscovered entities still needing individual look-up: "
+                f"{json.dumps(discovered[:20], ensure_ascii=False)}\n"
+                "If these have not all been searched for details yet, data is NOT sufficient.\n"
+            )
+
+        is_exhaustive = self._is_exhaustive_query(question)
+        exhaustive_note = ""
+        if is_exhaustive:
+            exhaustive_note = (
+                "\nIMPORTANT: The user asked for ALL/EVERY/COMPLETE data. "
+                "Only mark as sufficient if the data covers a COMPREHENSIVE set of entities, "
+                "not just 1-2 examples. If you see a partial list (e.g. only some GPU models "
+                "or only one leader), mark as insufficient and suggest searching for the rest. "
+                "Recommend SPECIFIC alternative search queries to fill gaps.\n"
+            )
+
         prompt = f"""Analyse the following data gathered for the user question and determine:
 1. Is there enough information to answer the question?
 2. What is missing?
 3. What should be done next?
-
+{exhaustive_note}
+{entity_note}
 User question: "{question}"
 Data:
 {data_str}
@@ -767,6 +815,47 @@ If more data is needed, return:
             if tool == "search_local_data":
                 q = tool_input.get("query", question)
                 result = self._tool_search_local(q, top_k, entity)
+                all_hits = list(result.get("hits", []))
+                all_sources = list(result.get("sources", []))
+
+                # --- Query expansion for exhaustive queries ---
+                # When the user asks for "all/every/list" and initial results
+                # are sparse, automatically search with variant queries to
+                # gather data from multiple angles.
+                is_exhaustive = self._is_exhaustive_query(question)
+                hit_count = result.get("count", 0)
+                if is_exhaustive and hit_count < DEFAULT_QUERY_EXPANSION_THRESHOLD:
+                    variants = self._generate_query_variants(question, entity)
+                    for vq in variants:
+                        if vq.strip().lower() == q.strip().lower():
+                            continue
+                        vr = self._tool_search_local(vq, top_k, entity)
+                        for h in vr.get("hits", []):
+                            url = h.get("url", "")
+                            if url and any(eh.get("url") == url for eh in all_hits):
+                                continue
+                            all_hits.append(h)
+                        all_sources.extend(
+                            s for s in vr.get("sources", []) if s not in all_sources
+                        )
+                    result = {"hits": all_hits, "sources": all_sources, "count": len(all_hits)}
+
+                # --- Entity list extraction ---
+                # When results contain a list of entities (e.g. GPU names,
+                # person names), extract them so the planner can look up
+                # details for each one individually.
+                if is_exhaustive and all_hits:
+                    entities_found = self._extract_entity_list_from_results(all_hits, question)
+                    if entities_found:
+                        self._tool_store_memory(
+                            memory, "_discovered_entities", entities_found
+                        )
+                        logger.info(
+                            "Extracted %d entities for follow-up: %s",
+                            len(entities_found),
+                            entities_found[:5],
+                        )
+
                 output = result
                 step_sources = result.get("sources", [])
                 step_context = result.get("hits", [])
@@ -898,9 +987,13 @@ Steps executed: {len(history)}
 
 Instructions:
 1. Answer the question as completely as possible using the data above.
-2. If data is insufficient, clearly state what is missing.
+2. If data is insufficient, clearly state what is missing BUT still present
+   every piece of relevant data you DO have – do not dismiss partial data.
 3. Include references to sources where available.
 4. Do NOT fabricate information.
+5. When the user asked for "all" or a comprehensive list, present EVERY entity
+   and detail found in memory, organized clearly (e.g. per item/person/model).
+6. Combine and deduplicate information gathered from multiple search angles.
 """
         try:
             payload = {"model": self.llm.model, "prompt": prompt, "stream": False}
@@ -1417,3 +1510,94 @@ Return ONLY the generalized task description as a plain string (no JSON).
         if len(text) <= max_chars:
             return text
         return text[:max_chars] + "… [truncated]"
+
+    # -----------------------------------------------------------------------
+    # Query expansion & exhaustive search helpers
+    # -----------------------------------------------------------------------
+    @staticmethod
+    def _is_exhaustive_query(question: str) -> bool:
+        """Return True when the user's question signals they want ALL results."""
+        words = set(question.lower().split())
+        return bool(words & EXHAUSTIVE_KEYWORDS)
+
+    def _generate_query_variants(self, question: str, entity: str) -> List[str]:
+        """Generate multiple rephrased / broadened search queries.
+
+        This prevents early escape by ensuring the planner searches from
+        several angles rather than relying on a single query.
+        """
+        prompt = f"""Generate 3-5 different search queries that could help answer the
+following user question. Each query should approach the topic from a different
+angle (e.g. broader category, specific sub-items, related terms, alternative
+phrasing, corrected typos).
+
+User question: "{question}"
+Entity context: "{entity}"
+
+Return ONLY a JSON array of query strings, for example:
+["query 1", "query 2", "query 3"]
+"""
+        try:
+            payload = {"model": self.llm.model, "prompt": prompt, "stream": False}
+            resp = requests.post(self.llm.ollama_url, json=payload, timeout=30)
+            resp.raise_for_status()
+            raw = resp.json().get("response", "")
+            variants = self.llm.text_processor.safe_json_loads(raw, fallback=[])
+            if isinstance(variants, list) and variants:
+                # Deduplicate & always include original
+                seen: set = set()
+                unique: List[str] = []
+                for v in [question] + variants:
+                    vl = v.strip().lower() if isinstance(v, str) else ""
+                    if vl and vl not in seen:
+                        seen.add(vl)
+                        unique.append(v.strip() if isinstance(v, str) else v)
+                return unique[:MAX_QUERY_VARIANTS]
+        except Exception as e:
+            logger.debug("Query variant generation failed (non-critical): %s", e)
+        return [question]
+
+    def _extract_entity_list_from_results(
+        self,
+        hits: List[Dict[str, Any]],
+        question: str,
+    ) -> List[str]:
+        """Ask the LLM to extract a list of entity names from search results.
+
+        When the user asks for "all X", the first search often returns a page
+        that *lists* many entities (e.g. GPU model names) but without details.
+        This helper extracts those names so the planner can search for each one
+        individually.
+        """
+        if not hits:
+            return []
+
+        snippets = "\n".join(
+            h.get("snippet", "")[:300] for h in hits[:10] if h.get("snippet")
+        )
+        if not snippets.strip():
+            return []
+
+        prompt = f"""Extract a list of distinct entity names mentioned in the following search
+results that are relevant to the user question. These could be product names,
+person names, organization names, etc.
+
+User question: "{question}"
+
+Search result snippets:
+{snippets}
+
+Return ONLY a JSON array of entity name strings. If no entities are found, return [].
+Example: ["RTX 3060", "RTX 3070", "RTX 3080", "RTX 3090"]
+"""
+        try:
+            payload = {"model": self.llm.model, "prompt": prompt, "stream": False}
+            resp = requests.post(self.llm.ollama_url, json=payload, timeout=30)
+            resp.raise_for_status()
+            raw = resp.json().get("response", "")
+            entities = self.llm.text_processor.safe_json_loads(raw, fallback=[])
+            if isinstance(entities, list):
+                return [e for e in entities if isinstance(e, str) and e.strip()][:MAX_EXTRACTED_ENTITIES]
+        except Exception as e:
+            logger.debug("Entity list extraction failed (non-critical): %s", e)
+        return []
