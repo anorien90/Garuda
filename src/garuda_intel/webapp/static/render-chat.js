@@ -294,11 +294,10 @@ export function renderChat(payload, targetEl) {
       // Disable both buttons immediately
       container.querySelectorAll('.chat-feedback-btn').forEach(b => { b.disabled = true; });
       try {
-        const res = await fetchWithAuth('/api/agent/chat/feedback', {
+        await fetchWithAuth('/api/agent/chat/feedback', {
           method: 'POST',
           body: JSON.stringify({ plan_id: planId, rating }),
         });
-        const data = await res.json();
         container.innerHTML = rating === 'up'
           ? '<span class="text-xs text-green-600 dark:text-green-400">👍 Thanks for the feedback!</span>'
           : '<span class="text-xs text-rose-600 dark:text-rose-400">👎 Thanks – we\'ll improve!</span>';

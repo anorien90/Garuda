@@ -859,9 +859,11 @@ If more data is needed, return:
                 # been looked up.  This prevents the planner from
                 # re-searching entities that are already in memory.
                 searched: list = list(memory.get("_searched_entities", []))
+                searched_lower = {s.lower() for s in searched}
                 q_norm = q.strip().lower()
-                if q_norm and q_norm not in [s.lower() for s in searched]:
+                if q_norm and q_norm not in searched_lower:
                     searched.append(q.strip())
+                    searched_lower.add(q_norm)
                     self._tool_store_memory(memory, "_searched_entities", searched)
 
                 # --- Entity list extraction ---
@@ -874,16 +876,9 @@ If more data is needed, return:
                         # Merge with already-discovered entities and filter
                         # out any that have already been searched.
                         existing_discovered = set(memory.get("_discovered_entities", []))
-                        searched_lower = {s.lower() for s in searched}
-                        new_entities = [
-                            e for e in entities_found
-                            if e not in existing_discovered
-                            and e.lower() not in searched_lower
-                        ]
-                        merged = list(existing_discovered | set(new_entities))
-                        # Only keep entities that haven't been searched yet
+                        all_candidates = existing_discovered | set(entities_found)
                         pending = [
-                            e for e in merged
+                            e for e in all_candidates
                             if e.lower() not in searched_lower
                         ]
                         self._tool_store_memory(
