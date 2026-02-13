@@ -74,7 +74,7 @@ class QAValidator:
             total_conf += conf
             count += 1
 
-        avg_conf = total_conf / count if count else 0.0
+        avg_conf = total_conf / count
         return any_verified, avg_conf
 
     # ------------------------------------------------------------------

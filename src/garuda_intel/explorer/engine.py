@@ -822,6 +822,14 @@ class IntelligentExplorer:
 
         with session_maker() as session:
             for snippet in snippets:
+                try:
+                    pid = _uuid.UUID(page_uuid) if page_uuid else None
+                except (ValueError, AttributeError):
+                    pid = None
+                try:
+                    eid = _uuid.UUID(entity_id) if entity_id else None
+                except (ValueError, AttributeError):
+                    eid = None
                 row = SemanticSnippet(
                     id=_uuid.uuid4(),
                     text=snippet.text,
@@ -830,8 +838,8 @@ class IntelligentExplorer:
                     next_context=snippet.next_context,
                     topic_context=snippet.topic_context,
                     source_url=snippet.source_url,
-                    page_id=_uuid.UUID(page_uuid) if page_uuid else None,
-                    entity_id=_uuid.UUID(entity_id) if entity_id else None,
+                    page_id=pid,
+                    entity_id=eid,
                     entity_refs_json=snippet.entity_refs,
                 )
                 session.add(row)
