@@ -852,6 +852,7 @@ class AgentService:
                     try:
                         vector_results = self.vector_store.search(vec, top_k=top_k * 2)
                         for r in vector_results:
+                            payload_data = r.payload.get("data") or {}
                             result["embedding_results"].append({
                                 "source": "embedding",
                                 "score": r.score,
@@ -859,12 +860,25 @@ class AgentService:
                                 "text": r.payload.get("text"),
                                 "entity": r.payload.get("entity"),
                                 "kind": r.payload.get("kind"),
-                                "page_id": r.payload.get("page_id"),
-                                "entity_id": r.payload.get("entity_id"),
+                                "page_id": r.payload.get("sql_page_id") or r.payload.get("page_id"),
+                                "entity_id": r.payload.get("sql_entity_id") or r.payload.get("entity_id"),
+                                "source_url": r.payload.get("url"),
+                                "data": payload_data,
+                                "entity_refs": payload_data.get("entity_refs"),
                             })
                         result["statistics"]["embedding_hits"] = len(result["embedding_results"])
                     except Exception as e:
                         self.logger.warning(f"Embedding search failed: {e}")
+            
+            # Step 1b: Expand snippet windows for thin hits
+            if self.store and result["embedding_results"]:
+                try:
+                    from ..search.snippet_expander import expand_snippet_hits
+                    result["embedding_results"] = expand_snippet_hits(
+                        result["embedding_results"], self.store
+                    )
+                except Exception as e:
+                    self.logger.debug(f"Snippet expansion in multidim search: {e}")
             
             # Step 2: Graph-based search (entity traversal)
             if include_graph:

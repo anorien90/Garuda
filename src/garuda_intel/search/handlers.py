@@ -62,9 +62,17 @@ def handle_intel(args):
                 "sql_intel_id": r.payload.get("sql_intel_id"),
                 "sql_entity_id": r.payload.get("sql_entity_id"),
                 "sql_page_id": r.payload.get("sql_page_id"),
+                "source_url": r.payload.get("url"),
+                "entity_refs": (r.payload.get("data") or {}).get("entity_refs"),
             }
             for r in results
         ]
+        # Expand thin snippet windows
+        try:
+            from .snippet_expander import expand_snippet_hits
+            hits = expand_snippet_hits(hits, store)
+        except Exception:
+            pass
         if args.semantic_kind == "entity" and args.entity_name:
             hits = _filter_by_entity_name(hits, args.entity_name)
 
@@ -140,13 +148,27 @@ def perform_rag_search(query, store, v_store, llm):
     if q_vec and v_store:
         try:
             hits = v_store.search(q_vec, top_k=5)
-            context_hits.extend([{"url": h.payload.get("url"), "snippet": h.payload.get("text", "")} for h in hits])
+            context_hits.extend([{
+                "url": h.payload.get("url"),
+                "snippet": h.payload.get("text", ""),
+                "kind": h.payload.get("kind", "unknown"),
+                "data": h.payload.get("data") or {},
+                "page_id": h.payload.get("sql_page_id"),
+                "source_url": h.payload.get("url"),
+            } for h in hits])
         except Exception as e:
             logging.debug(f"Vector search failed: {e}")
 
     # 2. SQL Keyword Search
     for term in search_terms:
         context_hits.extend(store.search_intel(term))
+
+    # 3. Expand thin snippet windows
+    try:
+        from .snippet_expander import expand_snippet_hits
+        context_hits = expand_snippet_hits(context_hits, store)
+    except Exception:
+        pass
     
     return llm.synthesize_answer(query, context_hits)
 
@@ -270,9 +292,17 @@ def handle_run(args, return_result: bool = False):
                 "sql_intel_id": r.payload.get("sql_intel_id"),
                 "sql_entity_id": r.payload.get("sql_entity_id"),
                 "sql_page_id": r.payload.get("sql_page_id"),
+                "source_url": r.payload.get("url"),
+                "entity_refs": (r.payload.get("data") or {}).get("entity_refs"),
             }
             for r in results
         ]
+        # Expand thin snippet windows
+        try:
+            from .snippet_expander import expand_snippet_hits
+            hits = expand_snippet_hits(hits, store)
+        except Exception:
+            pass
         if args.semantic_kind == "entity" and args.entity_name:
             hits = _filter_by_entity_name(hits, args.entity_name)
         if args.semantic_kind == "entity":

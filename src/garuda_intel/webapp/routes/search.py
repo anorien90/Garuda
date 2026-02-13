@@ -123,12 +123,20 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                             "text": r.payload.get("text"),
                             "snippet": r.payload.get("text"),
                             "data": r.payload.get("data"),
-                            "sql_page_id": r.payload.get("page_id"),
-                            "sql_entity_id": r.payload.get("entity_id"),
-                            "sql_intel_id": r.payload.get("intel_id"),
+                            "sql_page_id": r.payload.get("sql_page_id") or r.payload.get("page_id"),
+                            "sql_entity_id": r.payload.get("sql_entity_id") or r.payload.get("entity_id"),
+                            "sql_intel_id": r.payload.get("sql_intel_id") or r.payload.get("intel_id"),
+                            "source_url": r.payload.get("url"),
+                            "entity_refs": (r.payload.get("data") or {}).get("entity_refs"),
                         }
                         for r in results
                     ]
+                    # Expand thin snippet windows
+                    try:
+                        from ...search.snippet_expander import expand_snippet_hits
+                        semantic_hits = expand_snippet_hits(semantic_hits, store)
+                    except Exception:
+                        pass
                     emit_event("semantic_search", f"vector search found {len(semantic_hits)} results")
                 else:
                     emit_event("semantic_search", "embedding generation failed", level="warning")
@@ -311,6 +319,9 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             """
             Gather context hits with RAG-first approach.
             
+            Includes semantic-snippet hits and expands thin snippet windows
+            by fetching neighbouring snippets from the database.
+            
             Args:
                 q: Query string
                 limit: Maximum number of results per source
@@ -341,6 +352,10 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                                 "source": "rag",
                                 "kind": r.payload.get("kind", "unknown"),
                                 "entity": r.payload.get("entity", ""),
+                                "data": r.payload.get("data") or {},
+                                "page_id": r.payload.get("sql_page_id"),
+                                "source_url": r.payload.get("url"),
+                                "entity_refs": (r.payload.get("data") or {}).get("entity_refs"),
                             }
                             for r in vector_results
                         ]
@@ -354,6 +369,29 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             else:
                 emit_event("chat", "RAG unavailable - vector store not configured", level="warning")
             
+            # Step 1b: SQL snippet search (semantic_snippets table)
+            snippet_sql_hits = []
+            try:
+                snippet_results = store.search_snippets(keyword=q, limit=limit)
+                for r in snippet_results:
+                    snippet_sql_hits.append({
+                        "url": r.get("source_url", ""),
+                        "snippet": r.get("text", ""),
+                        "score": 0,
+                        "source": "snippet_sql",
+                        "kind": "semantic-snippet",
+                        "entity": "",
+                        "data": r,
+                        "page_id": r.get("page_id"),
+                        "source_url": r.get("source_url"),
+                        "entity_refs": r.get("entity_refs"),
+                    })
+                if snippet_sql_hits:
+                    emit_event("chat", f"Snippet SQL found {len(snippet_sql_hits)} results",
+                             payload={"count": len(snippet_sql_hits)})
+            except Exception as e:
+                logger.debug(f"Snippet SQL search failed: {e}")
+
             # Step 2: Get SQL/keyword results as fallback/supplement
             try:
                 sql_hits = store.search_intel(keyword=q, limit=limit)
@@ -418,6 +456,7 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             # Step 3: Merge and prioritize results from all sources
             all_hits = []
             all_hits.extend(vec_hits)
+            all_hits.extend(snippet_sql_hits)
             all_hits.extend(graph_hits)
             all_hits.extend(sql_hits)
 
@@ -438,11 +477,19 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
             merged.sort(key=lambda x: float(x.get("score", 0) or 0), reverse=True)
             merged = merged[:limit]
 
+            # Step 4: Expand thin snippet windows in both directions
+            try:
+                from ...search.snippet_expander import expand_snippet_hits
+                merged = expand_snippet_hits(merged, store)
+            except Exception as e:
+                logger.debug(f"Snippet expansion failed: {e}")
+
             emit_event("chat", "Deep RAG results merged",
                      payload={
                          "rag_count": len([h for h in merged if h.get("source") == "rag"]),
                          "graph_count": len([h for h in merged if h.get("source") == "graph"]),
                          "sql_count": len([h for h in merged if h.get("source") == "sql"]),
+                         "snippet_count": len([h for h in merged if h.get("source") == "snippet_sql"]),
                          "total": len(merged),
                      })
 

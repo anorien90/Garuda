@@ -45,3 +45,33 @@ class PersistenceStore(abc.ABC):
     def mark_visited(self, url: str): ...
     @abc.abstractmethod
     def has_visited(self, url: str) -> bool: ...
+
+    # -- Semantic snippet helpers ------------------------------------------
+
+    def search_snippets(self, keyword: str, limit: int = 20) -> List[Dict]:
+        """Keyword search over the semantic_snippets table.
+
+        Default implementation returns an empty list so that stores without
+        snippet support continue to work.
+        """
+        return []
+
+    def get_neighbouring_snippets(
+        self,
+        page_id: str,
+        chunk_index: int,
+        direction: str = "both",
+        window: int = 2,
+    ) -> List[Dict]:
+        """Fetch neighbouring snippets by *page_id* and *chunk_index*.
+
+        Args:
+            page_id: The page UUID that owns the snippets.
+            chunk_index: The centre snippet's index.
+            direction: ``'prev'``, ``'next'``, or ``'both'``.
+            window: How many extra snippets to fetch in each direction.
+
+        Returns:
+            List of snippet dicts ordered by ``chunk_index``.
+        """
+        return []

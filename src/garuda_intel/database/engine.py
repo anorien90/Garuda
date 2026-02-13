@@ -1684,3 +1684,57 @@ class SQLAlchemyStore(PersistenceStore):
         except Exception as e:
             self.logger.error(f"get_entity_clusters failed: {e}")
             return []
+
+    # ------------------------------------------------------------------
+    # Semantic snippet helpers
+    # ------------------------------------------------------------------
+
+    def search_snippets(self, keyword: str, limit: int = 20) -> List[Dict]:
+        """Full-text keyword search over semantic_snippets."""
+        from .models import SemanticSnippet
+
+        kw_like = f"%{keyword}%"
+        with self.Session() as s:
+            stmt = (
+                select(SemanticSnippet)
+                .where(SemanticSnippet.text.ilike(kw_like))
+                .order_by(SemanticSnippet.created_at.desc())
+                .limit(limit)
+            )
+            rows = s.execute(stmt).scalars().all()
+            return [r.to_dict() for r in rows]
+
+    def get_neighbouring_snippets(
+        self,
+        page_id: str,
+        chunk_index: int,
+        direction: str = "both",
+        window: int = 2,
+    ) -> List[Dict]:
+        """Return snippets adjacent to *chunk_index* on the same page."""
+        from .models import SemanticSnippet
+
+        with self.Session() as s:
+            conditions = [SemanticSnippet.page_id == page_id]
+            if direction == "prev":
+                conditions.append(SemanticSnippet.chunk_index.between(
+                    chunk_index - window, chunk_index - 1
+                ))
+            elif direction == "next":
+                conditions.append(SemanticSnippet.chunk_index.between(
+                    chunk_index + 1, chunk_index + window
+                ))
+            else:  # both
+                conditions.append(SemanticSnippet.chunk_index.between(
+                    chunk_index - window, chunk_index + window
+                ))
+                # exclude the centre snippet itself
+                conditions.append(SemanticSnippet.chunk_index != chunk_index)
+
+            stmt = (
+                select(SemanticSnippet)
+                .where(*conditions)
+                .order_by(SemanticSnippet.chunk_index)
+            )
+            rows = s.execute(stmt).scalars().all()
+            return [r.to_dict() for r in rows]
