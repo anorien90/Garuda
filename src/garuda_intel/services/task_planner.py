@@ -412,6 +412,12 @@ Rules:
 6. Keep the plan concise (3-8 steps)
 7. Use search_memory when memory grows large and you need specific entries
 8. Do NOT repeat queries that already failed – try different search terms or approaches
+9. When the user asks for "all", "every", or a complete list of something:
+   a. First search broadly to discover what items/entities exist
+   b. Store the discovered list to memory
+   c. Then search for EACH item individually to get details
+   d. Do NOT stop after finding just 1-2 items – cover the full list
+   e. Try different search angles (e.g. by name, by category, by related entity)
 
 Return JSON array:
 [{{"tool": "<tool_name>", "input": {{"<param>": "<value>"}}, "description": "..."}}]
@@ -702,6 +708,16 @@ Memory (collected data):
 {memory_str}
 Steps completed: {len(steps_done)}
 
+IMPORTANT evaluation rules:
+- If the question asks for "all", "every", or "list" of something, you MUST verify that the
+  data covers a COMPREHENSIVE set of entities, not just one or two examples.
+- Finding only 1-2 items when the user asked for "all" is NOT sufficient.
+  Return done=false and explain what categories or items are still missing.
+- If the data contains a partial list (e.g. names without details), request
+  detail-gathering for each listed item before declaring done.
+- Only return done=true when the answer would satisfy someone who explicitly
+  asked for comprehensive / exhaustive coverage.
+
 If there is enough information to compose a final answer, return:
 {{"done": true, "answer": "<your synthesized answer using the data in memory>"}}
 
@@ -984,18 +1000,14 @@ Instructions:
                 if vec:
                     point_id = str(uuid.uuid4())
                     self.vector_store.upsert(
-                        [
-                            {
-                                "id": point_id,
-                                "vector": vec,
-                                "payload": {
-                                    "kind": "step_pattern",
-                                    "generalized_task": generalized,
-                                    "tool_sequence": tool_sequence,
-                                    "reward_score": 1.0,
-                                },
-                            }
-                        ]
+                        point_id,
+                        vec,
+                        {
+                            "kind": "step_pattern",
+                            "generalized_task": generalized,
+                            "tool_sequence": tool_sequence,
+                            "reward_score": 1.0,
+                        },
                     )
         except Exception as e:
             logger.warning("Pattern storage failed (non-critical): %s", e)
@@ -1018,6 +1030,95 @@ Return ONLY the generalized task description as a plain string (no JSON).
         except Exception:
             pass
         return question
+
+    def apply_reward(self, plan_id: str, reward: float) -> bool:
+        """Apply user reward/debuff feedback to the plan's associated step pattern.
+
+        Args:
+            plan_id: The UUID of the completed plan.
+            reward: Positive value (e.g. 1.0) to reward, negative (e.g. -1.0) to debuff.
+
+        Returns:
+            True if the pattern was updated, False otherwise.
+        """
+        if not hasattr(self.store, "Session"):
+            return False
+        try:
+            with self.store.Session() as session:
+                # Look up the plan to get the original question
+                plan_row = session.get(ChatPlan, uuid.UUID(plan_id))
+                if not plan_row:
+                    logger.warning("apply_reward: plan %s not found", plan_id)
+                    return False
+
+                # Find the most recent StepPattern that was created around
+                # the same time the plan completed
+                from sqlalchemy import select, desc
+                stmt = (
+                    select(StepPattern)
+                    .order_by(desc(StepPattern.last_used_at))
+                    .limit(10)
+                )
+                patterns = session.execute(stmt).scalars().all()
+
+                # Match by generalised task similarity (simple substring for now)
+                question = plan_row.original_prompt or ""
+                matched = None
+                for pat in patterns:
+                    gen_task = (pat.generalized_task or "").lower()
+                    if gen_task and (
+                        gen_task in question.lower()
+                        or question.lower() in gen_task
+                        or any(
+                            word in gen_task
+                            for word in question.lower().split()
+                            if len(word) > 3
+                        )
+                    ):
+                        matched = pat
+                        break
+
+                if not matched:
+                    logger.info("apply_reward: no matching pattern for plan %s", plan_id)
+                    return False
+
+                # Apply reward / debuff
+                matched.reward_score = max(0.0, matched.reward_score + reward)
+                matched.times_used += 1
+                if reward > 0:
+                    matched.times_succeeded += 1
+                matched.last_used_at = datetime.now(timezone.utc)
+                session.commit()
+
+                logger.info(
+                    "apply_reward: pattern %s updated – reward_score=%.2f, "
+                    "times_used=%d, times_succeeded=%d",
+                    matched.id, matched.reward_score,
+                    matched.times_used, matched.times_succeeded,
+                )
+
+                # Update Qdrant embedding payload if available
+                if self.vector_store:
+                    try:
+                        vec = self.llm.embed_text(matched.generalized_task)
+                        if vec:
+                            self.vector_store.upsert(
+                                str(matched.id),
+                                vec,
+                                {
+                                    "kind": "step_pattern",
+                                    "generalized_task": matched.generalized_task,
+                                    "tool_sequence": matched.tool_sequence,
+                                    "reward_score": matched.reward_score,
+                                },
+                            )
+                    except Exception as e:
+                        logger.debug("apply_reward: Qdrant update failed (non-critical): %s", e)
+
+                return True
+        except Exception as e:
+            logger.warning("apply_reward failed: %s", e)
+            return False
 
     # -----------------------------------------------------------------------
     # Persistence helpers

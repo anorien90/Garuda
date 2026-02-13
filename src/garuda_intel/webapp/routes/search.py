@@ -804,5 +804,44 @@ def init_routes(api_key_required, settings, store, llm, vector_store):
                 "final_step": final_step,
             }
         )
+
+    @bp.post("/chat/feedback")
+    @api_key_required
+    def api_chat_feedback():
+        """Apply user reward/debuff feedback to a completed plan's step pattern.
+
+        Body JSON:
+            plan_id  (str, required) – UUID of the plan to reward/debuff
+            reward   (float, required) – positive to reward, negative to debuff
+        """
+        body = request.get_json(silent=True) or {}
+        plan_id = body.get("plan_id")
+        reward = body.get("reward")
+        if not plan_id:
+            return jsonify({"error": "plan_id required"}), 400
+        if reward is None:
+            return jsonify({"error": "reward required (positive to reward, negative to debuff)"}), 400
+        try:
+            reward = float(reward)
+        except (TypeError, ValueError):
+            return jsonify({"error": "reward must be a number"}), 400
+
+        try:
+            from ...services.task_planner import TaskPlanner
+            planner = TaskPlanner(
+                store=store,
+                llm=llm,
+                vector_store=vector_store,
+                settings=settings,
+            )
+            updated = planner.apply_reward(plan_id, reward)
+            if updated:
+                emit_event("chat", "feedback applied", payload={
+                    "plan_id": plan_id, "reward": reward})
+                return jsonify({"status": "ok", "plan_id": plan_id, "reward": reward})
+            return jsonify({"status": "no_pattern_found", "plan_id": plan_id}), 404
+        except Exception as e:
+            logger.exception("Chat feedback failed")
+            return jsonify({"error": str(e)}), 500
     
     return bp

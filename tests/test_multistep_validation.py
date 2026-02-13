@@ -554,6 +554,18 @@ class TestTaskDecomposition:
             prompt_sent = call_args[1]["json"]["prompt"] if call_args else ""
             assert "WARNING" not in prompt_sent
 
+    def test_plan_prompt_includes_comprehensive_search_rules(self):
+        """Plan creation prompt should include rules for exhaustive 'all' queries."""
+        planner = _make_planner()
+        with patch("garuda_intel.services.task_planner.requests.post") as mock_post:
+            mock_post.side_effect = Exception("timeout")
+            plan = planner._tool_create_plan("Show me all leaders of Nvidia", "Nvidia", {}, [])
+            call_args = mock_post.call_args
+            prompt_sent = call_args[1]["json"]["prompt"] if call_args else ""
+            # Must mention searching broadly and not stopping early
+            assert "full list" in prompt_sent.lower() or "do not stop" in prompt_sent.lower() \
+                or "each item individually" in prompt_sent.lower()
+
 
 # ---------------------------------------------------------------------------
 # Event emission
